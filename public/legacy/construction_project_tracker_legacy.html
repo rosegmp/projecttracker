@@ -1,0 +1,3502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Destiny Homes — Project Tracker</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  /* Destiny Homes brand palette */
+  --brand:#3d4278;       /* navy blue – primary */
+  --brand-light:#5c63a8; /* lighter navy for hover */
+  --brand-xlight:#eceef8;/* very light navy tint */
+  --lavender:#9b9ec8;    /* castle icon lavender */
+
+  --tp:#1e1e2e;--ts:#5a5a7a;--tt:#9898b0;
+  --bp:#ffffff;--bs:#f3f4f9;
+  --bt:rgba(61,66,120,.12);--bsc:rgba(61,66,120,.25);--bpc:rgba(61,66,120,.45);
+  --suct:#085041;--sucb:#E1F5EE;
+  --inft:#3d4278;--infb:#eceef8;
+  --dant:#791F1F;--danb:#FCEBEB;--danbc:#A32D2D;
+  --warnt:#633806;--warnb:#FAEEDA;
+  --rmd:8px;--rlg:12px;
+  --font:system-ui,-apple-system,sans-serif
+}
+@media(prefers-color-scheme:dark){:root{
+  --tp:#d4d5e8;--ts:#8888aa;--tt:#5a5a75;
+  --bp:#1a1b2e;--bs:#22233a;
+  --bt:rgba(155,158,200,.12);--bsc:rgba(155,158,200,.22);--bpc:rgba(155,158,200,.35);
+  --suct:#9FE1CB;--sucb:#04342C;
+  --inft:#b0b3e0;--infb:#2a2d52;
+  --dant:#F7C1C1;--danb:#501313;--danbc:#A32D2D;
+  --warnt:#FAC775;--warnb:#412402
+}}
+body{font-family:var(--font);background:var(--bs);color:var(--tp);min-height:100vh;padding:2rem}
+.app{max-width:1200px;margin:0 auto}
+
+/* Brand header bar */
+.hdr{display:flex;align-items:center;justify-content:space-between;background:var(--brand);border-radius:var(--rlg);padding:1rem 1.5rem;margin-bottom:1.5rem;box-shadow:0 2px 12px rgba(61,66,120,.25)}
+.hdr-logo{display:flex;align-items:center;gap:14px}
+.hdr-logo img{height:52px;width:auto}
+.hdr-title{color:#fff;font-size:18px;font-weight:700;letter-spacing:.02em}
+.hdr-sub{font-size:12px;color:rgba(255,255,255,.65);margin-top:2px;letter-spacing:.05em;text-transform:uppercase}
+.hdr .btn.pr{background:#fff;color:var(--brand);border-color:transparent;font-weight:600}
+.hdr .btn.pr:hover{background:var(--brand-xlight)}
+
+.tabs{display:flex;gap:2px;background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rmd);padding:3px;margin-bottom:1.25rem;width:fit-content}
+.tab{padding:6px 18px;font-size:13px;font-weight:500;border-radius:6px;cursor:pointer;color:var(--ts);border:none;background:none;transition:all .15s;font-family:var(--font)}
+.tab.active{background:var(--brand);color:#fff;border:.5px solid transparent}
+.badge{display:inline-block;font-size:11px;padding:3px 8px;border-radius:4px;font-weight:500;white-space:nowrap}
+.ba{background:var(--sucb);color:var(--suct)}
+.bp{background:var(--infb);color:var(--inft)}
+.bd{background:var(--danb);color:var(--dant)}
+.bdo{background:var(--bs);color:var(--ts);border:.5px solid var(--bt)}
+.btn{padding:7px 16px;font-size:13px;font-weight:500;border-radius:var(--rmd);border:.5px solid var(--bsc);background:transparent;color:var(--tp);cursor:pointer;transition:background .1s;font-family:var(--font)}
+.btn:hover{background:var(--bs)}
+.btn.pr{background:var(--brand);color:#fff;border-color:transparent}
+.btn.pr:hover{background:var(--brand-light)}
+.btn.dn{color:var(--dant);border-color:var(--danbc)}
+.btn.dn:hover{background:var(--danb)}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn.xs{padding:2px 7px;font-size:11px}
+.fld{font-size:13px;padding:6px 8px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)}
+.fld:focus{outline:none;border-color:var(--brand)}
+.fld.inline{font-size:12px;padding:3px 6px;border-radius:5px}
+select.fsel{font-size:13px;padding:6px 10px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)}
+input[type=range]{accent-color:var(--brand)}
+.empty{text-align:center;padding:2.5rem;color:var(--ts);font-size:13px}
+
+/* Project cards */
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.pcard{background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);padding:1rem 1.25rem;cursor:pointer;transition:border-color .15s}
+.pcard:hover{border-color:var(--bsc)}
+.pcard-hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.pcard-title{font-size:14px;font-weight:600}
+.pcard-meta{font-size:12px;color:var(--ts);margin-top:2px}
+.pbar{height:6px;background:var(--bs);border-radius:3px;overflow:hidden;margin:10px 0 6px;border:.5px solid var(--bt)}
+.pfill{height:100%;border-radius:3px;transition:width .3s}
+.fa{background:#1D9E75}.fp{background:var(--brand)}.fd{background:#E24B4A}.fdo{background:#888780}
+.pstats{display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:.5px solid var(--bt);flex-wrap:wrap}
+.stat{font-size:12px;color:var(--ts)}
+.stat strong{color:var(--tp);font-weight:500}
+
+/* Schedule */
+.sched-wrap{background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);overflow:hidden}
+.sched-hdr{display:flex;align-items:center;gap:10px;padding:1rem 1rem .75rem;border-bottom:.5px solid var(--bt);flex-wrap:wrap}
+.sched-hdr h2{font-size:15px;font-weight:600}
+.sched-table-wrap{overflow-x:auto;padding:0 0 .5rem}
+.gantt-split-wrap{display:flex;align-items:stretch;width:100%}
+.gantt-left{flex-shrink:0;z-index:2;box-shadow:3px 0 6px -2px rgba(0,0,0,.10)}
+.gantt-right{flex:1;overflow-x:auto;overflow-y:hidden;padding:0 0 .5rem;min-width:0}
+.gtable{width:100%;border-collapse:collapse;font-size:13px}
+.gtable-left{width:auto}
+.gtable-right{width:max-content;min-width:100%}
+.gtable th{font-weight:500;color:var(--ts);font-size:11px;padding:5px 8px;text-align:left;border-bottom:.5px solid var(--bt);white-space:nowrap;background:var(--brand-xlight)}
+.gtable td{padding:0;vertical-align:middle;border-bottom:.5px solid var(--bt)}
+.gtable tr:last-child td{border-bottom:none}
+
+/* Row types */
+.row-project td{background:var(--bs)}
+.row-project td:first-child{padding:6px 8px}
+.row-phase td{background:var(--bp)}
+.row-step td{background:var(--bp)}
+.row-step td:first-child{padding-left:32px}
+.row-task td{background:var(--bp)}
+.row-add-phase td{background:var(--bs);border-bottom:none}
+.row-add-task td{background:var(--bp);border-bottom:none}
+.row-add-step td{background:var(--bp)}
+.row-add-step td:first-child{padding-left:32px}
+
+/* Cell padding defaults */
+.gtable td.nc{padding:5px 8px}
+.gtable td.bc{min-width:420px;padding:0 8px}
+
+/* Inline edit cells */
+.cell-name{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.cell-name input{width:140px}
+.cell-name.phase-name input{font-weight:500}
+.edit-btn{opacity:0;transition:opacity .1s;cursor:pointer;font-size:11px;color:var(--ts);background:none;border:none;padding:2px 4px;border-radius:3px}
+tr:hover .edit-btn{opacity:1}
+.edit-btn:hover{background:var(--bs);color:var(--tp)}
+.inline-row-btns{display:flex;gap:4px;align-items:center}
+
+/* Gantt bar */
+.bar-track{position:relative;height:24px}
+.gbar{position:absolute;height:100%;border-radius:4px;display:flex;align-items:center;padding:0 7px;font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;cursor:default;transition:opacity .1s}
+.gbar:hover{opacity:.82}
+.gbar.step-bar{height:10px;top:7px;border-radius:3px;opacity:.7}
+/* Task diamond */
+.task-diamond{position:absolute;width:12px;height:12px;top:6px;transform:rotate(45deg);border-width:.5px;border-style:solid;z-index:2;cursor:pointer}
+.task-diamond:hover{transform:rotate(45deg) scale(1.2)}
+.task-tooltip{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);background:var(--tp);color:var(--bp);font-size:11px;padding:4px 8px;border-radius:5px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:10}
+.task-diamond:hover .task-tooltip{opacity:1}
+
+/* Legend */
+.legend{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ts)}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-dot{width:10px;height:10px;border-radius:2px}
+.legend-diamond{width:8px;height:8px;transform:rotate(45deg);display:inline-block}
+
+/* Tasks */
+.tasks-panel{background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);padding:1rem 1.25rem}
+.task-row{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bs);border:.5px solid var(--bt);border-radius:var(--rmd);margin-bottom:6px}
+.task-row:hover{border-color:var(--bsc)}
+.task-check{width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:#1D9E75}
+.task-lbl{flex:1;font-size:13px}
+.task-lbl.done{text-decoration:line-through;color:var(--tt)}
+.task-due{font-size:11px;color:var(--ts);white-space:nowrap}
+.task-due.ov{color:var(--dant);font-weight:500}
+.add-task-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+
+/* Modal */
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow-y:auto}
+.modal-ov.open{display:flex}
+.modal{background:var(--bp);border-radius:var(--rlg);border:.5px solid var(--bt);width:min(640px,98vw);padding:1.5rem;box-shadow:0 8px 40px rgba(0,0,0,.2);margin:auto}
+.modal h2{font-size:16px;font-weight:600;margin-bottom:1rem}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fg{display:flex;flex-direction:column;gap:4px}
+.fg.full{grid-column:1/-1}
+.fg label{font-size:12px;color:var(--ts);font-weight:500}
+.fg input,.fg select,.fg textarea{font-size:13px;padding:7px 10px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);resize:none;font-family:var(--font)}
+.fg input:focus,.fg select:focus,.fg textarea:focus{outline:none;border-color:var(--bpc)}
+.fg textarea{height:68px}
+.mfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:1rem;padding-top:1rem;border-top:.5px solid var(--bt)}
+.sec-lbl{font-size:13px;font-weight:600;margin:1.25rem 0 8px;color:var(--tp)}
+.ph-block{border:.5px solid var(--bt);border-radius:var(--rmd);margin-bottom:8px;overflow:hidden}
+.ph-block-hdr{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bs);cursor:pointer;user-select:none}
+.ph-block-hdr:hover{filter:brightness(.97)}
+.ph-chev{font-size:9px;color:var(--ts);transition:transform .18s;flex-shrink:0;display:inline-block}
+.ph-chev.open{transform:rotate(90deg)}
+.ph-block-body{padding:10px 12px;border-top:.5px solid var(--bt);background:var(--bp)}
+.si{display:flex;align-items:center;gap:7px;padding:5px 4px;border-radius:6px;font-size:12px}
+.si:hover{background:var(--bs)}
+.sc{width:13px;height:13px;flex-shrink:0;cursor:pointer;accent-color:#1D9E75}
+.sn{flex:1}
+.sn.done{text-decoration:line-through;color:var(--tt)}
+.stag{font-size:10px;color:var(--ts);background:var(--bs);border:.5px solid var(--bt);border-radius:3px;padding:1px 5px;white-space:nowrap}
+.add-sr{display:flex;gap:6px;margin-top:8px}
+.add-phase-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px;margin-top:8px}
+@media(max-width:600px){.add-phase-row{grid-template-columns:1fr 1fr}.fgrid{grid-template-columns:1fr}}
+/* ── Calendar view ──────────────────────────────────────────── */
+#cal-controls{display:none}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:auto;border-left:.5px solid var(--bt);border-top:.5px solid var(--bt)}
+.cal-dow{background:var(--brand-xlight);font-size:11px;font-weight:600;color:var(--brand);text-align:center;padding:6px 0;border-right:.5px solid var(--bt);border-bottom:.5px solid var(--bt);text-transform:uppercase;letter-spacing:.06em}
+.cal-cell{border-right:.5px solid var(--bt);border-bottom:.5px solid var(--bt);padding:4px 6px;position:relative;background:var(--bp)}
+.cal-cell.other-month{background:var(--bs)}
+.cal-cell.today{background:var(--brand-xlight)}
+.cal-day-num{font-size:12px;font-weight:600;color:var(--ts);line-height:1;height:20px;display:flex;align-items:center}
+.cal-cell.today .cal-day-num{color:var(--brand)}
+.cal-chip{font-size:10px;padding:2px 5px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border:.5px solid transparent;line-height:1.4;display:block;box-sizing:border-box;height:18px;position:absolute;left:6px;right:6px}
+.cal-chip.start{border-radius:3px 0 0 3px;border-right:none;right:-1px}
+.cal-chip.cont{border-left:none;border-right:none;border-radius:0;left:-1px;right:-1px}
+.cal-chip.end{border-left:none;border-radius:0 3px 3px 0;left:-1px}
+.cal-chip.solo{border-radius:3px}
+.cal-chip-task{font-size:10px;padding:1px 4px;border-radius:3px;display:flex;align-items:center;gap:3px;cursor:default;position:absolute;left:6px;right:6px;height:16px}
+/* ── Calendar holiday indicators ────────────────────────────── */
+.cal-cell.holiday{background:color-mix(in srgb,var(--danb) 35%,var(--bp));}
+.cal-cell.holiday.other-month{background:color-mix(in srgb,var(--danb) 18%,var(--bs));}
+.cal-chip-holiday{font-size:10px;padding:1px 5px;font-weight:500;color:#791F1F;background:#FCEBEB;border:.5px solid #E24B4A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;box-sizing:border-box;height:16px;position:absolute;left:6px;right:6px}
+.cal-chip-holiday.start{border-radius:3px 0 0 3px;border-right:none;right:-1px}
+.cal-chip-holiday.cont{border-left:none;border-right:none;border-radius:0;left:-1px;right:-1px}
+.cal-chip-holiday.end{border-left:none;border-radius:0 3px 3px 0;left:-1px}
+.cal-chip-holiday.solo{border-radius:3px}
+/* ── Calendar popover ───────────────────────────────────────── */
+.cal-popover{position:fixed;z-index:200;background:var(--bp);border:.5px solid var(--bsc);border-radius:var(--rlg);box-shadow:0 4px 24px rgba(61,66,120,.18);padding:1rem;width:320px;max-width:95vw}
+.cal-popover h3{font-size:13px;font-weight:600;margin-bottom:.75rem;display:flex;justify-content:space-between;align-items:center}
+.cal-pop-close{background:none;border:none;cursor:pointer;font-size:16px;color:var(--ts);line-height:1;padding:0 2px}
+.cal-pop-field{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.cal-pop-field label{font-size:11px;font-weight:500;color:var(--ts)}
+.cal-pop-field input,.cal-pop-field select{font-size:12px;padding:5px 8px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)}
+.cal-pop-field input:focus,.cal-pop-field select:focus{outline:none;border-color:var(--brand)}
+.cal-pop-row{display:flex;gap:6px}
+.cal-pop-row .cal-pop-field{flex:1}
+.cal-pop-footer{display:flex;justify-content:flex-end;gap:6px;margin-top:10px;padding-top:10px;border-top:.5px solid var(--bt)}
+/* ── People tabs (Subcontractors / Employees) ──────────────── */
+.people-panel{background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);overflow:hidden}
+.people-toolbar{display:flex;align-items:center;gap:10px;padding:.75rem 1rem;border-bottom:.5px solid var(--bt);flex-wrap:wrap}
+.people-toolbar h2{font-size:15px;font-weight:600}
+.people-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:1rem}
+.person-card{background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);padding:1rem;transition:border-color .15s;position:relative}
+.person-card:hover{border-color:var(--bsc)}
+.person-card-hdr{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
+.person-avatar{width:38px;height:38px;border-radius:50%;background:var(--brand-xlight);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;flex-shrink:0;border:.5px solid var(--bt)}
+.person-name{font-size:14px;font-weight:600;line-height:1.2}
+.person-role{font-size:12px;color:var(--ts);margin-top:1px}
+.person-details{font-size:12px;color:var(--ts);display:flex;flex-direction:column;gap:3px;margin-top:8px;padding-top:8px;border-top:.5px solid var(--bt)}
+.person-detail{display:flex;gap:6px;align-items:baseline}
+.person-detail-lbl{color:var(--tt);min-width:52px;font-size:11px}
+.person-card-actions{display:flex;gap:4px;position:absolute;top:8px;right:8px;opacity:0;transition:opacity .1s}
+.person-card:hover .person-card-actions{opacity:1}
+.person-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.person-tag{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--brand-xlight);color:var(--inft);border:.5px solid var(--bt)}
+/* ── Step dependency modal ──────────────────────────────────── */
+.dep-peer-row{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--rmd);border:.5px solid var(--bt);background:var(--bs);font-size:12px}
+.dep-peer-row.selected{border-color:var(--brand);background:var(--brand-xlight)}
+.dep-peer-row label{flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0}
+.dep-peer-row label span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dep-lag{width:52px;font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font);text-align:center}
+.dep-lag:focus{outline:none;border-color:var(--brand)}
+.dep-lag-lbl{font-size:10px;color:var(--tt);white-space:nowrap}
+/* ── Settings tab ───────────────────────────────────────────── */
+.holiday-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:.5px solid var(--bt)}
+.holiday-row:last-child{border-bottom:none}
+.holiday-row input[type=date]{font-size:12px;padding:4px 8px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)}
+.holiday-row input[type=text]{font-size:12px;padding:4px 8px;border-radius:var(--rmd);border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);flex:1;font-family:var(--font)}
+.holiday-row input:focus{outline:none;border-color:var(--brand)}
+/* ── Delay rows ──────────────────────────────────────────────*/
+.row-delay td{background:#FFF8F8;border-bottom:.5px solid #fdd}
+.row-delay td.bc{background:#FFF8F8}
+.bar-drag-handle{position:absolute;right:-5px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;background:#9b9ec8;border:2px solid #fff;cursor:crosshair;opacity:0;transition:opacity .15s;z-index:10}
+.gbar:hover .bar-drag-handle{opacity:1}
+.bar-drop-target{outline:2px solid #1D9E75;outline-offset:1px}
+#csv-preview-table th{background:var(--bs);color:var(--ts);font-size:11px;font-weight:600;padding:5px 10px;text-align:left;position:sticky;top:0;border-bottom:.5px solid var(--bt);white-space:nowrap}
+#csv-preview-table td{padding:4px 10px;border-bottom:.5px solid var(--bt);color:var(--tp);font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#csv-preview-table tr:last-child td{border-bottom:none}
+#csv-preview-table tr:hover td{background:var(--bs)}
+#csv-map-grid .map-arrow{color:var(--tt);font-size:18px;text-align:center}
+#csv-map-grid .map-col-name{font-weight:500;color:var(--tp);background:var(--bs);border:.5px solid var(--bt);border-radius:var(--rmd);padding:4px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <img src="data:image/png;base64,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" alt="Destiny Homes">
+      <div>
+        <div class="hdr-title">Destiny Homes</div>
+        <div class="hdr-sub">Project Tracker</div>
+      </div>
+    </div>
+    <button class="btn pr" onclick="openProjectModal()">+ New Project</button>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('projects',this)">Projects</button>
+    <button class="tab" onclick="switchTab('schedule',this)">Schedule</button>
+    <button class="tab" onclick="switchTab('tasks',this)">Tasks</button>
+    <button class="tab" onclick="switchTab('subs',this)">Subcontractors</button>
+    <button class="tab" onclick="switchTab('employees',this)">Employees</button>
+    <button class="tab" onclick="switchTab('settings',this)">⚙ Settings</button>
+  </div>
+
+  <!-- PROJECTS -->
+  <div id="tab-projects">
+    <div id="pgrid" class="pgrid"></div>
+    <div id="pempty" class="empty" style="display:none">No projects yet. Click <strong>+ New Project</strong> to get started.</div>
+  </div>
+
+  <!-- SCHEDULE -->
+  <div id="tab-schedule" style="display:none">
+    <div class="sched-wrap">
+      <div class="sched-hdr">
+        <h2>Schedule</h2>
+        <select class="fsel" id="g-filter" onchange="onFilterChange()"><option value="all">All projects</option></select>
+        <!-- View toggle -->
+        <div style="display:flex;gap:2px;background:var(--bs);border:.5px solid var(--bt);border-radius:var(--rmd);padding:2px;margin-left:8px">
+          <button id="view-gantt-btn" class="btn xs" style="background:var(--brand);color:#fff;border-color:transparent" onclick="setSchedView('gantt')">Gantt</button>
+          <button id="view-cal-btn"   class="btn xs" style="background:transparent" onclick="setSchedView('calendar')">Calendar</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-left:auto;align-items:center" id="gantt-controls">
+          <button class="btn xs" id="expand-all-btn" onclick="toggleExpandAll()">Expand all</button>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ts);cursor:pointer;margin-left:4px"><input type="checkbox" id="g-tasks" checked onchange="renderGantt()" style="accent-color:var(--brand)"> Tasks</label>
+        </div>
+        <!-- Calendar nav (hidden by default) -->
+        <div style="display:none;gap:6px;align-items:center;margin-left:auto" id="cal-controls">
+          <button class="btn xs" onclick="calNav(-1)">‹</button>
+          <span id="cal-month-label" style="font-size:13px;font-weight:500;min-width:120px;text-align:center"></span>
+          <button class="btn xs" onclick="calNav(1)">›</button>
+          <button class="btn xs" onclick="calToday()">Today</button>
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#E1F5EE;border:.5px solid #1D9E75"></div> Active</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#eceef8;border:.5px solid #3d4278"></div> Planning</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FCEBEB;border:.5px solid #E24B4A"></div> Delayed</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#F1EFE8;border:.5px solid #888780"></div> Done</div>
+          <div class="legend-item"><div class="legend-diamond" style="background:#FAC775;border:.5px solid #BA7517"></div> Task</div>
+          <div class="legend-item" style="margin-left:4px"><div style="width:1.5px;height:12px;background:#E24B4A;opacity:.7;display:inline-block;vertical-align:middle"></div> Today</div>
+        </div>
+      </div>
+      <!-- Gantt view -->
+      <div id="gantt-view">
+        <div class="gantt-split-wrap">
+          <!-- Fixed left: metadata columns -->
+          <div class="gantt-left">
+            <table class="gtable gtable-left" id="gtable-left">
+              <thead><tr>
+                <th style="min-width:200px">Name</th>
+                <th style="min-width:110px">Assignee</th>
+                <th style="min-width:80px">Status</th>
+                <th style="min-width:90px">Start</th>
+                <th style="min-width:90px">End</th>
+                <th style="width:60px"></th>
+              </tr></thead>
+              <tbody id="g-body-left"></tbody>
+            </table>
+          </div>
+          <!-- Scrollable right: bar column only -->
+          <div class="gantt-right sched-table-wrap">
+            <table class="gtable gtable-right" id="gtable-right">
+              <thead><tr>
+                <th class="bc" id="g-month-hdr" style="padding:4px 8px"></th>
+              </tr></thead>
+              <tbody id="g-body-right"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="g-empty" class="empty" style="display:none">No phases yet. Add a project and phases to see the schedule.</div>
+      </div>
+      <!-- Calendar view -->
+      <div id="calendar-view" style="display:none">
+        <div id="cal-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASKS -->
+  <div id="tab-tasks" style="display:none">
+    <div class="tasks-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:14px;font-weight:600">All Tasks</div>
+        <select class="fsel" id="t-filter" onchange="renderTasks()"><option value="all">All projects</option></select>
+      </div>
+      <div id="t-list"></div>
+      <div class="add-task-row">
+        <input id="nt-lbl" class="fld" type="text" placeholder="Add a task..." style="flex:2;min-width:160px" onkeydown="if(event.key==='Enter')addTask()">
+        <select id="nt-proj" class="fld" style="flex:1;min-width:120px"><option value="">Project...</option></select>
+        <input id="nt-due" class="fld" type="date">
+        <button class="btn pr" onclick="addTask()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUBCONTRACTORS -->
+  <div id="tab-subs" style="display:none">
+    <div class="people-panel">
+      <div class="people-toolbar">
+        <h2>Subcontractors</h2>
+        <input id="sub-search" class="fld" type="text" placeholder="Search…" style="width:200px" oninput="renderSubs()">
+        <button class="btn" onclick="openCsvImport()">⬆ Import CSV</button>
+        <button class="btn pr" style="margin-left:auto" onclick="openPersonModal('sub')">+ Add Subcontractor</button>
+      </div>
+      <div id="sub-grid" class="people-grid"></div>
+      <div id="sub-empty" class="empty" style="display:none">No subcontractors yet.</div>
+    </div>
+  </div>
+
+  <!-- EMPLOYEES -->
+  <div id="tab-employees" style="display:none">
+    <div class="people-panel">
+      <div class="people-toolbar">
+        <h2>Employees</h2>
+        <input id="emp-search" class="fld" type="text" placeholder="Search…" style="width:200px" oninput="renderEmployees()">
+        <button class="btn pr" style="margin-left:auto" onclick="openPersonModal('emp')">+ Add Employee</button>
+      </div>
+      <div id="emp-grid" class="people-grid"></div>
+      <div id="emp-empty" class="empty" style="display:none">No employees yet.</div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="tab-settings" style="display:none">
+    <div style="max-width:640px;display:flex;flex-direction:column;gap:16px">
+
+      <!-- Work Calendar -->
+      <div class="people-panel" style="padding:1.25rem">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Work Calendar</h3>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;margin-bottom:12px">
+          <input type="checkbox" id="set-weekdays-only" style="accent-color:var(--brand);width:16px;height:16px" onchange="saveSettings()">
+          <span><strong>Weekdays only</strong> — skip Saturdays and Sundays when scheduling steps</span>
+        </label>
+      </div>
+
+      <!-- Holidays -->
+      <div class="people-panel" style="padding:1.25rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h3 style="font-size:14px;font-weight:600">Holidays</h3>
+          <button class="btn sm pr" onclick="addHolidayRow()">+ Add Holiday</button>
+        </div>
+        <p style="font-size:12px;color:var(--ts);margin-bottom:12px">Holidays marked as non-workdays will be skipped when auto-scheduling steps.</p>
+        <div id="holidays-list"></div>
+        <div id="holidays-empty" style="font-size:13px;color:var(--tt);display:none">No holidays added yet.</div>
+      </div>
+
+      <!-- Sample Data -->
+      <div class="people-panel" style="padding:1.25rem" id="settings-sample-section">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">Sample Data</h3>
+        <p style="font-size:13px;color:var(--ts);margin-bottom:12px">The app was pre-loaded with sample projects, tasks, subcontractors, and employees for exploration.</p>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="set-show-sample" style="accent-color:var(--brand);width:16px;height:16px" onchange="toggleSampleData(this.checked)">
+          <span>Show sample data</span>
+        </label>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- PROJECT MODAL -->
+<div class="modal-ov" id="proj-modal">
+  <div class="modal">
+    <h2 id="modal-title">New Project</h2>
+    <div class="fgrid">
+      <div class="fg full"><label>Project Name</label><input id="p-name" type="text" placeholder="e.g. Downtown Office Complex"></div>
+      <div class="fg full"><label>Description</label><textarea id="p-desc" placeholder="Brief description..."></textarea></div>
+      <div class="fg"><label>Start Date</label><input id="p-start" type="date"></div>
+      <div class="fg"><label>End Date</label><input id="p-end" type="date"></div>
+      <div class="fg"><label>Budget ($)</label><input id="p-budget" type="number" placeholder="0"></div>
+      <div class="fg"><label>Status</label>
+        <select id="p-status"><option value="planning">Planning</option><option value="active">Active</option><option value="delayed">Delayed</option><option value="done">Completed</option></select>
+      </div>
+      <div class="fg"><label>Project Manager</label><input id="p-mgr" type="text" placeholder="Full name"></div>
+      <div class="fg"><label>Site Address</label><input id="p-addr" type="text" placeholder="123 Main St"></div>
+      <div class="fg full"><label>Progress (%)</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="range" id="p-prog" min="0" max="100" value="0" style="flex:1" oninput="document.getElementById('p-prog-out').textContent=this.value+'%'">
+          <span id="p-prog-out" style="font-size:13px;font-weight:500;min-width:36px">0%</span>
+        </div>
+      </div>
+    </div>
+    <div class="sec-lbl">Phases &amp; Steps</div>
+    <div id="ph-list"></div>
+    <div class="add-phase-row">
+      <input id="ph-name" class="fld" type="text" placeholder="Phase name" onkeydown="if(event.key==='Enter')addPhase()">
+      <select id="ph-assign" class="fld" style="min-width:160px"><option value="">Assignee…</option></select>
+      <span style="font-size:12px;color:var(--tt);font-style:italic;align-self:center">Dates set by steps</span>
+      <button class="btn" onclick="addPhase()">Add Phase</button>
+    </div>
+    <div class="mfoot">
+      <button class="btn dn" id="del-proj-btn" style="margin-right:auto;display:none" onclick="deleteProject()">Delete</button>
+      <button class="btn" onclick="closeProjectModal()">Cancel</button>
+      <button class="btn pr" onclick="saveProject()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELAY MODAL -->
+<div class="modal-ov" id="delay-modal">
+  <div class="modal" style="max-width:480px">
+    <h2 id="delay-modal-title">Add Delay</h2>
+    <div class="fgrid">
+      <div class="fg full"><label>Affected Step <span style="font-weight:400;color:var(--ts)">(this step and all successors shift forward)</span></label>
+        <select id="delay-step" class="fld"></select>
+      </div>
+      <div class="fg"><label>Delay (days)</label>
+        <input id="delay-days" type="number" min="1" value="1" class="fld" placeholder="Days">
+      </div>
+      <div class="fg"><label>Cause</label>
+        <select id="delay-cause" class="fld">
+          <option value="Inspector">Inspector</option>
+          <option value="Subcontractor">Subcontractor</option>
+          <option value="Customer">Customer</option>
+          <option value="Weather">Weather</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="fg full"><label>Description <span style="font-weight:400;color:var(--ts)">(optional)</span></label>
+        <textarea id="delay-desc" class="fld" rows="2" placeholder="Reason for delay…" style="resize:vertical"></textarea>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn dn" id="delay-delete-btn" style="margin-right:auto;display:none" onclick="deleteDelay()">Delete</button>
+      <button class="btn" onclick="closeDelayModal()">Cancel</button>
+      <button class="btn pr" onclick="saveDelay()">Apply Delay</button>
+    </div>
+  </div>
+</div>
+
+<!-- STEP DEPENDENCY MODAL -->
+<div class="modal-ov" id="task-modal">
+  <div class="modal" style="max-width:560px">
+    <h2>Step Dependencies</h2>
+    <div style="font-size:13px;color:var(--ts);margin-bottom:4px">
+      Editing: <strong id="task-edit-name-disp"></strong>
+    </div>
+    <div style="font-size:11px;color:var(--ts);margin-bottom:14px;background:var(--bs);border-radius:var(--rmd);padding:8px 10px;line-height:1.6">
+      <strong>Lag days</strong> offset the start date after a predecessor finishes.<br>
+      <span style="color:var(--suct)">+days</span> = wait extra days &nbsp;·&nbsp;
+      <span style="color:var(--dant)">−days</span> = allow overlap (start before predecessor ends)
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <!-- Predecessors -->
+      <div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--tp)">Predecessors <span style="font-weight:400;color:var(--ts)">(must finish first)</span></div>
+        <div id="dep-preds-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto"></div>
+      </div>
+      <!-- Successors -->
+      <div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--tp)">Successors <span style="font-weight:400;color:var(--ts)">(depend on this)</span></div>
+        <div id="dep-succs-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <div class="mfoot" style="margin-top:16px">
+      <button class="btn" onclick="closeTaskModal()">Cancel</button>
+      <button class="btn pr" onclick="saveTaskEdit()">Save &amp; Recalculate</button>
+    </div>
+  </div>
+</div>
+
+<!-- PERSON MODAL (Subcontractor / Employee) -->
+<div class="modal-ov" id="person-modal">
+  <div class="modal" style="max-width:520px">
+    <h2 id="person-modal-title">Add Subcontractor</h2>
+    <div class="fgrid">
+      <div class="fg"><label>First Name</label><input id="pm-first" type="text" placeholder="First"></div>
+      <div class="fg"><label>Last Name</label><input id="pm-last" type="text" placeholder="Last"></div>
+      <div class="fg full"><label>Company / Trade</label><input id="pm-company" type="text" placeholder="e.g. Concrete Bros, Steel Crew"></div>
+      <div class="fg"><label>Role / Title</label><input id="pm-role" type="text" placeholder="e.g. Site Manager"></div>
+      <div class="fg"><label>Phone</label><input id="pm-phone" type="tel" placeholder="+1 (555) 000-0000"></div>
+      <div class="fg full"><label>Email</label><input id="pm-email" type="email" placeholder="name@company.com"></div>
+      <div class="fg full" id="pm-license-row"><label>License / Cert #</label><input id="pm-license" type="text" placeholder="License or certification number"></div>
+      <div class="fg full"><label>Notes</label><textarea id="pm-notes" placeholder="Any additional notes…" style="height:60px"></textarea></div>
+      <div class="fg full"><label>Skills / Trades <span style="font-weight:400;color:var(--ts)">(comma-separated)</span></label><input id="pm-tags" type="text" placeholder="e.g. Concrete, Framing, Electrical"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn dn" id="pm-delete-btn" style="margin-right:auto;display:none" onclick="deleteCurrentPerson()">Delete</button>
+      <button class="btn" onclick="closePersonModal()">Cancel</button>
+      <button class="btn pr" onclick="savePerson()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- CSV IMPORT MODAL -->
+<div class="modal-ov" id="csv-modal">
+  <div class="modal" style="max-width:780px;width:95vw">
+    <h2>Import Subcontractors from CSV</h2>
+
+    <!-- Step 1: Upload -->
+    <div id="csv-step-upload">
+      <p style="font-size:13px;color:var(--ts);margin-bottom:12px">
+        Upload a CSV file. The first row should be a header. Map your columns to fields in the next step.
+      </p>
+      <div id="csv-dropzone" style="border:2px dashed var(--bsc);border-radius:var(--rlg);padding:2rem;text-align:center;cursor:pointer;transition:border-color .15s;color:var(--ts);font-size:13px" onclick="document.getElementById('csv-file-input').click()" ondragover="event.preventDefault();this.style.borderColor='var(--brand)'" ondragleave="this.style.borderColor='var(--bsc)'" ondrop="handleCsvDrop(event)">
+        <div style="font-size:28px;margin-bottom:8px">📄</div>
+        <div>Drop a CSV file here, or <span style="color:var(--brand);font-weight:500">click to browse</span></div>
+        <div style="font-size:11px;margin-top:6px;color:var(--tt)">Supports .csv files</div>
+      </div>
+      <input id="csv-file-input" type="file" accept=".csv,text/csv" style="display:none" onchange="handleCsvFile(this.files[0])">
+      <div id="csv-upload-error" style="display:none;margin-top:10px;font-size:13px;color:var(--dant);background:var(--danb);border-radius:var(--rmd);padding:8px 12px"></div>
+    </div>
+
+    <!-- Step 2: Map columns -->
+    <div id="csv-step-map" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <button class="btn sm" onclick="csvBack()">← Back</button>
+        <span id="csv-file-label" style="font-size:13px;color:var(--ts)"></span>
+        <span id="csv-row-count" style="font-size:12px;color:var(--tt)"></span>
+      </div>
+      <p style="font-size:13px;color:var(--ts);margin-bottom:12px">Map each CSV column to a subcontractor field. Unmapped columns will be ignored.</p>
+      <div id="csv-map-grid" style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px 12px;align-items:center;margin-bottom:16px;font-size:13px"></div>
+      <div style="margin-bottom:16px">
+        <label style="font-size:12px;font-weight:500;color:var(--ts);display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="csv-skip-header" checked style="accent-color:var(--brand)"> Skip first row (header)
+        </label>
+      </div>
+      <p style="font-size:12px;font-weight:600;color:var(--tp);margin-bottom:6px">Preview <span id="csv-preview-count" style="font-weight:400;color:var(--ts)"></span></p>
+      <div style="overflow-x:auto;max-height:220px;overflow-y:auto;border:.5px solid var(--bt);border-radius:var(--rmd)">
+        <table id="csv-preview-table" style="width:100%;border-collapse:collapse;font-size:12px"></table>
+      </div>
+      <div id="csv-map-error" style="display:none;margin-top:10px;font-size:13px;color:var(--dant);background:var(--danb);border-radius:var(--rmd);padding:8px 12px"></div>
+    </div>
+
+    <div class="mfoot">
+      <div id="csv-import-summary" style="font-size:12px;color:var(--ts);margin-right:auto"></div>
+      <button class="btn" onclick="closeCsvImport()">Cancel</button>
+      <button class="btn pr" id="csv-import-btn" style="display:none" onclick="commitCsvImport()">Import</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Supabase config — fill these in ──────────────────────────
+const SUPABASE_URL  = 'https://oxojlwhmarafxuqvqgqg.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_7clwg0pOXDbClFF2t3swtA_mZxEzjpF';
+const HEADERS = {
+  'apikey': SUPABASE_KEY,
+  'Authorization': 'Bearer ' + SUPABASE_KEY,
+  'Content-Type': 'application/json',
+  'Prefer': 'return=representation'
+};
+
+// ─── State ────────────────────────────────────────────────────
+let projects=[], tasks=[], subs=[], employees=[];
+let settings={weekdaysOnly:false, holidays:[], showSampleData:true};
+let usingLocalStorage=false;
+let _remoteSaveTimer=null;
+let _ganttPaintFrame=null;
+// settings.holidays: [{id, date:'YYYY-MM-DD', endDate:'YYYY-MM-DD'|'', name:'', nonWorkday:true}]
+// If endDate is set and >= date, the holiday covers date..endDate inclusive.
+let editingId=null,tempPhases=[],expandedPh={},ganttExpanded={};
+let tmpStepDrag=null;
+
+// ─── Loading overlay helpers ──────────────────────────────────
+function showLoading(msg='Loading…'){
+  let el=document.getElementById('db-loading');
+  if(!el){
+    el=document.createElement('div');el.id='db-loading';
+    el.style.cssText='position:fixed;inset:0;background:rgba(61,66,120,.18);z-index:999;display:flex;align-items:center;justify-content:center';
+    el.innerHTML=`<div style="background:var(--bp);border:.5px solid var(--bt);border-radius:var(--rlg);padding:1.5rem 2rem;font-size:14px;color:var(--tp);display:flex;align-items:center;gap:10px">
+      <div style="width:16px;height:16px;border:2px solid var(--brand);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite"></div>
+      <span id="db-loading-msg">${msg}</span>
+    </div>`;
+    if(!document.getElementById('spin-style')){
+      const s=document.createElement('style');s.id='spin-style';s.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
+      document.head.appendChild(s);
+    }
+    document.body.appendChild(el);
+  } else {
+    document.getElementById('db-loading-msg').textContent=msg;
+    el.style.display='flex';
+  }
+}
+function hideLoading(){const el=document.getElementById('db-loading');if(el)el.style.display='none';}
+function showError(msg){hideLoading();alert('Error: '+msg);}
+
+// ─── Supabase helpers ─────────────────────────────────────────
+async function dbLoad(){
+  showLoading('Loading data…');
+  try{
+    const [pr,tr,sr,er,stR]=await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=created_at.asc`,{headers:HEADERS}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/tasks?select=*&order=created_at.asc`,{headers:HEADERS}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/subs?select=*&order=created_at.asc`,{headers:HEADERS}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/employees?select=*&order=created_at.asc`,{headers:HEADERS}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/settings?id=eq.app_settings&select=*`,{headers:HEADERS}).then(r=>r.json()),
+    ]);
+    if(!Array.isArray(pr)) throw new Error(pr?.message||pr?.hint||JSON.stringify(pr));
+    if(!Array.isArray(tr)) throw new Error(tr?.message||tr?.hint||JSON.stringify(tr));
+    projects=pr.map(r=>r.data||r);
+    tasks=tr.map(r=>r.data||r);
+    subs=Array.isArray(sr)?sr.map(r=>r.data||r):[];
+    employees=Array.isArray(er)?er.map(r=>r.data||r):[];
+    // Settings: single row with id='app_settings'; fall back to localStorage
+    if(Array.isArray(stR)&&stR.length) settings=stR[0].data||{weekdaysOnly:false,holidays:[],showSampleData:true};
+    else settings=JSON.parse(localStorage.getItem('cx_settings')||'null')||{weekdaysOnly:false,holidays:[],showSampleData:true};
+    if(!projects.length){projects=sampleProjects();tasks=sampleTasks();await dbSaveAll();}
+    if(!subs.length){subs=sampleSubs();}
+    if(!employees.length){employees=sampleEmployees();}
+    usingLocalStorage=false;
+  }catch(e){
+    console.warn('Supabase unavailable, using localStorage fallback:',e.message);
+    projects=JSON.parse(localStorage.getItem('cx_p')||'null')||sampleProjects();
+    tasks=JSON.parse(localStorage.getItem('cx_t')||'null')||sampleTasks();
+    subs=JSON.parse(localStorage.getItem('cx_s')||'null')||sampleSubs();
+    employees=JSON.parse(localStorage.getItem('cx_e')||'null')||sampleEmployees();
+    settings=JSON.parse(localStorage.getItem('cx_settings')||'null')||{weekdaysOnly:false,holidays:[],showSampleData:true};
+    usingLocalStorage=true;
+  }
+  hideLoading();
+  maybeShowStorageBanner();
+  renderProjects();
+}
+
+async function save(){
+  try{
+    localStorage.setItem('cx_p',JSON.stringify(projects));
+    localStorage.setItem('cx_t',JSON.stringify(tasks));
+    localStorage.setItem('cx_s',JSON.stringify(subs));
+    localStorage.setItem('cx_e',JSON.stringify(employees));
+    localStorage.setItem('cx_settings',JSON.stringify(settings));
+  }catch(e){}
+  if(SUPABASE_URL==='YOUR_SUPABASE_URL')return;
+  clearTimeout(_remoteSaveTimer);
+  _remoteSaveTimer=setTimeout(async()=>{
+    try{ await dbSaveAll(); }catch(e){console.warn('Supabase save failed (offline?):',e.message);}
+  },250);
+}
+
+async function dbSaveAll(){
+  const upsertProjects=projects.map(p=>({id:p.id,data:p}));
+  const upsertTasks=tasks.map(t=>({id:t.id,data:t}));
+  const upsertSubs=subs.map(s=>({id:s.id,data:s}));
+  const upsertEmps=employees.map(e=>({id:e.id,data:e}));
+  const opts={method:'POST',headers:{...HEADERS,'Prefer':'resolution=merge-duplicates,return=minimal'}};
+  const [r1,r2,r3,r4,r5]=await Promise.all([
+    fetch(`${SUPABASE_URL}/rest/v1/projects`, {...opts,body:JSON.stringify(upsertProjects)}),
+    fetch(`${SUPABASE_URL}/rest/v1/tasks`,    {...opts,body:JSON.stringify(upsertTasks)}),
+    fetch(`${SUPABASE_URL}/rest/v1/subs`,     {...opts,body:JSON.stringify(upsertSubs)}),
+    fetch(`${SUPABASE_URL}/rest/v1/employees`,{...opts,body:JSON.stringify(upsertEmps)}),
+    fetch(`${SUPABASE_URL}/rest/v1/settings`, {...opts,body:JSON.stringify([{id:'app_settings',data:settings}])}),
+  ]);
+  if(!r1.ok){const t=await r1.text();throw new Error('projects: '+t);}
+  if(!r2.ok){const t=await r2.text();throw new Error('tasks: '+t);}
+  if(!r3.ok){const t=await r3.text();throw new Error('subs: '+t);}
+  if(!r4.ok){const t=await r4.text();throw new Error('employees: '+t);}
+  if(!r5.ok){const t=await r5.text();throw new Error('settings: '+t);}
+}
+
+async function dbDeleteProject(id){
+  if(SUPABASE_URL==='YOUR_SUPABASE_URL')return;
+  await Promise.all([
+    fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`,{method:'DELETE',headers:HEADERS}),
+    fetch(`${SUPABASE_URL}/rest/v1/tasks?id=in.(${tasks.filter(t=>t.projectId===id).map(t=>t.id).join(',')||'null'})`,{method:'DELETE',headers:HEADERS}),
+  ]);
+}
+async function dbDeleteTask(id){
+  if(SUPABASE_URL==='YOUR_SUPABASE_URL')return;
+  await fetch(`${SUPABASE_URL}/rest/v1/tasks?id=eq.${id}`,{method:'DELETE',headers:HEADERS});
+}
+
+// ─── Storage banner ───────────────────────────────────────────
+function maybeShowStorageBanner(){
+  const existing=document.getElementById('storage-banner');
+  const showPlaceholder=SUPABASE_URL==='YOUR_SUPABASE_URL';
+  const showFallback=usingLocalStorage;
+  if(!showPlaceholder && !showFallback){
+    if(existing) existing.remove();
+    return;
+  }
+  const msg=showPlaceholder
+    ?'<strong>Supabase not connected.</strong> Data is saved locally in this browser only. See the setup instructions in the source code to connect a shared database.'
+    :'<strong>Using local storage.</strong> Supabase is unavailable right now, so changes are being saved only in this browser on this device.';
+  const b=existing||document.createElement('div');
+  b.id='storage-banner';
+  b.style.cssText='background:#faeeda;border:.5px solid #BA7517;border-radius:var(--rmd);padding:.75rem 1rem;margin-bottom:1rem;font-size:13px;color:#633806;display:flex;align-items:center;gap:10px';
+  b.innerHTML=`<span>⚠</span><span>${msg}</span>
+    <button onclick="this.parentElement.remove()" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:16px;color:#BA7517">✕</button>`;
+  if(!existing) document.querySelector('.app').insertBefore(b,document.querySelector('.tabs'));
+}
+
+// ─── Sample data banner (one-time) ───────────────────────────
+const SAMPLE_IDS={
+  projects:['p1','p2','p3'],
+  tasks:['t1','t2','t3','t4','t5'],
+  subs:['sub1','sub2','sub3','sub4','sub5','sub6'],
+  employees:['emp1','emp2','emp3','emp4'],
+};
+function hasSampleData(){
+  return projects.some(p=>SAMPLE_IDS.projects.includes(p.id))
+    ||tasks.some(t=>SAMPLE_IDS.tasks.includes(t.id))
+    ||subs.some(s=>SAMPLE_IDS.subs.includes(s.id))
+    ||employees.some(e=>SAMPLE_IDS.employees.includes(e.id));
+}
+// Returns true if sample data items should be visible in the UI
+function sampleVisible(){ return settings.showSampleData!==false; }
+// Filter an array to hide sample items when toggled off
+function filterSample(arr, idSet){
+  if(sampleVisible()) return arr;
+  return arr.filter(x=>!idSet.has(x.id));
+}
+function buildProjectMap(list){
+  const map=new Map();
+  (list||[]).forEach(item=>map.set(item.id,item));
+  return map;
+}
+function buildTasksByProject(list){
+  const counts=new Map(), byProject=new Map();
+  (list||[]).forEach(task=>{
+    const pid=task.projectId||'';
+    counts.set(pid,(counts.get(pid)||0)+1);
+    if(!byProject.has(pid)) byProject.set(pid,[]);
+    byProject.get(pid).push(task);
+  });
+  return {counts,byProject};
+}
+function buildStepIndex(listProjects){
+  const index=new Map();
+  (listProjects||[]).forEach(p=>(p.phases||[]).forEach(ph=>(ph.steps||[]).forEach(st=>index.set(st.id,st))));
+  return index;
+}
+function toggleSampleData(show){
+  settings.showSampleData=show;
+  save();
+  renderProjects();renderGantt();renderTasks();renderSubs();renderEmployees();
+  showToast(show?'Sample data shown.':'Sample data hidden.','success');
+}
+
+// ─── Settings tab ─────────────────────────────────────────────
+function renderSettings(){
+  const wdEl=document.getElementById('set-weekdays-only');
+  if(wdEl) wdEl.checked=settings.weekdaysOnly||false;
+  // Always show the sample data section if sample data exists
+  const sampleSection=document.getElementById('settings-sample-section');
+  if(sampleSection) sampleSection.style.display=hasSampleData()?'':'none';
+  const toggleEl=document.getElementById('set-show-sample');
+  if(toggleEl) toggleEl.checked=settings.showSampleData!==false;
+  renderHolidayList();
+}
+
+function saveSettings(){
+  settings.weekdaysOnly=document.getElementById('set-weekdays-only')?.checked||false;
+  save();
+}
+
+function renderHolidayList(){
+  const list=document.getElementById('holidays-list');
+  const empty=document.getElementById('holidays-empty');
+  if(!list)return;
+  const holidays=settings.holidays||[];
+  if(!holidays.length){list.innerHTML='';empty.style.display='';return;}
+  empty.style.display='none';
+  list.innerHTML=holidays.map((h,i)=>{
+    const isRange=!!(h.endDate&&h.endDate>=h.date&&h.date);
+    return `<div class="holiday-row" style="flex-wrap:wrap;gap:6px 8px">
+      <input type="date" value="${h.date}" onchange="updateHoliday(${i},'date',this.value)" style="width:130px" title="Start date">
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;white-space:nowrap;color:var(--ts)">
+        <input type="checkbox" ${isRange?'checked':''} style="accent-color:var(--brand)"
+          onchange="toggleHolidayRange(${i},this.checked)">
+        Range
+      </label>
+      ${isRange?`<span style="font-size:11px;color:var(--tt)">→</span>
+        <input type="date" value="${h.endDate||''}" onchange="updateHoliday(${i},'endDate',this.value)"
+          style="width:130px" min="${h.date||''}" title="End date (inclusive)">`:''}
+      <input type="text" value="${h.name||''}" placeholder="Name (optional)" onchange="updateHoliday(${i},'name',this.value)" style="flex:1;min-width:130px">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${h.nonWorkday?'checked':''} onchange="updateHoliday(${i},'nonWorkday',this.checked)" style="accent-color:var(--brand)">
+        Non-workday
+      </label>
+      <button class="btn xs" style="color:var(--dant);flex-shrink:0" onclick="removeHoliday(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function addHolidayRow(){
+  if(!settings.holidays) settings.holidays=[];
+  settings.holidays.push({id:'h'+Date.now(),date:'',endDate:'',name:'',nonWorkday:true});
+  save();
+  renderHolidayList();
+  // Focus the new date input
+  setTimeout(()=>{
+    const rows=document.querySelectorAll('.holiday-row');
+    if(rows.length) rows[rows.length-1].querySelector('input[type=date]')?.focus();
+  },50);
+}
+
+function updateHoliday(i, field, value){
+  if(!settings.holidays[i])return;
+  settings.holidays[i][field]=value;
+  save();
+  if(field==='nonWorkday'||field==='endDate') renderHolidayList();
+}
+
+function toggleHolidayRange(i, enabled){
+  if(!settings.holidays[i])return;
+  settings.holidays[i].endDate=enabled?(settings.holidays[i].date||''):'';
+  save();
+  renderHolidayList();
+}
+
+function removeHoliday(i){
+  settings.holidays.splice(i,1);
+  save();
+  renderHolidayList();
+}
+
+// ─── Sample data ──────────────────────────────────────────────
+function sampleProjects(){
+  const now=new Date(),y=now.getFullYear(),m=now.getMonth();
+  const d=(y,mo,day)=>new Date(y,mo,day).toISOString().slice(0,10);
+  return [
+    {id:'p1',name:'Riverside Apartments',desc:'12-unit apartment complex',start:d(y,m-1,1),end:d(y,m+5,30),budget:2400000,status:'active',manager:'Carlos Rivera',address:'45 Riverside Dr',progress:38,phases:[
+      {id:'ph1',name:'Site Prep',start:d(y,m-1,1),end:d(y,m-1,20),assign:'Groundworks Co.',status:'done',steps:[
+        {id:'s1',name:'Survey and mark boundaries',assign:'Surveyors Inc.',done:true,duration:1},
+        {id:'s2',name:'Clear vegetation',assign:'Groundworks Co.',done:true,duration:1},
+        {id:'s3',name:'Temporary fencing',assign:'Groundworks Co.',done:true,duration:1},
+      ]},
+      {id:'ph2',name:'Foundation',start:d(y,m-1,21),end:d(y,m,15),assign:'Concrete Bros',status:'done',steps:[
+        {id:'s4',name:'Excavation',assign:'Concrete Bros',done:true,duration:1},
+        {id:'s5',name:'Rebar placement',assign:'Concrete Bros',done:true,duration:1},
+        {id:'s6',name:'Pour and cure concrete',assign:'Concrete Bros',done:true,duration:1},
+      ]},
+      {id:'ph3',name:'Framing',start:d(y,m,16),end:d(y,m+2,10),assign:'Steel Crew',status:'active',steps:[
+        {id:'s8',name:'Level 1 framing',assign:'Steel Crew',done:true,duration:1},
+        {id:'s9',name:'Level 2 framing',assign:'Steel Crew',done:true,duration:1},
+        {id:'s10',name:'Level 3 framing',assign:'Steel Crew',done:false,duration:1},
+        {id:'s11',name:'Roof framing',assign:'Steel Crew',done:false,duration:1},
+      ]},
+      {id:'ph4',name:'MEP Rough-in',start:d(y,m+2,11),end:d(y,m+3,20),assign:'Unified MEP',status:'planning',steps:[
+        {id:'s13',name:'Plumbing rough-in',assign:'Unified MEP',done:false,duration:1},
+        {id:'s14',name:'Electrical rough-in',assign:'Unified MEP',done:false,duration:1},
+        {id:'s15',name:'HVAC ductwork',assign:'Unified MEP',done:false,duration:1},
+      ]},
+      {id:'ph5',name:'Finishes',start:d(y,m+3,21),end:d(y,m+5,30),assign:'Interior Pros',status:'planning',steps:[
+        {id:'s16',name:'Drywall and paint',assign:'Interior Pros',done:false,duration:1},
+        {id:'s17',name:'Flooring',assign:'Interior Pros',done:false,duration:1},
+        {id:'s19',name:'Final inspections',assign:'City Inspector',done:false,duration:1},
+      ]},
+    ]},
+    {id:'p2',name:'Harbor Bridge Repair',desc:'Structural repairs to deck sections',start:d(y,m,1),end:d(y,m+3,15),budget:890000,status:'delayed',manager:'Sarah Chen',address:'Harbor Bridge, Port Ave',progress:22,phases:[
+      {id:'ph6',name:'Inspection',start:d(y,m,1),end:d(y,m,10),assign:'Struct. Engineers',status:'done',steps:[
+        {id:'s20',name:'Deck core sampling',assign:'Struct. Engineers',done:true,duration:1},
+        {id:'s21',name:'Load capacity testing',assign:'Struct. Engineers',done:true,duration:1},
+        {id:'s22',name:'Report and sign-off',assign:'Struct. Engineers',done:true,duration:1},
+      ]},
+      {id:'ph7',name:'Deck Demo',start:d(y,m,11),end:d(y,m+1,5),assign:'Demo Squad',status:'delayed',steps:[
+        {id:'s23',name:'Traffic control setup',assign:'City Traffic',done:true,duration:1},
+        {id:'s24',name:'Section A removal',assign:'Demo Squad',done:false,duration:1},
+        {id:'s25',name:'Section B removal',assign:'Demo Squad',done:false,duration:1},
+      ]},
+      {id:'ph8',name:'Rebar and Pour',start:d(y,m+1,6),end:d(y,m+2,20),assign:'Concrete Bros',status:'planning',steps:[
+        {id:'s27',name:'Formwork installation',assign:'Concrete Bros',done:false,duration:1},
+        {id:'s28',name:'Rebar cage assembly',assign:'Concrete Bros',done:false,duration:1},
+        {id:'s29',name:'Concrete pours',assign:'Concrete Bros',done:false,duration:1},
+      ]},
+      {id:'ph9',name:'Surfacing',start:d(y,m+2,21),end:d(y,m+3,15),assign:'Road Crew',status:'planning',steps:[
+        {id:'s31',name:'Waterproofing membrane',assign:'Road Crew',done:false,duration:1},
+        {id:'s32',name:'Asphalt overlay',assign:'Road Crew',done:false,duration:1},
+        {id:'s33',name:'Line marking',assign:'Road Crew',done:false,duration:1},
+      ]},
+    ]},
+    {id:'p3',name:'Tech Campus Phase 1',desc:'Building A and parking structure',start:d(y,m+1,1),end:d(y,m+8,31),budget:7800000,status:'planning',manager:'James Okafor',address:'Innovation Blvd',progress:5,phases:[
+      {id:'ph10',name:'Demolition',start:d(y,m+1,1),end:d(y,m+1,25),assign:'Demo Squad',status:'planning',steps:[
+        {id:'s34',name:'Asbestos abatement',assign:'EnviroSafe',done:false,duration:1},
+        {id:'s35',name:'Structure demolition',assign:'Demo Squad',done:false,duration:1},
+      ]},
+      {id:'ph11',name:'Foundation',start:d(y,m+1,26),end:d(y,m+3,10),assign:'Concrete Bros',status:'planning',steps:[
+        {id:'s37',name:'Deep excavation',assign:'Concrete Bros',done:false,duration:1},
+        {id:'s38',name:'Pile installation',assign:'Concrete Bros',done:false,duration:1},
+        {id:'s39',name:'Grade beam and slab',assign:'Concrete Bros',done:false,duration:1},
+      ]},
+      {id:'ph12',name:'Structural Steel',start:d(y,m+3,11),end:d(y,m+5,30),assign:'Steel Crew',status:'planning',steps:[
+        {id:'s40',name:'Steel erection floors 1-3',assign:'Steel Crew',done:false,duration:1},
+        {id:'s42',name:'Metal decking',assign:'Steel Crew',done:false,duration:1},
+      ]},
+      {id:'ph13',name:'Envelope',start:d(y,m+5,15),end:d(y,m+7,15),assign:'Facade Systems',status:'planning',steps:[
+        {id:'s43',name:'Curtain wall',assign:'Facade Systems',done:false,duration:1},
+        {id:'s44',name:'Roofing system',assign:'Facade Systems',done:false,duration:1},
+      ]},
+      {id:'ph14',name:'Interior Build-out',start:d(y,m+7,1),end:d(y,m+8,31),assign:'Interior Pros',status:'planning',steps:[
+        {id:'s46',name:'Partitions and ceilings',assign:'Interior Pros',done:false,duration:1},
+        {id:'s47',name:'MEP fit-out',assign:'Unified MEP',done:false,duration:1},
+        {id:'s49',name:'Commissioning',assign:'James Okafor',done:false,duration:1},
+      ]},
+    ]},
+  ];
+}
+function sampleTasks(){
+  const n=Date.now(),D=86400000;
+  return [
+    {id:'t1',label:'Submit permit application',projectId:'p1',done:false,due:new Date(n-D*2).toISOString().slice(0,10)},
+    {id:'t2',label:'Confirm steel delivery ETA',projectId:'p1',done:true,due:new Date(n-D*5).toISOString().slice(0,10)},
+    {id:'t3',label:'Engineer inspection — deck B',projectId:'p2',done:false,due:new Date(n+D*3).toISOString().slice(0,10)},
+    {id:'t4',label:'Subcontractor bid review',projectId:'p3',done:false,due:new Date(n+D*7).toISOString().slice(0,10)},
+    {id:'t5',label:'Environmental impact report',projectId:'p3',done:false,due:new Date(n+D*14).toISOString().slice(0,10)},
+  ];
+}
+function sampleSubs(){
+  return [
+    {id:'sub1',first:'Carlos',last:'Rivera',company:'Groundworks Co.',role:'Site Manager',phone:'(555) 201-3344',email:'carlos@groundworks.co',license:'LIC-77821',notes:'Preferred partner for excavation',tags:['Excavation','Grading','Site Prep']},
+    {id:'sub2',first:'Maria',last:'Santos',company:'Concrete Bros',role:'Lead Foreman',phone:'(555) 309-5512',email:'maria@concretebros.com',license:'LIC-44093',notes:'',tags:['Concrete','Foundations','Flatwork']},
+    {id:'sub3',first:'David',last:'Park',company:'Steel Crew',role:'Structural Lead',phone:'(555) 412-8820',email:'dpark@steelcrew.net',license:'LIC-55610',notes:'Available Mon–Fri only',tags:['Steel Erection','Framing','Metal Decking']},
+    {id:'sub4',first:'Angela',last:'Torres',company:'Unified MEP',role:'MEP Superintendent',phone:'(555) 518-2277',email:'atorres@unifiedmep.com',license:'LIC-66341',notes:'',tags:['Plumbing','Electrical','HVAC']},
+    {id:'sub5',first:'Brian',last:'Chen',company:'Interior Pros',role:'Finish Foreman',phone:'(555) 623-9901',email:'bchen@interiorpros.com',license:'',notes:'',tags:['Drywall','Flooring','Cabinetry']},
+    {id:'sub6',first:'Nadia',last:'Hoffman',company:'Facade Systems',role:'Curtain Wall Specialist',phone:'(555) 731-4466',email:'nhoffman@facade.sys',license:'LIC-88002',notes:'',tags:['Curtain Wall','Glazing','Roofing']},
+  ];
+}
+function sampleEmployees(){
+  return [
+    {id:'emp1',first:'James',last:'Okafor',company:'Destiny Homes',role:'Project Manager',phone:'(555) 100-2233',email:'jokafor@destinyhomes.com',license:'',notes:'Lead PM for Tech Campus',tags:['Project Management','Estimating']},
+    {id:'emp2',first:'Sarah',last:'Chen',company:'Destiny Homes',role:'Site Supervisor',phone:'(555) 100-4455',email:'schen@destinyhomes.com',license:'',notes:'Harbor Bridge lead',tags:['Site Supervision','Safety']},
+    {id:'emp3',first:'Tom',last:'Bauer',company:'Destiny Homes',role:'Estimator',phone:'(555) 100-6677',email:'tbauer@destinyhomes.com',license:'',notes:'',tags:['Estimating','Procurement']},
+    {id:'emp4',first:'Lisa',last:'Nguyen',company:'Destiny Homes',role:'Safety Officer',phone:'(555) 100-8899',email:'lnguyen@destinyhomes.com',license:'OSHA-30',notes:'',tags:['Safety','Compliance']},
+  ];
+}
+
+// ─── People helpers ───────────────────────────────────────────
+function personDisplayName(p){return (p.first+' '+p.last).trim()||p.company||'—';}
+function personInitials(p){
+  const f=p.first?p.first[0]:'';const l=p.last?p.last[0]:'';
+  return (f+l).toUpperCase()||p.company?.[0]?.toUpperCase()||'?';
+}
+// Returns sorted list of all assignee names for dropdowns
+function allAssignees(){
+  const names=new Set();
+  [...subs,...employees].forEach(p=>{
+    if(p.first||p.last) names.add((p.first+' '+p.last).trim());
+    if(p.company) names.add(p.company);
+  });
+  return [...names].sort();
+}
+
+// ─── Render assignee dropdown options in a <select> element ──
+function populateAssigneeSelect(selectId,currentValue){
+  const el=document.getElementById(selectId);if(!el)return;
+  const names=allAssignees();
+  el.innerHTML=`<option value="">Unassigned</option>`
+    +names.map(n=>`<option value="${n}" ${n===currentValue?'selected':''}>${n}</option>`).join('');
+  if(currentValue&&!names.includes(currentValue)){
+    el.innerHTML+=`<option value="${currentValue}" selected>${currentValue} (custom)</option>`;
+  }
+}
+
+// ─── Render Subcontractors ────────────────────────────────────
+function renderSubs(){
+  const q=(document.getElementById('sub-search')?.value||'').toLowerCase();
+  const visibleSubs=filterSample(subs,new Set(SAMPLE_IDS.subs));
+  const filtered=visibleSubs.filter(s=>
+    !q||personDisplayName(s).toLowerCase().includes(q)||
+    (s.company||'').toLowerCase().includes(q)||
+    (s.tags||[]).some(t=>t.toLowerCase().includes(q))
+  ).sort((a,b)=>(a.company||'').localeCompare(b.company||''));
+  const grid=document.getElementById('sub-grid');
+  const empty=document.getElementById('sub-empty');
+  if(!filtered.length){grid.innerHTML='';empty.style.display='';return;}
+  empty.style.display='none';
+  grid.innerHTML=filtered.map(s=>personCard(s,'sub')).join('');
+}
+
+// ─── Render Employees ─────────────────────────────────────────
+function renderEmployees(){
+  const q=(document.getElementById('emp-search')?.value||'').toLowerCase();
+  const visibleEmps=filterSample(employees,new Set(SAMPLE_IDS.employees));
+  const filtered=visibleEmps.filter(e=>
+    !q||personDisplayName(e).toLowerCase().includes(q)||
+    (e.role||'').toLowerCase().includes(q)||
+    (e.tags||[]).some(t=>t.toLowerCase().includes(q))
+  );
+  const grid=document.getElementById('emp-grid');
+  const empty=document.getElementById('emp-empty');
+  if(!filtered.length){grid.innerHTML='';empty.style.display='';return;}
+  empty.style.display='none';
+  grid.innerHTML=filtered.map(e=>personCard(e,'emp')).join('');
+}
+
+function personCard(p,type){
+  const tags=(p.tags||[]).map(t=>`<span class="person-tag">${t}</span>`).join('');
+  return `<div class="person-card">
+    <div class="person-card-actions">
+      <button class="btn xs" onclick="openPersonModal('${type}','${p.id}')">✎</button>
+      <button class="btn xs" style="color:var(--dant)" onclick="deletePerson('${type}','${p.id}')">✕</button>
+    </div>
+    <div class="person-card-hdr">
+      <div class="person-avatar">${personInitials(p)}</div>
+      <div>
+        <div class="person-name">${personDisplayName(p)}</div>
+        <div class="person-role">${p.role||p.company||''}</div>
+      </div>
+    </div>
+    <div class="person-details">
+      ${p.company&&(p.first||p.last)?`<div class="person-detail"><span class="person-detail-lbl">Company</span>${p.company}</div>`:''}
+      ${p.phone?`<div class="person-detail"><span class="person-detail-lbl">Phone</span><a href="tel:${p.phone}" style="color:var(--inft)">${p.phone}</a></div>`:''}
+      ${p.email?`<div class="person-detail"><span class="person-detail-lbl">Email</span><a href="mailto:${p.email}" style="color:var(--inft)">${p.email}</a></div>`:''}
+      ${p.license?`<div class="person-detail"><span class="person-detail-lbl">License</span>${p.license}</div>`:''}
+      ${p.notes?`<div class="person-detail"><span class="person-detail-lbl">Notes</span>${p.notes}</div>`:''}
+    </div>
+    ${tags?`<div class="person-tags">${tags}</div>`:''}
+  </div>`;
+}
+
+// ─── Person modal ─────────────────────────────────────────────
+let personModalType=null, personModalId=null;
+function openPersonModal(type,id=null){
+  personModalType=type;personModalId=id;
+  const list=type==='sub'?subs:employees;
+  const p=id?list.find(x=>x.id===id):null;
+  const isSub=type==='sub';
+  document.getElementById('person-modal-title').textContent=p?(isSub?'Edit Subcontractor':'Edit Employee'):(isSub?'Add Subcontractor':'Add Employee');
+  document.getElementById('pm-delete-btn').style.display=p?'':'none';
+  document.getElementById('pm-license-row').style.display=isSub?'':'none';
+  document.getElementById('pm-first').value=p?.first||'';
+  document.getElementById('pm-last').value=p?.last||'';
+  document.getElementById('pm-company').value=p?.company||'';
+  document.getElementById('pm-role').value=p?.role||'';
+  document.getElementById('pm-phone').value=p?.phone||'';
+  document.getElementById('pm-email').value=p?.email||'';
+  document.getElementById('pm-license').value=p?.license||'';
+  document.getElementById('pm-notes').value=p?.notes||'';
+  document.getElementById('pm-tags').value=(p?.tags||[]).join(', ');
+  document.getElementById('person-modal').classList.add('open');
+  setTimeout(()=>document.getElementById('pm-first').focus(),50);
+}
+function closePersonModal(){document.getElementById('person-modal').classList.remove('open');personModalType=null;personModalId=null;}
+function savePerson(){
+  const first=document.getElementById('pm-first').value.trim();
+  const last=document.getElementById('pm-last').value.trim();
+  const company=document.getElementById('pm-company').value.trim();
+  if(!first&&!last&&!company){alert('Please enter at least a name or company.');return;}
+  const data={
+    first,last,company,
+    role:document.getElementById('pm-role').value.trim(),
+    phone:document.getElementById('pm-phone').value.trim(),
+    email:document.getElementById('pm-email').value.trim(),
+    license:document.getElementById('pm-license').value.trim(),
+    notes:document.getElementById('pm-notes').value.trim(),
+    tags:document.getElementById('pm-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
+  };
+  const list=personModalType==='sub'?subs:employees;
+  if(personModalId){
+    Object.assign(list.find(x=>x.id===personModalId),data);
+  } else {
+    const prefix=personModalType==='sub'?'sub':'emp';
+    list.push({...data,id:prefix+Date.now()});
+  }
+  save();
+  const type=personModalType;
+  closePersonModal();
+  if(type==='sub')renderSubs();else renderEmployees();
+}
+function deletePerson(type,id){
+  if(!confirm('Delete this person?'))return false;
+  if(type==='sub')subs=subs.filter(x=>x.id!==id);
+  else employees=employees.filter(x=>x.id!==id);
+  save();
+  if(type==='sub')renderSubs();else renderEmployees();
+  return true;
+}
+function deleteCurrentPerson(){
+  if(!personModalType||!personModalId)return;
+  const type=personModalType;
+  const id=personModalId;
+  if(deletePerson(type,id)) closePersonModal();
+}
+function normalizePreds(preds){
+  return (preds||[]).map(x=>typeof x==='string'?{id:x,lag:0}:x).filter(x=>x&&x.id);
+}
+function buildSuccessorMap(ph){
+  const succMap={};
+  (ph.steps||[]).forEach(st=>{succMap[st.id]=[];});
+  (ph.steps||[]).forEach(st=>{
+    normalizePreds(st.predecessors).forEach(({id})=>{
+      if(!succMap[id]) succMap[id]=[];
+      if(!succMap[id].includes(st.id)) succMap[id].push(st.id);
+    });
+  });
+  return succMap;
+}
+function syncStepLinks(ph){
+  const steps=ph.steps||[];
+  const validIds=new Set(steps.map(st=>st.id));
+  const succMap=buildSuccessorMap(ph);
+  steps.forEach(st=>{
+    st.predecessors=normalizePreds(st.predecessors).filter(pred=>validIds.has(pred.id));
+    st.successors=(succMap[st.id]||[]).filter(id=>validIds.has(id));
+  });
+}
+function removeStepFromPhase(ph, stid){
+  ph.steps=(ph.steps||[]).filter(s=>s.id!==stid);
+  syncStepLinks(ph);
+  cascadeStepDates(ph);
+  recalcPhaseDates(ph);
+  syncPhaseStatus(ph);
+}
+
+// ─── CSV Import ───────────────────────────────────────────────
+function wouldCreateCycleFromPreds(ph,fromStid,toStid){
+  const succMap=buildSuccessorMap(ph);
+  const visited=new Set();
+  function dfs(stid){
+    if(stid===fromStid)return true;
+    if(visited.has(stid))return false;
+    visited.add(stid);
+    return (succMap[stid]||[]).some(sid=>dfs(sid));
+  }
+  return dfs(toStid);
+}
+const CSV_FIELDS=[
+  {key:'first',    label:'First Name'},
+  {key:'last',     label:'Last Name'},
+  {key:'company',  label:'Company / Trade'},
+  {key:'role',     label:'Role / Title'},
+  {key:'phone',    label:'Phone'},
+  {key:'email',    label:'Email'},
+  {key:'license',  label:'License / Cert #'},
+  {key:'notes',    label:'Notes'},
+  {key:'tags',     label:'Skills / Trades'},
+];
+// Auto-match heuristic: map header name → field key
+const CSV_ALIASES={
+  'first name':'first','firstname':'first','first':'first',
+  'last name':'last','lastname':'last','last':'last','surname':'last',
+  'company':'company','company/trade':'company','trade':'company','business':'company',
+  'role':'role','title':'role','role/title':'role','position':'role','job title':'role',
+  'phone':'phone','phone number':'phone','mobile':'phone','cell':'phone','telephone':'phone',
+  'email':'email','e-mail':'email','email address':'email',
+  'license':'license','license #':'license','cert #':'license','certification':'license','license/cert #':'license',
+  'notes':'notes','note':'notes','comments':'notes',
+  'tags':'tags','skills':'tags','trades':'tags','skills/trades':'tags','specialties':'tags',
+};
+
+let csvRows=[], csvHeaders=[], csvFileName='';
+
+function openCsvImport(){
+  csvRows=[];csvHeaders=[];csvFileName='';
+  document.getElementById('csv-step-upload').style.display='';
+  document.getElementById('csv-step-map').style.display='none';
+  document.getElementById('csv-import-btn').style.display='none';
+  document.getElementById('csv-import-summary').textContent='';
+  document.getElementById('csv-upload-error').style.display='none';
+  document.getElementById('csv-file-input').value='';
+  document.getElementById('csv-dropzone').style.borderColor='var(--bsc)';
+  document.getElementById('csv-modal').classList.add('open');
+}
+function closeCsvImport(){
+  document.getElementById('csv-modal').classList.remove('open');
+}
+function csvBack(){
+  document.getElementById('csv-step-upload').style.display='';
+  document.getElementById('csv-step-map').style.display='none';
+  document.getElementById('csv-import-btn').style.display='none';
+  document.getElementById('csv-import-summary').textContent='';
+}
+
+function handleCsvDrop(e){
+  e.preventDefault();
+  document.getElementById('csv-dropzone').style.borderColor='var(--bsc)';
+  const file=e.dataTransfer.files[0];
+  if(file)handleCsvFile(file);
+}
+function handleCsvFile(file){
+  if(!file){return;}
+  if(!file.name.toLowerCase().endsWith('.csv')){
+    showCsvError('Please upload a .csv file.');return;
+  }
+  csvFileName=file.name;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const parsed=parseCsv(e.target.result);
+      if(!parsed.length){showCsvError('The file appears to be empty.');return;}
+      csvHeaders=parsed[0];
+      csvRows=parsed.slice(1).filter(r=>r.some(c=>c.trim()));
+      if(!csvRows.length){showCsvError('No data rows found after the header.');return;}
+      document.getElementById('csv-upload-error').style.display='none';
+      showCsvMapStep();
+    }catch(err){showCsvError('Could not parse CSV: '+err.message);}
+  };
+  reader.readAsText(file);
+}
+function showCsvError(msg){
+  const el=document.getElementById('csv-upload-error');
+  el.textContent=msg;el.style.display='';
+}
+
+function parseCsv(text){
+  // RFC 4180-ish parser: handles quoted fields with commas/newlines
+  const rows=[];let row=[],field='',inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i],n=text[i+1];
+    if(inQ){
+      if(c==='"'&&n==='"'){field+='"';i++;}
+      else if(c==='"'){inQ=false;}
+      else{field+=c;}
+    }else{
+      if(c==='"'){inQ=true;}
+      else if(c===','){row.push(field);field='';}
+      else if(c==='\r'&&n==='\n'){row.push(field);field='';rows.push(row);row=[];i++;}
+      else if(c==='\n'||c==='\r'){row.push(field);field='';rows.push(row);row=[];}
+      else{field+=c;}
+    }
+  }
+  if(field||row.length)row.push(field);
+  if(row.length)rows.push(row);
+  return rows;
+}
+
+function autoMapHeader(header){
+  return CSV_ALIASES[header.toLowerCase().trim()]||null;
+}
+
+function showCsvMapStep(){
+  document.getElementById('csv-step-upload').style.display='none';
+  document.getElementById('csv-step-map').style.display='';
+  document.getElementById('csv-import-btn').style.display='';
+  document.getElementById('csv-file-label').textContent=csvFileName;
+  document.getElementById('csv-row-count').textContent=`(${csvRows.length} data rows)`;
+
+  // Build mapping grid
+  const grid=document.getElementById('csv-map-grid');
+  grid.innerHTML=`<div style="font-size:11px;font-weight:600;color:var(--ts)">CSV Column</div><div></div><div style="font-size:11px;font-weight:600;color:var(--ts)">Maps to Field</div>`;
+  csvHeaders.forEach((h,i)=>{
+    const auto=autoMapHeader(h);
+    const opts=`<option value="">— Ignore —</option>`+CSV_FIELDS.map(f=>`<option value="${f.key}" ${auto===f.key?'selected':''}>${f.label}</option>`).join('');
+    grid.innerHTML+=`
+      <div class="map-col-name" title="${h}">${h||'(empty)'}</div>
+      <div class="map-arrow">→</div>
+      <select id="csv-map-${i}" class="fld" style="font-size:12px;padding:4px 8px" onchange="updateCsvPreview()">${opts}</select>`;
+  });
+  updateCsvPreview();
+}
+
+function getMappings(){
+  return csvHeaders.map((_,i)=>document.getElementById('csv-map-'+i)?.value||'');
+}
+
+function updateCsvPreview(){
+  const mappings=getMappings();
+  const skipHeader=document.getElementById('csv-skip-header').checked;
+  const rows=skipHeader?csvRows:csvRows; // all data rows (header already excluded)
+
+  // Which mapped fields are active?
+  const activeCols=mappings.map((m,i)=>m?i:-1).filter(i=>i>=0);
+  const activeFields=mappings.filter(Boolean);
+
+  const previewRows=rows.slice(0,8);
+  const table=document.getElementById('csv-preview-table');
+
+  if(!activeCols.length){
+    table.innerHTML='<tr><td style="padding:12px;color:var(--tt);text-align:center">No columns mapped yet</td></tr>';
+    document.getElementById('csv-preview-count').textContent='';
+    document.getElementById('csv-import-btn').textContent='Import';
+    document.getElementById('csv-import-summary').textContent='';
+    return;
+  }
+
+  const headers=activeCols.map(i=>{
+    const field=CSV_FIELDS.find(f=>f.key===mappings[i]);
+    return `<th>${field?field.label:mappings[i]}</th>`;
+  }).join('');
+  const bodyRows=previewRows.map(r=>{
+    const cells=activeCols.map(i=>`<td title="${(r[i]||'').replace(/"/g,'&quot;')}">${r[i]||'<span style="color:var(--tt)">—</span>'}</td>`).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  table.innerHTML=`<thead><tr>${headers}</tr></thead><tbody>${bodyRows}</tbody>`;
+
+  const total=rows.length;
+  document.getElementById('csv-preview-count').textContent=`(first ${Math.min(8,total)} of ${total} rows)`;
+  document.getElementById('csv-import-btn').textContent=`Import ${total} subcontractor${total===1?'':'s'}`;
+  document.getElementById('csv-import-summary').textContent='';
+  document.getElementById('csv-map-error').style.display='none';
+}
+
+function commitCsvImport(){
+  const mappings=getMappings();
+  const activeMappings=mappings.filter(Boolean);
+  if(!activeMappings.length){
+    const err=document.getElementById('csv-map-error');
+    err.textContent='Please map at least one column before importing.';
+    err.style.display='';return;
+  }
+
+  let imported=0, skipped=0;
+  csvRows.forEach(row=>{
+    const data={first:'',last:'',company:'',role:'',phone:'',email:'',license:'',notes:'',tags:[]};
+    mappings.forEach((field,ci)=>{
+      if(!field)return;
+      const val=(row[ci]||'').trim();
+      if(field==='tags'){
+        data.tags=val?val.split(/[,;|]/).map(t=>t.trim()).filter(Boolean):[];
+      }else{
+        data[field]=val;
+      }
+    });
+    // Skip if completely empty
+    if(!data.first&&!data.last&&!data.company){skipped++;return;}
+    // Check for duplicate by name+company
+    const nameKey=`${data.first} ${data.last} ${data.company}`.trim().toLowerCase();
+    const isDup=subs.some(s=>`${s.first} ${s.last} ${s.company}`.trim().toLowerCase()===nameKey);
+    if(isDup){skipped++;return;}
+    subs.push({...data,id:'sub'+Date.now()+'-'+imported});
+    imported++;
+  });
+
+  save();
+  closeCsvImport();
+  renderSubs();
+
+  // Brief success toast
+  const msg=`Imported ${imported} subcontractor${imported===1?'':'s'}${skipped?` · ${skipped} skipped (empty or duplicate)`:''}`;
+  showToast(msg, imported>0?'success':'warn');
+}
+
+function showToast(msg,type='success'){
+  const t=document.createElement('div');
+  t.style.cssText=`position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:${type==='success'?'var(--brand)':'#BA7517'};color:#fff;padding:10px 20px;border-radius:var(--rlg);font-size:13px;font-weight:500;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.18);pointer-events:none;transition:opacity .4s`;
+  t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),400);},3000);
+}
+
+// ─── Assignee autocomplete datalist ──────────────────────────
+function refreshAssigneeDatalist(){
+  let dl=document.getElementById('assignee-list');
+  if(!dl){
+    dl=document.createElement('datalist');
+    dl.id='assignee-list';
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML=allAssignees().map(n=>`<option value="${n}">`).join('');
+}
+
+const SL={active:'Active',planning:'Planning',delayed:'Delayed',done:'Done'};
+const BC={active:['#1D9E75','#E1F5EE','#085041'],planning:['#3d4278','#eceef8','#2a2d5a'],delayed:['#E24B4A','#FCEBEB','#791F1F'],done:['#888780','#F1EFE8','#444441']};
+function sc(ph){const s=ph.steps||[];return s.length?{done:s.filter(x=>x.done).length,total:s.length}:null}
+
+// ─── Display-only date formatter (yyyy-mm-dd → mm/dd/yyyy) ────
+// Internal storage always stays ISO. Only call this for display.
+function fmtDate(iso){
+  if(!iso||iso.length<10) return iso||'';
+  const [y,m,d]=iso.split('-');
+  return `${m}/${d}/${y}`;
+}
+function fmtRange(start,end){
+  if(start&&end) return `${fmtDate(start)} → ${fmtDate(end)}`;
+  if(start) return fmtDate(start);
+  if(end)   return fmtDate(end);
+  return '';
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────
+function switchTab(n,el){
+  ['projects','schedule','tasks','subs','employees','settings'].forEach(t=>document.getElementById('tab-'+t).style.display=t===n?'':'none');
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  if(n==='schedule'){if(schedView==='gantt')renderGantt();else renderCalendar();}
+  if(n==='tasks')renderTasks();
+  if(n==='subs')renderSubs();
+  if(n==='employees')renderEmployees();
+  if(n==='settings')renderSettings();
+}
+
+// ─── Projects tab ─────────────────────────────────────────────
+function renderProjects(){
+  const g=document.getElementById('pgrid'),e=document.getElementById('pempty');
+  const visible=filterSample(projects,new Set(SAMPLE_IDS.projects));
+  const visibleTasks=filterSample(tasks,new Set(SAMPLE_IDS.tasks));
+  const taskStats=buildTasksByProject(visibleTasks);
+  if(!visible.length){g.innerHTML='';e.style.display='';return;}
+  e.style.display='none';
+  g.innerHTML=visible.map(p=>{
+    const dl=p.end?Math.ceil((new Date(p.end)-Date.now())/86400000):null;
+    const ts=(p.phases||[]).reduce((n,ph)=>n+(ph.steps||[]).length,0);
+    const ds=(p.phases||[]).reduce((n,ph)=>n+(ph.steps||[]).filter(s=>s.done).length,0);
+    const bc={active:'ba',planning:'bp',delayed:'bd',done:'bdo'}[p.status]||'bp';
+    const fc={active:'fa',planning:'fp',delayed:'fd',done:'fdo'}[p.status]||'fp';
+    return `<div class="pcard" onclick="openProjectModal('${p.id}')">
+      <div class="pcard-hdr">
+        <div><div class="pcard-title">${p.name}</div><div class="pcard-meta">${p.manager||'—'} · ${p.address||'—'}</div></div>
+        <span class="badge ${bc}">${SL[p.status]||p.status}</span>
+      </div>
+      <div class="pbar"><div class="pfill ${fc}" style="width:${p.progress||0}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ts)">
+        <span>${p.progress||0}% complete</span>
+        ${dl!==null?`<span>${dl>0?dl+' days left':'Overdue'}</span>`:''}
+      </div>
+      <div class="pstats">
+        <div class="stat">Budget <strong>$${(p.budget||0).toLocaleString()}</strong></div>
+        <div class="stat">Phases <strong>${(p.phases||[]).length}</strong></div>
+        ${ts?`<div class="stat">Steps <strong>${ds}/${ts}</strong></div>`:''}
+        <div class="stat">Tasks <strong>${taskStats.counts.get(p.id)||0}</strong></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── SCHEDULE / GANTT ─────────────────────────────────────────
+const BW=900; // bar area width px
+
+function renderGantt(){
+  // sync filter dropdown
+  const sel=document.getElementById('g-filter'),filter=sel.value;
+  const sampleProjSet=new Set(SAMPLE_IDS.projects);
+  const visibleProjects=filterSample(projects,sampleProjSet);
+  const visibleTasks=filterSample(tasks,new Set(SAMPLE_IDS.tasks));
+  const visibleTaskStats=buildTasksByProject(visibleTasks);
+  sel.innerHTML='<option value="all">All projects</option>'+visibleProjects.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  sel.value=filter;
+
+  const showTasks=document.getElementById('g-tasks').checked;
+  const filtered=filter==='all'?visibleProjects:visibleProjects.filter(p=>p.id===filter);
+  const filteredProjectIds=new Set(filtered.map(p=>p.id));
+
+  // Collect all date-bearing items to compute timeline
+  const allDates=[];
+  filtered.forEach(p=>{
+    (p.phases||[]).forEach(ph=>{if(ph.start)allDates.push(new Date(ph.start));if(ph.end)allDates.push(new Date(ph.end));});
+  });
+  if(showTasks){
+    visibleTasks.forEach(t=>{
+      if(!t.due||!filteredProjectIds.has(t.projectId))return;
+      allDates.push(new Date(t.due));
+    });
+  }
+
+  const empty=document.getElementById('g-empty');
+  if(!allDates.length){document.getElementById('g-body-left').innerHTML='';document.getElementById('g-body-right').innerHTML='';empty.style.display='';return;}
+  empty.style.display='none';
+
+  let minDate=new Date(Math.min(...allDates));minDate.setDate(1);
+  let maxDate=new Date(Math.max(...allDates));maxDate.setMonth(maxDate.getMonth()+1);maxDate.setDate(0);
+  const totalDays=(maxDate-minDate)/86400000||1;
+
+  // Month header
+  const months=[],cur=new Date(minDate);
+  while(cur<=maxDate){months.push(new Date(cur));cur.setMonth(cur.getMonth()+1);}
+  const mhdr=months.map(mo=>{
+    const s=Math.max(0,(mo-minDate)/86400000/totalDays*BW);
+    const e=Math.min(BW,(new Date(mo.getFullYear(),mo.getMonth()+1,0)-minDate)/86400000/totalDays*BW);
+    const w=e-s;if(w<20)return'';
+    return `<span style="position:absolute;left:${s}px;width:${w}px;text-align:center;font-size:11px;color:var(--ts);white-space:nowrap;overflow:hidden">${mo.toLocaleString('default',{month:'short'})} '${mo.getFullYear().toString().slice(2)}</span>`;
+  }).join('');
+  document.getElementById('g-month-hdr').innerHTML=`<div style="position:relative;height:18px;width:${BW}px">${mhdr}</div>`;
+
+  const todayOff=Math.max(0,Math.min(BW,(Date.now()-minDate)/86400000/totalDays*BW));
+  const tline=`<div style="position:absolute;left:${todayOff}px;top:0;bottom:0;width:1.5px;background:#E24B4A;opacity:.65;z-index:2;pointer-events:none"></div>`;
+
+  function barOff(date){return Math.max(0,Math.min(BW,(new Date(date)-minDate)/86400000/totalDays*BW));}
+  function barW(s,e){return Math.max(6,barOff(e)-barOff(s));}
+
+  const rowsLeft=[], rowsRight=[];
+  // Helper: push a row split into left (metadata) cells and right (bar) cell
+  function pushRow(id, cls, leftHtml, barHtml){
+    rowsLeft.push(`<tr class="${cls}"${id?` id="${id}"`:''}>${leftHtml}</tr>`);
+    rowsRight.push(`<tr class="${cls}"${id?` id="${id}-bar"`:''}>${barHtml}</tr>`);
+  }
+  filtered.forEach(p=>{
+    // Project header row
+    pushRow('', 'row-project',
+      `<td class="nc" colspan="5" style="font-weight:600;font-size:13px">${p.name}
+        <span class="badge ${({active:'ba',planning:'bp',delayed:'bd',done:'bdo'})[p.status]||'bp'}" style="font-size:10px;margin-left:6px">${SL[p.status]||p.status}</span>
+      </td>
+      <td class="nc"><button class="btn xs" title="Edit project" onclick="openProjectModal('${p.id}')">✎</button></td>`,
+      `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}</div></td>`);
+
+    // Phase rows
+    (p.phases||[]).forEach((ph,pi)=>{
+      const [bar,bg,txt]=BC[ph.status]||BC.planning;
+      const left=ph.start?barOff(ph.start):0;
+      const w=ph.start&&ph.end?barW(ph.start,ph.end):20;
+      const comp=sc(ph);
+      const compTxt=comp?` <span style="font-size:10px;color:var(--ts)">${comp.done}/${comp.total}</span>`:'';
+      const hasSteps=(ph.steps||[]).length>0;
+      const isExpanded=!!ganttExpanded[ph.id];
+      const arrowStyle=`display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;cursor:${hasSteps?'pointer':'default'};flex-shrink:0;color:${hasSteps?'var(--ts)':'var(--bt)'};font-size:10px;transition:transform .15s;transform:${isExpanded?'rotate(90deg)':'rotate(0deg)'}`;
+
+      pushRow(`row-ph-${ph.id}`, 'row-phase',
+        `<td class="nc">
+          <div class="cell-name phase-name">
+            <span style="${arrowStyle}" ${hasSteps?`onclick="toggleGanttPhase('${ph.id}')" title="${isExpanded?'Collapse':'Expand'} steps"`:''}>${hasSteps?'▶':''}</span>
+            <span id="ph-name-disp-${ph.id}" style="font-weight:500;font-size:13px">${ph.name}${compTxt}</span>
+            <button class="edit-btn" title="Edit phase" onclick="startEditPhase('${p.id}','${ph.id}')">✎</button>
+          </div>
+        </td>
+        <td class="nc" id="ph-assign-disp-${ph.id}" style="font-size:12px;color:var(--ts)">${ph.assign||'—'}</td>
+        <td class="nc">
+          <select style="font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)" onchange="updatePhaseStatus('${p.id}','${ph.id}',this.value)">
+            <option value="planning" ${ph.status==='planning'?'selected':''}>Planning</option>
+            <option value="active"   ${ph.status==='active'  ?'selected':''}>Active</option>
+            <option value="delayed"  ${ph.status==='delayed' ?'selected':''}>Delayed</option>
+            <option value="done"     ${ph.status==='done'    ?'selected':''}>Done</option>
+          </select>
+        </td>
+        <td class="nc" style="font-size:11px;color:var(--ts);white-space:nowrap">${ph.start?fmtDate(ph.start):'—'}</td>
+        <td class="nc" style="font-size:11px;color:var(--ts);white-space:nowrap">${ph.end?fmtDate(ph.end):'—'}</td>
+        <td class="nc">
+          <div class="inline-row-btns">
+            <button class="btn xs pr" title="Add step to this phase" onclick="startAddStep('${p.id}','${ph.id}')">+ Step</button>
+            <button class="btn xs" title="Add delay" style="color:var(--dant)" onclick="openDelayModal('${p.id}','${ph.id}')">⚠ Delay</button>
+            <button class="btn xs" title="Delete phase" style="color:var(--dant)" onclick="deletePhase('${p.id}','${ph.id}')">✕</button>
+          </div>
+        </td>`,
+        `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}
+          <div class="gbar" style="left:${left}px;width:${w}px;background:${bg};border:.5px solid ${bar};color:${txt}">${w>80?ph.name:''}</div>
+        </div></td>`);
+
+      // Step rows — only shown when this phase is expanded
+      if(isExpanded){
+        const sortedSteps=[...(ph.steps||[])].sort((a,b)=>{
+          if(!a.start&&!b.start) return 0;
+          if(!a.start) return 1;
+          if(!b.start) return -1;
+          return a.start<b.start?-1:a.start>b.start?1:0;
+        });
+        sortedSteps.forEach((st,si)=>{
+          const status=st.status||(st.done?'done':'planning');
+          const [sbar,sbg,stxt]=BC[status]||BC.planning;
+          const scol=sbar;
+          const today2=new Date().toISOString().slice(0,10);
+          const stepOv=st.end&&st.end<today2&&status!=='done';
+          const isDone=status==='done';
+          const durLabel=st.duration?`<span style="font-size:10px;color:var(--ts);background:var(--bs);border:.5px solid var(--bt);border-radius:3px;padding:1px 5px">${st.duration}d</span>`:'';
+          const startLabel=st.start
+            ?`<span style="font-size:11px;${stepOv?'color:var(--dant);font-weight:500':'color:var(--ts)'}">${stepOv?'⚠ ':''}${fmtDate(st.start)}</span>`
+            :'<span style="font-size:11px;color:var(--tt)">—</span>';
+          const endLabel=st.end
+            ?`<span style="font-size:11px;color:var(--ts)">${fmtDate(st.end)}</span>${durLabel}`
+            :(durLabel||'<span style="font-size:11px;color:var(--tt)">—</span>');
+          // Step bar
+          let stepBarHtml='';
+          if(st.start&&st.end){
+            const sl=barOff(st.start);
+            const sw=Math.max(4,barOff(st.end)-sl);
+            stepBarHtml=`<div class="gbar step-bar" id="bar-${st.id}" data-stid="${st.id}" data-pid="${p.id}" data-phid="${ph.id}" style="left:${sl}px;width:${sw}px;background:${sbg};border:.5px solid ${sbar}">
+              <div class="bar-drag-handle" data-stid="${st.id}" data-pid="${p.id}" data-phid="${ph.id}" title="Drag to connect to another step"></div>
+            </div>`;
+          } else {
+            stepBarHtml=`<div class="gbar step-bar" id="bar-${st.id}" data-stid="${st.id}" data-pid="${p.id}" data-phid="${ph.id}" style="left:${left+4}px;width:${Math.max(4,w-8)}px;background:${sbg};border:.5px solid ${sbar}">
+              <div class="bar-drag-handle" data-stid="${st.id}" data-pid="${p.id}" data-phid="${ph.id}" title="Drag to connect to another step"></div>
+            </div>`;
+          }
+          pushRow(`row-st-${st.id}`, 'row-step',
+            `<td class="nc">
+              <div class="cell-name">
+                <input type="checkbox" style="width:12px;height:12px;flex-shrink:0;cursor:pointer;accent-color:#1D9E75" ${isDone?'checked':''} onchange="updateStepStatus('${p.id}','${ph.id}','${st.id}',this.checked?'done':'active')">
+                <span style="color:${scol};font-size:12px;${isDone?'text-decoration:line-through;color:var(--tt)':''}">${st.name}</span>
+                ${(st.predecessors||[]).length?`<span style="font-size:10px;color:var(--ts)" title="Predecessors: ${(st.predecessors||[]).map(pred=>{const predId=typeof pred==='string'?pred:pred?.id;const ps=ph.steps.find(x=>x.id===predId);return ps?ps.name:(predId||'?');}).join(', ')}">⬅${(st.predecessors||[]).length}</span>`:''}
+                ${(st.successors||[]).length?`<span style="font-size:10px;color:var(--ts)" title="Successors: ${(st.successors||[]).map(id=>{const ss2=ph.steps.find(x=>x.id===id);return ss2?ss2.name:id;}).join(', ')}">➡${(st.successors||[]).length}</span>`:''}
+                <button class="edit-btn" onclick="startEditStep('${p.id}','${ph.id}','${st.id}')">✎</button>
+              </div>
+            </td>
+            <td class="nc" style="font-size:11px;color:var(--ts)">${st.assign||'—'}</td>
+            <td class="nc">
+              <select style="font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)" onchange="updateStepStatus('${p.id}','${ph.id}','${st.id}',this.value)">
+                <option value="planning" ${status==='planning'?'selected':''}>Planning</option>
+                <option value="active"   ${status==='active'  ?'selected':''}>Active</option>
+                <option value="delayed"  ${status==='delayed' ?'selected':''}>Delayed</option>
+                <option value="done"     ${status==='done'    ?'selected':''}>Done</option>
+              </select>
+            </td>
+            <td class="nc">${startLabel}</td>
+            <td class="nc">${endLabel}</td>
+            <td class="nc"><div class="inline-row-btns">
+              <button class="btn xs" title="Set dependencies" onclick="openStepDepModal('${p.id}','${ph.id}','${st.id}')">⇄</button>
+              <button class="btn xs" style="color:var(--dant)" onclick="deleteStep('${p.id}','${ph.id}','${st.id}')">✕</button>
+            </div></td>`,
+            `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}${stepBarHtml}</div></td>`);
+
+          // Delay rows for this step
+          const stepDelays=(ph.delays||[]).filter(dl=>dl.stepId===st.id);
+          stepDelays.forEach(dl=>{
+            const dlStart=st.start||'';
+            const dlEnd=dlStart?addCalDays(dlStart,dl.days):'';
+            const dlLeft=dlStart?barOff(dlStart):0;
+            const dlW=dlStart&&dlEnd?Math.max(8,barOff(dlEnd)-dlLeft):20;
+            const causeIcon={Inspector:'🔍',Subcontractor:'🔧',Customer:'👤',Weather:'🌧',Other:'⚠'}[dl.cause]||'⚠';
+            pushRow(`row-delay-${dl.id}`,'row-delay',
+              `<td class="nc" colspan="2" style="padding:2px 8px 2px 40px">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span style="font-size:11px">${causeIcon}</span>
+                  <span style="font-size:11px;font-weight:500;color:#791F1F">${dl.cause} delay</span>
+                  <span style="font-size:11px;color:var(--ts)">${dl.days}d${dl.description?' — '+dl.description:''}</span>
+                </div>
+              </td>
+              <td class="nc" style="font-size:11px;color:#791F1F;white-space:nowrap">${dlStart?fmtDate(dlStart):''}</td>
+              <td class="nc" style="font-size:11px;color:#791F1F;white-space:nowrap">${dlEnd?fmtDate(dlEnd):''}</td>
+              <td class="nc"><div class="inline-row-btns">
+                <button class="btn xs" style="color:var(--dant)" title="Edit delay" onclick="openDelayModal('${p.id}','${ph.id}','${dl.id}')">✎</button>
+              </div></td>`,
+              `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}
+                <div class="gbar" style="left:${dlLeft}px;width:${dlW}px;background:#FCEBEB;border:1.5px solid #E24B4A;color:#791F1F;font-size:10px;font-weight:500">${dlW>50?causeIcon+' '+dl.cause+' ('+dl.days+'d)':dlW>20?causeIcon:''}</div>
+              </div></td>`);
+          });
+
+        }); // end sortedSteps.forEach
+      } // end if(isExpanded)
+
+      // Task rows associated with this project (shown under last phase of project, collected below)
+    });
+
+    // "Add phase" inline row
+    pushRow(`add-phase-row-${p.id}`, 'row-add-phase',
+      `<td class="nc" colspan="6" style="padding:4px 8px">
+        <div id="add-phase-form-${p.id}" style="display:none">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input id="aphN-${p.id}" class="fld inline" type="text" placeholder="Phase name" style="width:160px" onkeydown="if(event.key==='Enter')commitAddPhase('${p.id}')">
+            <select id="aphA-${p.id}" class="fld inline" style="width:150px"><option value="">Assignee…</option></select>
+            <span style="font-size:11px;color:var(--tt);font-style:italic">Dates set by steps</span>
+            <button class="btn sm pr" onclick="commitAddPhase('${p.id}')">Add</button>
+            <button class="btn sm" onclick="cancelAddPhase('${p.id}')">Cancel</button>
+          </div>
+        </div>
+        <button id="add-phase-btn-${p.id}" class="btn xs" onclick="showAddPhaseForm('${p.id}')">+ Add Phase</button>
+      </td>`,
+      `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}</div></td>`);
+
+    // Individual task rows (indented), one per task
+    if(showTasks){
+      const projTasks=visibleTaskStats.byProject.get(p.id)||[];
+      const today=new Date().toISOString().slice(0,10);
+      projTasks.forEach(t=>{
+        const ov=t.due&&t.due<today&&!t.done;
+        const col=t.done?'#888780':ov?'#E24B4A':'#BA7517';
+        const bgc=t.done?'#F1EFE8':ov?'#FCEBEB':'#FAEEDA';
+        const diamond=t.due?`<div class="task-diamond" style="left:${barOff(t.due)-6}px;background:${bgc};border-color:${col}">
+          <div class="task-tooltip">${t.label}${t.due?'<br>'+fmtDate(t.due):''}${ov?' ⚠':''}</div>
+        </div>`:'';
+        pushRow(`row-task-${t.id}`, 'row-task',
+          `<td class="nc" style="padding-left:20px">
+            <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+              <span style="color:${col};font-size:10px;flex-shrink:0">◆</span>
+              <input type="checkbox" style="width:12px;height:12px;flex-shrink:0;cursor:pointer;accent-color:#1D9E75" ${t.done?'checked':''} onchange="toggleTask('${t.id}',this.checked)">
+              <span style="font-size:12px;${t.done?'text-decoration:line-through;color:var(--tt)':''}${ov?'color:var(--dant)':''}">${t.label}</span>
+              <button class="edit-btn" onclick="startEditTask('${t.id}')">✎</button>
+            </div>
+          </td>
+          <td class="nc" style="font-size:11px;color:var(--ts)">—</td>
+          <td class="nc"><span class="badge" style="font-size:10px;background:${t.done?'var(--sucb)':ov?'var(--danb)':'var(--warnb)'};color:${t.done?'var(--suct)':ov?'var(--dant)':'var(--warnt)'}">${t.done?'Done':ov?'Overdue':'Pending'}</span></td>
+          <td class="nc" style="font-size:11px;color:var(--ts);white-space:nowrap">—</td>
+          <td class="nc" style="font-size:11px;color:var(--ts);white-space:nowrap">${t.due?fmtDate(t.due):''}</td>
+          <td class="nc"><button class="btn xs" style="color:var(--dant)" onclick="deleteTask('${t.id}')">✕</button></td>`,
+          `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}${diamond}</div></td>`);
+      });
+
+      // Inline add-task row
+      pushRow(`add-task-row-${p.id}`, 'row-add-task',
+        `<td class="nc" colspan="6" style="padding:4px 8px 4px 20px">
+          <div id="add-task-form-${p.id}" style="display:none">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <span style="color:var(--ts);font-size:10px">◆</span>
+              <input id="atN-${p.id}" class="fld inline" type="text" placeholder="Task name" style="width:180px"
+                onkeydown="handleAddTaskKey(event,'${p.id}')">
+              <input id="atD-${p.id}" class="fld inline" type="date" style="width:130px"
+                onkeydown="if(event.key==='Enter')commitAddTask('${p.id}',true)">
+              <button class="btn sm pr" onclick="commitAddTask('${p.id}',true)">Add</button>
+              <button class="btn sm" onclick="cancelAddTask('${p.id}')">Cancel</button>
+            </div>
+          </div>
+          <button id="add-task-btn-${p.id}" class="btn xs" onclick="showAddTaskForm('${p.id}')">+ Add Task</button>
+        </td>`,
+        `<td class="bc"><div class="bar-track" style="width:${BW}px">${tline}</div></td>`);
+    }
+  });
+
+  document.getElementById('g-body-left').innerHTML=rowsLeft.join('');
+  document.getElementById('g-body-right').innerHTML=rowsRight.join('');
+  syncExpandAllBtn();
+  scheduleGanttPaint();
+}
+
+// ─── Sync left/right Gantt row heights ───────────────────────
+function scheduleGanttPaint(){
+  if(_ganttPaintFrame) cancelAnimationFrame(_ganttPaintFrame);
+  _ganttPaintFrame=requestAnimationFrame(()=>{
+    _ganttPaintFrame=null;
+    syncGanttRowHeights();
+    drawStepArrows();
+  });
+}
+function syncGanttRowHeights(){
+  const leftRows=document.querySelectorAll('#g-body-left tr');
+  const rightRows=document.querySelectorAll('#g-body-right tr');
+  // Reset first
+  leftRows.forEach(r=>r.style.height='');
+  rightRows.forEach(r=>r.style.height='');
+  // Sync header rows
+  const lHead=document.querySelector('#gtable-left thead tr');
+  const rHead=document.querySelector('#gtable-right thead tr');
+  if(lHead&&rHead){
+    const h=Math.max(lHead.getBoundingClientRect().height,rHead.getBoundingClientRect().height);
+    lHead.style.height=h+'px';rHead.style.height=h+'px';
+  }
+  // Sync body rows
+  const n=Math.min(leftRows.length,rightRows.length);
+  for(let i=0;i<n;i++){
+    const h=Math.max(leftRows[i].getBoundingClientRect().height,rightRows[i].getBoundingClientRect().height);
+    leftRows[i].style.height=h+'px';
+    rightRows[i].style.height=h+'px';
+  }
+}
+
+// ─── Draw step dependency arrows on Gantt ─────────────────────
+function drawStepArrows(){
+  const old=document.getElementById('gantt-arrows');if(old)old.remove();
+  const body=document.getElementById('g-body-right');if(!body)return;
+  const tableWrap=body.closest('.gantt-right');if(!tableWrap)return;
+  if(getComputedStyle(tableWrap).position==='static') tableWrap.style.position='relative';
+  const visibleBars=[...body.querySelectorAll('.step-bar[data-stid]')];
+  if(!visibleBars.length)return;
+
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.id='gantt-arrows';
+  svg.style.cssText='position:absolute;top:0;left:0;pointer-events:none;overflow:visible;z-index:5';
+  svg.setAttribute('width',tableWrap.scrollWidth);
+  svg.setAttribute('height',tableWrap.scrollHeight);
+  svg.innerHTML=`<defs>
+    <marker id="arr-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M1 1L7 4L1 7" fill="none" stroke="#9b9ec8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arr-head-drag" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M1 1L7 4L1 7" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <path id="drag-arrow" d="" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-head-drag)" opacity="0" pointer-events="none"/>`;
+
+  const wrapRect=tableWrap.getBoundingClientRect();
+  const sl=tableWrap.scrollLeft, st2=tableWrap.scrollTop;
+
+  function barCoords(stid){
+    const bar=document.getElementById('bar-'+stid);
+    if(!bar)return null;
+    const r=bar.getBoundingClientRect();
+    const x1=r.right-wrapRect.left+sl;
+    const y =r.top -wrapRect.top +st2+r.height/2;
+    const x2=r.left -wrapRect.left+sl;
+    return {x1,x2,y};
+  }
+
+  // Collect unique predecessor connections (avoid drawing same pair twice)
+  const drawn=new Set();
+  const visibleStepIds=new Set(visibleBars.map(bar=>bar.dataset.stid));
+  projects.forEach(p=>(p.phases||[]).forEach(ph=>{
+    (ph.steps||[]).forEach(st=>{
+      if(!visibleStepIds.has(st.id))return;
+      (st.predecessors||[]).forEach(pred=>{
+        const predId=typeof pred==='string'?pred:pred.id;
+        if(!visibleStepIds.has(predId))return;
+        const key=[predId,st.id].join('→');
+        if(drawn.has(key))return;
+        drawn.add(key);
+        const from=barCoords(predId);
+        const to=barCoords(st.id);
+        if(!from||!to)return;
+        const mx=(from.x1+to.x2)/2;
+        const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('d',`M${from.x1},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x2},${to.y}`);
+        path.setAttribute('fill','none');
+        path.setAttribute('stroke','#9b9ec8');
+        path.setAttribute('stroke-width','1.5');
+        path.setAttribute('stroke-dasharray','4 3');
+        path.setAttribute('opacity','0.8');
+        path.setAttribute('marker-end','url(#arr-head)');
+        svg.appendChild(path);
+      });
+    });
+  }));
+
+  tableWrap.appendChild(svg);
+  wireDragToConnect(tableWrap, svg, wrapRect);
+}
+
+// ─── Drag-to-connect logic ────────────────────────────────────
+let _dragConn=null;
+function wireDragToConnect(tableWrap, svg, wrapRect){
+  tableWrap._dcSvg=svg;
+  tableWrap._dcWrapRect=wrapRect;
+  if(tableWrap._dcWired)return;
+  tableWrap._dcWired=true;
+
+  tableWrap.addEventListener('mousedown', function onDCDown(e){
+    const svg=tableWrap._dcSvg;
+    const wrapRect=tableWrap._dcWrapRect||tableWrap.getBoundingClientRect();
+    const handle=e.target.closest('.bar-drag-handle');
+    if(!handle)return;
+    e.preventDefault();
+    const fromStid=handle.dataset.stid;
+    const fromPid=handle.dataset.pid;
+    const fromPhid=handle.dataset.phid;
+    const fromBar=document.getElementById('bar-'+fromStid);
+    if(!fromBar)return;
+    const fr=fromBar.getBoundingClientRect();
+    const x0=fr.right-wrapRect.left+tableWrap.scrollLeft;
+    const y0=fr.top-wrapRect.top+tableWrap.scrollTop+fr.height/2;
+    _dragConn={fromStid,fromPid,fromPhid,x0,y0};
+    const dragPath=svg.getElementById('drag-arrow');
+    dragPath.setAttribute('opacity','1');
+  },{passive:false});
+
+  tableWrap.addEventListener('mousemove', function onDCMove(e){
+    if(!_dragConn)return;
+    const svg=tableWrap._dcSvg;
+    const wrapRect=tableWrap._dcWrapRect||tableWrap.getBoundingClientRect();
+    const mx=e.clientX-wrapRect.left+tableWrap.scrollLeft;
+    const my=e.clientY-wrapRect.top+tableWrap.scrollTop;
+    const dragPath=svg.getElementById('drag-arrow');
+    const cx=((_dragConn.x0+mx)/2);
+    dragPath.setAttribute('d',`M${_dragConn.x0},${_dragConn.y0} C${cx},${_dragConn.y0} ${cx},${my} ${mx},${my}`);
+    // Highlight bar under cursor
+    document.querySelectorAll('.bar-drop-target').forEach(el=>el.classList.remove('bar-drop-target'));
+    const barEl=document.elementFromPoint(e.clientX,e.clientY)?.closest('.step-bar');
+    if(barEl&&barEl.dataset.stid&&barEl.dataset.stid!==_dragConn.fromStid) barEl.classList.add('bar-drop-target');
+  });
+
+  tableWrap.addEventListener('mouseup', function onDCUp(e){
+    if(!_dragConn)return;
+    const svg=tableWrap._dcSvg;
+    document.querySelectorAll('.bar-drop-target').forEach(el=>el.classList.remove('bar-drop-target'));
+    const dragPath=svg.getElementById('drag-arrow');
+    dragPath.setAttribute('opacity','0');
+    dragPath.setAttribute('d','');
+
+    const toBar=document.elementFromPoint(e.clientX,e.clientY)?.closest('.step-bar');
+    const toStid=toBar?.dataset?.stid;
+    const toPid=toBar?.dataset?.pid;
+    const toPhid=toBar?.dataset?.phid;
+
+    if(toStid&&toStid!==_dragConn.fromStid&&toPhid===_dragConn.fromPhid){
+      // Connect: fromStep → toStep (fromStep becomes predecessor of toStep)
+      connectSteps(_dragConn.fromPid,_dragConn.fromPhid,_dragConn.fromStid,toStid);
+    }
+    _dragConn=null;
+  });
+}
+
+function connectSteps(pid,phid,fromStid,toStid){
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  const ph=p.phases.find(x=>x.id===phid);if(!ph)return;
+  const fromSt=ph.steps.find(x=>x.id===fromStid);
+  const toSt=ph.steps.find(x=>x.id===toStid);
+  if(!fromSt||!toSt)return;
+
+  // Normalize predecessors
+  if(!fromSt.predecessors)fromSt.predecessors=[];
+  if(!fromSt.successors)fromSt.successors=[];
+  if(!toSt.predecessors)toSt.predecessors=[];
+  if(!toSt.successors)toSt.successors=[];
+
+  const alreadyPred=(toSt.predecessors||[]).some(x=>(typeof x==='string'?x:x.id)===fromStid);
+  if(alreadyPred){
+    // Already connected — remove it (toggle off)
+    toSt.predecessors=toSt.predecessors.filter(x=>(typeof x==='string'?x:x.id)!==fromStid);
+    syncStepLinks(ph);
+    showToast('Dependency removed.','success');
+  } else {
+    // Check for circular dependency
+    if(wouldCreateCycleFromPreds(ph,fromStid,toStid)){
+      showToast('Cannot create circular dependency.','warn');
+      return;
+    }
+    toSt.predecessors.push({id:fromStid,lag:0});
+    syncStepLinks(ph);
+    showToast(`${fromSt.name} → ${toSt.name} connected.`,'success');
+  }
+  cascadeStepDates(ph);
+  recalcPhaseDates(ph);
+  syncPhaseStatus(ph);
+  save();renderGantt();renderTasks();
+}
+
+function wouldCreateCycle(ph,fromStid,toStid){
+  // DFS from toStid following successors — if we reach fromStid it's a cycle
+  const visited=new Set();
+  function dfs(stid){
+    if(stid===fromStid)return true;
+    if(visited.has(stid))return false;
+    visited.add(stid);
+    const st=ph.steps.find(x=>x.id===stid);
+    if(!st)return false;
+    return (st.successors||[]).some(sid=>dfs(sid));
+  }
+  return dfs(toStid);
+}
+
+// ─── Phase expand/collapse in Gantt ──────────────────────────
+function toggleGanttPhase(phid){
+  ganttExpanded[phid]=!ganttExpanded[phid];
+  renderGantt();
+}
+function toggleExpandAll(){
+  const allPhases=projects.flatMap(p=>(p.phases||[]).filter(ph=>(ph.steps||[]).length>0));
+  const anyExpanded=allPhases.some(ph=>ganttExpanded[ph.id]);
+  if(anyExpanded){
+    ganttExpanded={};
+  } else {
+    allPhases.forEach(ph=>{ganttExpanded[ph.id]=true;});
+  }
+  renderGantt();
+}
+function syncExpandAllBtn(){
+  const btn=document.getElementById('expand-all-btn');
+  if(!btn)return;
+  const allPhases=projects.flatMap(p=>(p.phases||[]).filter(ph=>(ph.steps||[]).length>0));
+  const anyExpanded=allPhases.some(ph=>ganttExpanded[ph.id]);
+  btn.textContent=anyExpanded?'Collapse all':'Expand all';
+}
+
+// ─── Inline phase editing ─────────────────────────────────────
+function startEditPhase(pid,phid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const row=document.getElementById('row-ph-'+phid);
+  const cells=row.querySelectorAll('td');
+  cells[0].innerHTML=`<div style="display:flex;gap:5px;align-items:center">
+    <input id="epn-${phid}" class="fld inline" value="${ph.name}" style="width:150px" onkeydown="if(event.key==='Enter')commitEditPhase('${pid}','${phid}');if(event.key==='Escape')cancelEditPhase('${pid}','${phid}')">
+  </div>`;
+  cells[1].innerHTML=`<select id="epa-${phid}" class="fld inline" style="width:130px"></select>`;
+  setTimeout(()=>populateAssigneeSelect('epa-'+phid,ph.assign||''),0);
+  // dates are computed from steps — show read-only
+  cells[3].innerHTML=`<span style="font-size:11px;color:var(--tt);font-style:italic">from steps</span>`;
+  cells[4].innerHTML=`<span style="font-size:11px;color:var(--tt);font-style:italic">from steps</span>`;
+  cells[5].innerHTML=`<div class="inline-row-btns"><button class="btn xs pr" onclick="commitEditPhase('${pid}','${phid}')">Save</button><button class="btn xs" onclick="cancelEditPhase('${pid}','${phid}')">Cancel</button></div>`;
+  document.getElementById('epn-'+phid).focus();
+}
+function commitEditPhase(pid,phid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const n=document.getElementById('epn-'+phid),a=document.getElementById('epa-'+phid);
+  if(n)ph.name=n.value.trim()||ph.name;
+  if(a)ph.assign=a.value||a.textContent;
+  save();renderGantt();
+}
+function cancelEditPhase(pid,phid){renderGantt();}
+function updatePhaseStatus(pid,phid,val){
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);
+  ph.status=val;save();renderGantt();
+}
+function deletePhase(pid,phid){
+  if(!confirm('Delete this phase?'))return;
+  const p=projects.find(x=>x.id===pid);
+  p.phases=p.phases.filter(ph=>ph.id!==phid);
+  save();renderGantt();renderProjects();
+}
+
+// ─── Inline add phase ─────────────────────────────────────────
+function showAddPhaseForm(pid){
+  document.getElementById('add-phase-form-'+pid).style.display='';
+  document.getElementById('add-phase-btn-'+pid).style.display='none';
+  populateAssigneeSelect('aphA-'+pid,'');
+  document.getElementById('aphN-'+pid).focus();
+}
+function cancelAddPhase(pid){
+  document.getElementById('add-phase-form-'+pid).style.display='none';
+  document.getElementById('add-phase-btn-'+pid).style.display='';
+}
+function commitAddPhase(pid){
+  const n=document.getElementById('aphN-'+pid).value.trim();
+  if(!n)return;
+  const a=document.getElementById('aphA-'+pid)?.value||'';
+  const p=projects.find(x=>x.id===pid);
+  p.phases.push({id:'ph'+Date.now(),name:n,start:'',end:'',assign:a,status:'planning',steps:[]});
+  save();renderGantt();renderProjects();
+}
+
+// ─── Work calendar helpers ────────────────────────────────────
+function isNonWorkday(dateStr){
+  if(!dateStr) return false;
+  const d=new Date(dateStr+'T00:00:00');
+  if(settings.weekdaysOnly && (d.getDay()===0||d.getDay()===6)) return true;
+  return (settings.holidays||[]).some(h=>{
+    if(!h.nonWorkday||!h.date) return false;
+    if(h.endDate&&h.endDate>=h.date) return dateStr>=h.date&&dateStr<=h.endDate;
+    return h.date===dateStr;
+  });
+}
+function nextWorkday(dateStr){
+  if(!dateStr) return dateStr;
+  let d=new Date(dateStr+'T00:00:00');
+  while(isNonWorkday(d.toISOString().slice(0,10))) d.setDate(d.getDate()+1);
+  return d.toISOString().slice(0,10);
+}
+function addWorkdays(dateStr, n){
+  if(!dateStr) return dateStr;
+  let d=new Date(dateStr+'T00:00:00');
+  if(!n||n===0) return nextWorkday(d.toISOString().slice(0,10));
+  const dir=n>0?1:-1;
+  let remaining=Math.abs(n);
+  while(remaining>0){
+    d.setDate(d.getDate()+dir);
+    if(!isNonWorkday(d.toISOString().slice(0,10))) remaining--;
+  }
+  return d.toISOString().slice(0,10);
+}
+
+// ─── Step scheduling helpers ──────────────────────────────────
+// Predecessors are stored as [{id, lag}] where lag is workdays (+/-).
+// Positive lag = wait N extra workdays after predecessor ends.
+// Negative lag = can start N workdays before predecessor ends (overlap).
+// Returns the first valid start date for a step.
+function calcStepFirstAvailable(ph, predecessors){
+  const steps=ph.steps||[];
+  // Normalize: accept both old string[] format and new [{id,lag}] format
+  const preds=(predecessors||[]).map(x=>typeof x==='string'?{id:x,lag:0}:x);
+
+  let latestStart='';
+  preds.forEach(({id:pid, lag})=>{
+    const pred=steps.find(s=>s.id===pid);
+    if(!pred) return;
+    const predEnd=pred.end||(pred.start||'');
+    if(!predEnd) return;
+    const lagDays=(parseInt(lag)||0);
+    // +1 because successor starts the day AFTER predecessor ends, then add lag
+    let candidateStart=addWorkdays(predEnd, 1+lagDays);
+    // Negative lag can push start before pred end — clamp to next workday of that date
+    candidateStart=nextWorkday(candidateStart);
+    if(!latestStart||candidateStart>latestStart) latestStart=candidateStart;
+  });
+
+  if(latestStart) return latestStart;
+  // No predecessors → start on phase start date (or today), clamped to workday
+  const base=ph.start||new Date().toISOString().slice(0,10);
+  return nextWorkday(base);
+}
+
+// Given a start date and duration in workdays, return {start, end}
+function calcStepDates(startDate, duration){
+  if(!startDate||!duration) return {start:startDate||'',end:''};
+  const d=parseInt(duration);
+  if(!d||d<1) return {start:startDate,end:startDate};
+  const start=nextWorkday(startDate);
+  // end = start + (duration-1) workdays  (start day counts as day 1)
+  const end=addWorkdays(start,d-1);
+  return {start, end};
+}
+
+// Recalc step dates from its duration + predecessor chain and phase start
+function applyStepDuration(ph, st){
+  if(!st.duration) return;
+  const firstAvail=calcStepFirstAvailable(ph, st.predecessors||[]);
+  const {start,end}=calcStepDates(firstAvail, st.duration);
+  st.start=start; st.end=end;
+}
+
+// Cascade date changes through the dependency graph after a step is edited.
+// skipId: a step whose dates must not be overwritten (just manually set by the user).
+// Only steps downstream of the changed step (or all steps if no skipId) are recalculated.
+function cascadeStepDates(ph, skipId=null){
+  const steps=ph.steps||[];
+  if(!steps.length) return;
+
+  // Normalize predecessors to [{id,lag}]
+  steps.forEach(s=>{
+    if(!s.predecessors) s.predecessors=[];
+    s.predecessors=s.predecessors.map(x=>typeof x==='string'?{id:x,lag:0}:x);
+  });
+
+  // Topological sort (Kahn's algorithm)
+  const inDeg={};
+  const adj={};  // id -> [dependent ids]
+  steps.forEach(s=>{inDeg[s.id]=0;adj[s.id]=[];});
+  steps.forEach(s=>{
+    (s.predecessors||[]).forEach(({id:pid})=>{
+      if(adj[pid]) adj[pid].push(s.id);
+      if(inDeg[s.id]!==undefined) inDeg[s.id]++;
+    });
+  });
+  const queue=steps.filter(s=>inDeg[s.id]===0).map(s=>s.id);
+  const order=[];
+  while(queue.length){
+    const cur=queue.shift();
+    order.push(cur);
+    (adj[cur]||[]).forEach(dep=>{
+      inDeg[dep]--;
+      if(inDeg[dep]===0) queue.push(dep);
+    });
+  }
+
+  // Recalculate dates in topological order, skipping the manually-set step
+  order.forEach(stid=>{
+    if(skipId && stid===skipId) return;
+    const st=steps.find(s=>s.id===stid);
+    if(!st) return;
+    const preds=st.predecessors||[];
+    if(!preds.length) return; // no predecessors → nothing to cascade into this step
+    if(st.duration){
+      // Has duration: recompute start from predecessors, derive end
+      applyStepDuration(ph,st);
+    } else if(st.start){
+      // No duration: shift start (and end) so they respect the predecessor constraint
+      const requiredStart=calcStepFirstAvailable(ph,preds);
+      if(requiredStart>st.start){
+        const delta=Math.round((new Date(requiredStart)-new Date(st.start+'T00:00:00'))/86400000);
+        st.start=addCalDays(st.start,delta);
+        if(st.end) st.end=addCalDays(st.end,delta);
+      }
+    }
+  });
+}
+function recalcPhaseDates(ph){
+  const steps=(ph.steps||[]).filter(s=>s.start||s.end);
+  if(!steps.length)return; // no steps with dates — leave phase dates unchanged
+  const starts=steps.filter(s=>s.start).map(s=>s.start);
+  const ends  =steps.filter(s=>s.end  ).map(s=>s.end  );
+  if(starts.length) ph.start=starts.reduce((a,b)=>a<b?a:b);
+  if(ends.length  ) ph.end  =ends  .reduce((a,b)=>a>b?a:b);
+}
+
+// ─── Keep expandPhaseToFitStep as an alias that just recalcs ──
+function expandPhaseToFitStep(ph, _start, _end){ recalcPhaseDates(ph); }
+
+// ─── Sync step end → matching task due ───────────────────────
+function syncStepTaskDue(projectId, stepName, newDue){
+  const match = tasks.find(t =>
+    t.projectId === projectId &&
+    t.label.trim().toLowerCase() === stepName.trim().toLowerCase()
+  );
+  if(match && newDue !== undefined) match.due = newDue;
+}
+function syncPhaseTaskDues(projectId, ph){
+  (ph.steps||[]).forEach(st=>{
+    if(st.end) syncStepTaskDue(projectId, st.name, st.end);
+  });
+}
+
+// ─── Delay helpers ────────────────────────────────────────────
+// Add calendar days (not workdays) to a date string
+function addCalDays(dateStr, n){
+  if(!dateStr||!n) return dateStr;
+  const d=new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+
+// Apply a delay by changing the affected step's duration.
+// Successors are rescheduled later by cascadeStepDates().
+function applyDelayToPhase(ph, fromStepId, days){
+  if(!days||!fromStepId) return;
+  const steps=ph.steps||[];
+  const fromStep=steps.find(s=>s.id===fromStepId);
+  if(!fromStep) return;
+  const currentDuration=Math.max(1, parseInt(fromStep.duration)||1);
+  fromStep.duration=Math.max(1, currentDuration+days);
+  if(fromStep.start){
+    const {end}=calcStepDates(fromStep.start, fromStep.duration);
+    fromStep.end=end;
+  } else if(fromStep.end){
+    const startGuess=addWorkdays(fromStep.end, -(fromStep.duration-1));
+    const {start,end}=calcStepDates(startGuess, fromStep.duration);
+    fromStep.start=start;
+    fromStep.end=end;
+  }
+  recalcPhaseDates(ph);
+}
+
+// ─── Delay modal ──────────────────────────────────────────────
+let _delayTarget=null; // {pid, phid, delayId|null}
+
+function openDelayModal(pid, phid, delayId=null){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  _delayTarget={pid,phid,delayId};
+
+  const delay=delayId?(ph.delays||[]).find(d=>d.id===delayId):null;
+
+  document.getElementById('delay-modal-title').textContent=delay?'Edit Delay':'Add Delay';
+  document.getElementById('delay-delete-btn').style.display=delay?'':'none';
+  document.getElementById('delay-days').value=delay?.days||1;
+  document.getElementById('delay-cause').value=delay?.cause||'Inspector';
+  document.getElementById('delay-desc').value=delay?.description||'';
+
+  // Populate step selector
+  const stepSel=document.getElementById('delay-step');
+  const sortedSteps=[...(ph.steps||[])].sort((a,b)=>{
+    const aKey=a.start||a.end||'9999-12-31';
+    const bKey=b.start||b.end||'9999-12-31';
+    if(aKey!==bKey) return aKey<bKey?-1:1;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+  stepSel.innerHTML=sortedSteps.length
+    ?sortedSteps.map(s=>{
+      const dateLabel=s.start?fmtDate(s.start):s.end?`Ends ${fmtDate(s.end)}`:'Date not set';
+      return `<option value="${s.id}" ${delay?.stepId===s.id?'selected':''}>${s.name} (${dateLabel})</option>`;
+    }).join('')
+    :'<option value="">No steps available</option>';
+  stepSel.disabled=!sortedSteps.length;
+  if(!delay&&stepSel.options.length) stepSel.selectedIndex=0;
+
+  document.getElementById('delay-modal').classList.add('open');
+}
+
+function closeDelayModal(){
+  document.getElementById('delay-modal').classList.remove('open');
+  _delayTarget=null;
+}
+
+function saveDelay(){
+  if(!_delayTarget)return;
+  const {pid,phid,delayId}=_delayTarget;
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const days=parseInt(document.getElementById('delay-days').value)||1;
+  const cause=document.getElementById('delay-cause').value;
+  const description=document.getElementById('delay-desc').value.trim();
+  const stepId=document.getElementById('delay-step').value;
+  if(!stepId){closeDelayModal();return;}
+
+  if(!ph.delays) ph.delays=[];
+
+  if(delayId){
+    // Editing: reverse old delay, apply new one
+    const old=ph.delays.find(d=>d.id===delayId);
+    if(old){
+      applyDelayToPhase(ph,old.stepId,-old.days);
+      old.days=days; old.cause=cause; old.description=description; old.stepId=stepId;
+    }
+  } else {
+    ph.delays.push({id:'dl'+Date.now(),days,cause,description,stepId});
+  }
+  applyDelayToPhase(ph,stepId,days);
+  // Update phase status to delayed if not done
+  if(ph.status!=='done') ph.status='delayed';
+  // Also mark affected steps as delayed
+  const fromStep=ph.steps.find(s=>s.id===stepId);
+  if(fromStep){
+    (ph.steps||[]).forEach(st=>{
+      if(st.start&&fromStep.start&&st.start>=fromStep.start&&st.status!=='done'){
+        st.status='delayed';
+      }
+    });
+  }
+  cascadeStepDates(ph);
+  syncPhaseTaskDues(pid, ph);
+  save();closeDelayModal();renderGantt();renderProjects();renderTasks();
+  showToast(`Delay of ${days} day${days!==1?'s':''} applied.`,'success');
+}
+
+function deleteDelay(){
+  if(!_delayTarget?.delayId)return;
+  // Capture before confirm() — the overlay click listener may fire during the dialog
+  const {pid,phid,delayId}=_delayTarget;
+  if(!confirm('Remove this delay and reverse its effect on step dates?'))return;
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const delay=(ph.delays||[]).find(d=>d.id===delayId);
+  if(delay){
+    applyDelayToPhase(ph,delay.stepId,-delay.days);
+    ph.delays=ph.delays.filter(d=>d.id!==delayId);
+  }
+  cascadeStepDates(ph);
+  syncPhaseTaskDues(pid, ph);
+  save();closeDelayModal();renderGantt();renderProjects();renderTasks();
+  showToast('Delay removed.','success');
+}
+
+// ─── Inline step editing ──────────────────────────────────────
+function startEditStep(pid,phid,stid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const st=ph.steps.find(x=>x.id===stid);
+  const row=document.getElementById('row-st-'+stid);
+  const cells=row.querySelectorAll('td');
+  const peers=ph.steps
+    .filter(x=>x.id!==stid)
+    .sort((a,b)=>{
+      const aKey=a.start||a.end||'9999-12-31';
+      const bKey=b.start||b.end||'9999-12-31';
+      if(aKey!==bKey) return aKey<bKey?-1:1;
+      return (a.name||'').localeCompare(b.name||'');
+    });
+  const mkOpts=(sel)=>peers.map(x=>`<option value="${x.id}" ${(sel||[]).includes(x.id)?'selected':''}>${x.name}</option>`).join('');
+  cells[0].innerHTML=`<div style="display:flex;gap:5px;align-items:center;padding-left:0;flex-wrap:wrap">
+    <input id="esn-${stid}" class="fld inline" value="${st.name}" style="width:130px" onkeydown="if(event.key==='Enter')commitEditStep('${pid}','${phid}','${stid}')">
+    ${peers.length?`
+    <select id="esp-${stid}" multiple style="font-size:11px;height:40px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp)" title="Predecessors (Ctrl+click)">${mkOpts(st.predecessors)}</select>
+    <select id="ess2-${stid}" multiple style="font-size:11px;height:40px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp)" title="Successors (Ctrl+click)">${mkOpts(st.successors)}</select>
+    `:''}
+  </div>`;
+  cells[1].innerHTML=`<select id="esa-${stid}" class="fld inline" style="width:130px"></select>`;
+  setTimeout(()=>populateAssigneeSelect('esa-'+stid,st.assign||''),0);
+  const curStatus=st.status||(st.done?'done':'planning');
+  cells[2].innerHTML=`<select id="est-${stid}" style="font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)">
+    <option value="planning" ${curStatus==='planning'?'selected':''}>Planning</option>
+    <option value="active"   ${curStatus==='active'  ?'selected':''}>Active</option>
+    <option value="delayed"  ${curStatus==='delayed' ?'selected':''}>Delayed</option>
+    <option value="done"     ${curStatus==='done'    ?'selected':''}>Done</option>
+  </select>`;
+  const curDur=st.duration||1;
+  const computedEnd=st.start?calcStepDates(st.start,curDur).end:'';
+  cells[3].innerHTML=`<div style="display:flex;gap:4px;align-items:center">
+    <input id="esd-${stid}" class="fld inline" type="number" min="1" value="${curDur}" placeholder="d" style="width:48px" title="Duration (days)" oninput="autoScheduleEditStep('${pid}','${phid}','${stid}')">
+    <input id="ess-${stid}" class="fld inline" type="date" value="${st.start||''}" style="width:118px" onkeydown="if(event.key==='Enter')commitEditStep('${pid}','${phid}','${stid}')" oninput="autoScheduleEditStep('${pid}','${phid}','${stid}')">
+  </div>`;
+  cells[4].innerHTML=`<span id="ese-disp-${stid}" style="font-size:11px;color:var(--tt);font-style:italic">${computedEnd?fmtDate(computedEnd):'—'}</span>`;
+  cells[5].innerHTML=`<div class="inline-row-btns"><button class="btn xs pr" onclick="commitEditStep('${pid}','${phid}','${stid}')">Save</button><button class="btn xs" onclick="renderGantt()">Cancel</button></div>`;
+  document.getElementById('esn-'+stid).focus();
+}
+function autoScheduleEditStep(pid,phid,stid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const dur=parseInt(document.getElementById('esd-'+stid)?.value)||1;
+  const predSel=document.getElementById('esp-'+stid);
+  const st=ph.steps.find(s=>s.id===stid);
+  const rawPreds=predSel?[...predSel.selectedOptions].map(o=>o.value):(st?.predecessors||[]);
+  const preds=rawPreds.map(x=>typeof x==='string'?{id:x,lag:0}:x);
+  const firstAvail=calcStepFirstAvailable(ph,preds);
+  const ss=document.getElementById('ess-'+stid);
+  const start=ss?.value||firstAvail;
+  const {end}=calcStepDates(start,dur);
+  const disp=document.getElementById('ese-disp-'+stid);
+  if(disp) disp.textContent=end?fmtDate(end):'—';
+}
+// ─── Auto-sync phase status from its steps ───────────────────
+function syncPhaseStatus(ph){
+  const steps=ph.steps||[];
+  if(!steps.length) return; // no steps → don't touch phase status
+  const allDone =steps.every(s=>s.status==='done'||s.done);
+  const anyActive=steps.some(s=>s.status==='active');
+  if(allDone)       ph.status='done';
+  else if(anyActive) ph.status='active';
+  // delayed/planning left as-is unless overridden above
+}
+
+function commitEditStep(pid,phid,stid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const st=ph.steps.find(x=>x.id===stid);
+  const n=document.getElementById('esn-'+stid),a=document.getElementById('esa-'+stid);
+  const ss=document.getElementById('ess-'+stid);
+  const ep=document.getElementById('esp-'+stid),es2=document.getElementById('ess2-'+stid);
+  const ed=document.getElementById('esd-'+stid);
+  if(n) st.name=n.value.trim()||st.name;
+  if(a) st.assign=a.value.trim();
+  const statusEl=document.getElementById('est-'+stid);
+  if(statusEl){st.status=statusEl.value;st.done=(statusEl.value==='done');}
+  // Predecessors saved as [{id,lag}] — inline edit multi-select has no lag so default to existing lag
+  if(ep){
+    const selIds=[...ep.selectedOptions].map(o=>o.value);
+    // Preserve existing lag values for unchanged predecessors
+    const existingPreds=(st.predecessors||[]).map(x=>typeof x==='string'?{id:x,lag:0}:x);
+    st.predecessors=selIds.map(id=>{
+      const existing=existingPreds.find(e=>e.id===id);
+      return {id, lag:existing?.lag||0};
+    });
+  }
+  if(es2) st.successors=[...es2.selectedOptions].map(o=>o.value);
+  syncStepLinks(ph);
+  if(ed) st.duration=parseInt(ed.value)||1;
+  else st.duration=st.duration||1;
+  // If start date is cleared, recalculate from predecessors (or phase start)
+  if(ss){
+    if(ss.value){
+      st.start=nextWorkday(ss.value);
+    } else {
+      st.start=calcStepFirstAvailable(ph, st.predecessors||[]);
+    }
+  }
+  if(st.start){
+    const {end}=calcStepDates(st.start,st.duration);
+    st.end=end;
+  }
+  if(st.end) syncStepTaskDue(pid,st.name,st.end);
+  // Cascade to dependents only — skip this step since dates were just manually set
+  cascadeStepDates(ph, stid);
+  expandPhaseToFitStep(ph, st.start, st.end);
+  syncPhaseStatus(ph);
+  save();renderGantt();renderTasks();
+}
+function updateStepStatus(pid,phid,stid,status){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const st=ph.steps.find(x=>x.id===stid);
+  st.status=status;
+  st.done=(status==='done');
+  syncPhaseStatus(ph);
+  save();renderGantt();renderProjects();
+}
+function toggleStep(pid,phid,stid,done){
+  updateStepStatus(pid,phid,stid,done?'done':'active');
+}
+function deleteStep(pid,phid,stid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  removeStepFromPhase(ph, stid);
+  save();renderGantt();renderProjects();renderTasks();
+}
+
+// ─── Inline add step ─────────────────────────────────────────
+let addStepTarget=null;
+function startAddStep(pid,phid){
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  ganttExpanded[phid]=true;
+  addStepTarget={pid,phid};
+  renderGantt();
+  // Find insertion point in left table
+  const allLeftRows=document.querySelectorAll('#g-body-left tr');
+  let insertAfterLeft=null;
+  allLeftRows.forEach(r=>{
+    if(r.id&&(r.id===`row-ph-${phid}`||r.id.startsWith('row-st-')&&ph.steps.find(s=>r.id===`row-st-${s.id}`))){
+      insertAfterLeft=r;
+    }
+  });
+  if(!insertAfterLeft)return;
+  // Build left inline row (no bar column)
+  const peerOpts=(ph.steps||[]).map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  const trLeft=document.createElement('tr');
+  trLeft.className='row-add-step'; trLeft.id='add-step-inline';
+  trLeft.innerHTML=`<td class="nc" style="padding-left:32px">
+    <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+      <input id="asn" class="fld inline" type="text" placeholder="Step name" style="width:140px" onkeydown="if(event.key==='Enter')commitAddStep(false);if(event.key==='Escape')cancelAddStep()">
+      ${peerOpts?`<select id="asp" multiple style="font-size:11px;height:36px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp)" title="Predecessors (Ctrl+click)">${peerOpts}</select>`:''}
+    </div>
+  </td>
+  <td class="nc"><select id="asa" class="fld inline" style="width:130px"></select></td>
+  <td class="nc"><select id="asst" style="font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)">
+    <option value="planning">Planning</option><option value="active">Active</option>
+    <option value="delayed">Delayed</option><option value="done">Done</option>
+  </select></td>
+  <td class="nc"><div style="display:flex;gap:4px;align-items:center">
+    <input id="asd" class="fld inline" type="number" min="1" value="1" style="width:48px" title="Duration (days)" oninput="autoScheduleAddStep()">
+    <input id="ass" class="fld inline" type="date" style="width:118px" onkeydown="if(event.key==='Enter')commitAddStep(false)" oninput="autoScheduleAddStep()">
+  </div></td>
+  <td class="nc"><span id="ase-disp" style="font-size:11px;color:var(--tt);font-style:italic">—</span></td>
+  <td class="nc"><div class="inline-row-btns">
+    <button class="btn xs pr" onclick="commitAddStep(false)">Add</button>
+    <button class="btn xs" style="background:var(--brand-xlight);color:var(--brand);border-color:transparent" onclick="commitAddStep(true)">Save &amp; New</button>
+    <button class="btn xs" onclick="cancelAddStep()">Cancel</button>
+  </div></td>`;
+  insertAfterLeft.after(trLeft);
+  // Insert matching spacer row in right table
+  const allRightRows=document.querySelectorAll('#g-body-right tr');
+  let insertAfterRight=null;
+  allRightRows.forEach(r=>{
+    if(r.id&&(r.id===`row-ph-${phid}-bar`||r.id.startsWith('row-st-')&&ph.steps.find(s=>r.id===`row-st-${s.id}-bar`))){
+      insertAfterRight=r;
+    }
+  });
+  const trRight=document.createElement('tr');
+  trRight.className='row-add-step'; trRight.id='add-step-inline-bar';
+  trRight.innerHTML=`<td class="bc"><div style="height:24px"></div></td>`;
+  if(insertAfterRight) insertAfterRight.after(trRight);
+  populateAssigneeSelect('asa','');
+  document.getElementById('asn').focus();
+  requestAnimationFrame(syncGanttRowHeights);
+}
+function autoScheduleAddStep(){
+  if(!addStepTarget)return;
+  const p=projects.find(x=>x.id===addStepTarget.pid);
+  const ph=p.phases.find(x=>x.id===addStepTarget.phid);
+  const dur=parseInt(document.getElementById('asd')?.value)||1;
+  const predSel=document.getElementById('asp');
+  const preds=predSel?[...predSel.selectedOptions].map(o=>({id:o.value,lag:0})):[];
+  const ss=document.getElementById('ass');
+  const base=ss?.value||calcStepFirstAvailable(ph,preds);
+  const {end}=calcStepDates(base,dur);
+  const disp=document.getElementById('ase-disp');
+  if(disp) disp.textContent=end?fmtDate(end):'—';
+}
+function commitAddStep(keepOpen=false){
+  if(!addStepTarget)return;
+  const n=document.getElementById('asn').value.trim();
+  if(!n){if(!keepOpen)cancelAddStep();return;}
+  const a=document.getElementById('asa')?.value||'';
+  const status=document.getElementById('asst')?.value||'planning';
+  const dur=parseInt(document.getElementById('asd')?.value)||1;
+  const predSel=document.getElementById('asp');
+  const predecessors=predSel?[...predSel.selectedOptions].map(o=>o.value):[];
+  const p=projects.find(x=>x.id===addStepTarget.pid);
+  const ph=p.phases.find(x=>x.id===addStepTarget.phid);
+  const rawStart=document.getElementById('ass')?.value||'';
+  const start=rawStart?nextWorkday(rawStart):calcStepFirstAvailable(ph,predecessors.map(id=>({id,lag:0})));
+  const {end}=calcStepDates(start,dur);
+  const newStepId='s'+Date.now();
+  ph.steps.push({id:newStepId,name:n,assign:a,status,done:(status==='done'),start,end,duration:dur,predecessors:predecessors.map(id=>({id,lag:0})),successors:[]});
+  syncStepLinks(ph);
+  cascadeStepDates(ph, newStepId);
+  expandPhaseToFitStep(ph,start,end);
+  syncPhaseStatus(ph);
+  if(end) syncStepTaskDue(addStepTarget.pid,n,end);
+  save();renderProjects();renderTasks();
+  if(keepOpen){
+    // Keep the same target, re-open add row after gantt re-renders
+    const target={...addStepTarget};
+    addStepTarget=null;
+    renderGantt();
+    startAddStep(target.pid,target.phid);
+  } else {
+    addStepTarget=null;
+    renderGantt();
+  }
+}
+function cancelAddStep(){
+  addStepTarget=null;
+  const r=document.getElementById('add-step-inline');if(r)r.remove();
+  const rb=document.getElementById('add-step-inline-bar');if(rb)rb.remove();
+}
+
+// ─── Inline add task (schedule) ───────────────────────────────
+function showAddTaskForm(pid){
+  document.getElementById('add-task-form-'+pid).style.display='';
+  document.getElementById('add-task-btn-'+pid).style.display='none';
+  document.getElementById('atN-'+pid).focus();
+}
+function cancelAddTask(pid){
+  document.getElementById('add-task-form-'+pid).style.display='none';
+  document.getElementById('add-task-btn-'+pid).style.display='';
+}
+function handleAddTaskKey(e,pid){
+  if(e.key==='Enter'){e.preventDefault();commitAddTask(pid,true);}
+  if(e.key==='Escape'){cancelAddTask(pid);}
+}
+function commitAddTask(pid,chain){
+  const label=document.getElementById('atN-'+pid).value.trim();
+  if(!label)return;
+  const due=document.getElementById('atD-'+pid).value;
+  tasks.push({id:'t'+Date.now(),label,projectId:pid,done:false,due});
+  save();
+  if(chain){
+    // clear and keep the form open for the next task
+    document.getElementById('atN-'+pid).value='';
+    document.getElementById('atD-'+pid).value='';
+    renderGantt();
+    // re-open the form (renderGantt closes it) and focus
+    showAddTaskForm(pid);
+  } else {
+    renderGantt();
+  }
+  renderProjects();renderTasks();
+}
+
+// ─── Inline edit task (schedule) ──────────────────────────────
+function startEditTask(tid){
+  const t=tasks.find(x=>x.id===tid);
+  if(!t)return;
+  const row=document.getElementById('row-task-'+tid);
+  if(!row)return;
+  const cells=row.querySelectorAll('td');
+  cells[0].innerHTML=`<div style="display:flex;align-items:center;gap:6px;padding-left:20px">
+    <span style="color:var(--ts);font-size:10px">◆</span>
+    <input id="etn-${tid}" class="fld inline" value="${t.label}" style="width:180px"
+      onkeydown="if(event.key==='Enter')commitEditTask('${tid}');if(event.key==='Escape')renderGantt()">
+  </div>`;
+  cells[3].innerHTML=`<span style="font-size:11px;color:var(--tt)">—</span>`;
+  cells[4].innerHTML=`<input id="etd-${tid}" class="fld inline" type="date" value="${t.due||''}" style="width:118px"
+    onkeydown="if(event.key==='Enter')commitEditTask('${tid}')">`;
+  cells[5].innerHTML=`<div class="inline-row-btns">
+    <button class="btn xs pr" onclick="commitEditTask('${tid}')">Save</button>
+    <button class="btn xs" onclick="renderGantt()">Cancel</button>
+  </div>`;
+  document.getElementById('etn-'+tid).focus();
+}
+function commitEditTask(tid){
+  const t=tasks.find(x=>x.id===tid);
+  const n=document.getElementById('etn-'+tid),d=document.getElementById('etd-'+tid);
+  if(n&&n.value.trim())t.label=n.value.trim();
+  if(d)t.due=d.value;
+  save();renderGantt();renderTasks();
+}
+
+// ─── Tasks tab ────────────────────────────────────────────────
+function renderTasks(){
+  const filter=document.getElementById('t-filter').value;
+  const sel=document.getElementById('t-filter');
+  const sampleProjSet2=new Set(SAMPLE_IDS.projects);
+  const visibleProjs=filterSample(projects,sampleProjSet2);
+  const projectMap=buildProjectMap(visibleProjs);
+  sel.innerHTML='<option value="all">All projects</option>'+visibleProjs.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  sel.value=filter;
+  document.getElementById('nt-proj').innerHTML='<option value="">Project...</option>'+visibleProjs.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const visibleTasksT=filterSample(tasks,new Set(SAMPLE_IDS.tasks));
+  const filtered=filter==='all'?visibleTasksT:visibleTasksT.filter(t=>t.projectId===filter);
+  const today=new Date().toISOString().slice(0,10);
+  const list=document.getElementById('t-list');
+  if(!filtered.length){list.innerHTML='<div class="empty">No tasks yet.</div>';return;}
+
+  list.innerHTML=filtered.map(t=>{
+    const proj=projectMap.get(t.projectId);
+    const ov=t.due&&t.due<today&&!t.done;
+    return `<div class="task-row">
+      <input type="checkbox" class="task-check" ${t.done?'checked':''} onchange="toggleTask('${t.id}',this.checked)">
+      <span class="task-lbl${t.done?' done':''}">${t.label}${proj?` <span style="font-size:11px;color:var(--ts)">· ${proj.name}</span>`:''}
+      </span>
+      ${t.due?`<span class="task-due${ov?' ov':''}">${ov?'⚠ ':''}${fmtDate(t.due)}</span>`:''}
+      <button class="btn xs" onclick="deleteTask('${t.id}')">✕</button>
+    </div>`;
+  }).join('');
+}
+function toggleTask(id,done){const t=tasks.find(x=>x.id===id);if(t){t.done=done;save();renderTasks();renderGantt();}}
+function deleteTask(id){
+  tasks=tasks.filter(t=>t.id!==id);
+  dbDeleteTask(id).catch(e=>console.warn('delete task:',e));
+  save();renderTasks();renderGantt();
+}
+function addTask(){
+  const label=document.getElementById('nt-lbl').value.trim();
+  const projectId=document.getElementById('nt-proj').value;
+  const due=document.getElementById('nt-due').value;
+  if(!label)return;
+  tasks.push({id:'t'+Date.now(),label,projectId,done:false,due});
+  document.getElementById('nt-lbl').value='';
+  document.getElementById('nt-due').value='';
+  save();renderTasks();renderGantt();
+}
+
+// ─── Step dependency modal ────────────────────────────────────
+let stepDepTarget=null;
+
+function renderDepList(containerId, peers, selectedMap, onChange){
+  // selectedMap: Map<id, lag>
+  const el=document.getElementById(containerId);
+  if(!peers.length){
+    el.innerHTML=`<div style="font-size:12px;color:var(--tt);padding:4px">No other steps in this phase.</div>`;
+    return;
+  }
+  el.innerHTML=peers.map(peer=>{
+    const isSelected=selectedMap.has(peer.id);
+    const lag=selectedMap.get(peer.id)||0;
+    return `<div class="dep-peer-row ${isSelected?'selected':''}" id="dep-row-${containerId}-${peer.id}">
+      <label>
+        <input type="checkbox" ${isSelected?'checked':''} style="accent-color:var(--brand)"
+          onchange="depTogglePeer('${containerId}','${peer.id}',this.checked)"
+          id="dep-cb-${containerId}-${peer.id}">
+        <span title="${peer.name}">${peer.name}</span>
+      </label>
+      <span class="dep-lag-lbl">Lag</span>
+      <input type="number" class="dep-lag" value="${lag}"
+        ${!isSelected?'disabled':''}
+        id="dep-lag-${containerId}-${peer.id}"
+        title="Lag days (positive = wait, negative = overlap)"
+        onchange="depUpdateLag('${containerId}','${peer.id}',this.value)">
+      <span class="dep-lag-lbl">d</span>
+    </div>`;
+  }).join('');
+}
+
+// Live state during modal editing
+let _depPreds=new Map(); // id -> lag
+let _depSuccs=new Map();
+let _depPeers=[];
+
+function depTogglePeer(containerId, peerId, checked){
+  const map=containerId==='dep-preds-list'?_depPreds:_depSuccs;
+  const row=document.getElementById('dep-row-'+containerId+'-'+peerId);
+  const lagInput=document.getElementById('dep-lag-'+containerId+'-'+peerId);
+  if(checked){
+    map.set(peerId, 0);
+    row.classList.add('selected');
+    if(lagInput) lagInput.disabled=false;
+  } else {
+    map.delete(peerId);
+    row.classList.remove('selected');
+    if(lagInput){lagInput.disabled=true;lagInput.value=0;}
+  }
+}
+function depUpdateLag(containerId, peerId, val){
+  const map=containerId==='dep-preds-list'?_depPreds:_depSuccs;
+  if(map.has(peerId)) map.set(peerId,parseInt(val)||0);
+}
+
+function openStepDepModal(pid,phid,stid){
+  stepDepTarget={pid,phid,stid};
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const st=ph.steps.find(x=>x.id===stid);
+  _depPeers=ph.steps
+    .filter(x=>x.id!==stid)
+    .sort((a,b)=>{
+      const aKey=a.start||a.end||'9999-12-31';
+      const bKey=b.start||b.end||'9999-12-31';
+      if(aKey!==bKey) return aKey<bKey?-1:1;
+      return (a.name||'').localeCompare(b.name||'');
+    });
+
+  // Normalize existing predecessors/successors to {id,lag}
+  const existPreds=(st.predecessors||[]).map(x=>typeof x==='string'?{id:x,lag:0}:x);
+  const existSuccs=(st.successors||[]).map(x=>typeof x==='string'?{id:x,lag:0}:{id:x.id||x,lag:0});
+  _depPreds=new Map(existPreds.map(({id,lag})=>[id,lag||0]));
+  _depSuccs=new Map(existSuccs.map(({id,lag})=>[id,lag||0]));
+
+  // Filter peers: exclude any that are already the opposite type
+  document.getElementById('task-edit-name-disp').textContent=st.name;
+  renderDepList('dep-preds-list',_depPeers.filter(x=>!_depSuccs.has(x.id)),_depPreds);
+  renderDepList('dep-succs-list',_depPeers.filter(x=>!_depPreds.has(x.id)),_depSuccs);
+  document.getElementById('task-modal').classList.add('open');
+}
+
+function closeTaskModal(){
+  document.getElementById('task-modal').classList.remove('open');
+  stepDepTarget=null;
+}
+
+function saveTaskEdit(){
+  if(!stepDepTarget)return;
+  const {pid,phid,stid}=stepDepTarget;
+  const p=projects.find(x=>x.id===pid);
+  const ph=p.phases.find(x=>x.id===phid);
+  const st=ph.steps.find(x=>x.id===stid);
+  st.predecessors=[..._depPreds.entries()].map(([id,lag])=>({id,lag}));
+  st.successors  =[..._depSuccs.entries()].map(([id])=>id); // successors don't carry lag
+  syncStepLinks(ph);
+  // Cascade recalculation
+  cascadeStepDates(ph);
+  recalcPhaseDates(ph);
+  syncPhaseStatus(ph);
+  save();closeTaskModal();renderGantt();renderTasks();
+}
+
+function openProjectModal(pid=null){
+  editingId=pid;
+  const p=pid?projects.find(x=>x.id===pid):null;
+  document.getElementById('modal-title').textContent=p?'Edit Project':'New Project';
+  document.getElementById('del-proj-btn').style.display=p?'':'none';
+  document.getElementById('p-name').value=p?.name||'';
+  document.getElementById('p-desc').value=p?.desc||'';
+  document.getElementById('p-start').value=p?.start||'';
+  document.getElementById('p-end').value=p?.end||'';
+  document.getElementById('p-budget').value=p?.budget||'';
+  document.getElementById('p-status').value=p?.status||'planning';
+  document.getElementById('p-mgr').value=p?.manager||'';
+  document.getElementById('p-addr').value=p?.address||'';
+  const prog=p?.progress||0;
+  document.getElementById('p-prog').value=prog;
+  document.getElementById('p-prog-out').textContent=prog+'%';
+  tempPhases=p?JSON.parse(JSON.stringify(p.phases||[])):[];
+  expandedPh={};
+  populateAssigneeSelect('ph-assign','');
+  renderPhaseList();
+  document.getElementById('proj-modal').classList.add('open');
+}
+function closeProjectModal(){document.getElementById('proj-modal').classList.remove('open');}
+
+function renderPhaseList(){
+  const el=document.getElementById('ph-list');
+  if(!tempPhases.length){el.innerHTML='<div style="font-size:12px;color:var(--ts);margin-bottom:8px">No phases yet — add one below.</div>';return;}
+  el.innerHTML=tempPhases.map((ph,pi)=>{
+    recalcPhaseDates(ph);
+    const comp=sc(ph);const isOpen=!!expandedPh[ph.id];
+    const cl=comp?`<span style="font-size:11px;color:var(--ts)">${comp.done}/${comp.total}</span>`:`<span style="font-size:11px;color:var(--tt)">0 steps</span>`;
+    const stHtml=(ph.steps||[]).map((st,si)=>{
+      const stStatus=st.status||(st.done?'done':'planning');
+      const isDone=stStatus==='done';
+      const [,stBg,stTc]=BC[stStatus]||BC.planning;
+      return `<div class="si" draggable="true" ondragstart="startTmpStepDrag(${pi},${si},event)" ondragend="endTmpStepDrag()">
+        <select class="sc" style="font-size:11px;padding:2px 4px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font);width:82px" onchange="setTmpStepStatus(${pi},${si},this.value)">
+          <option value="planning" ${stStatus==='planning'?'selected':''}>Planning</option>
+          <option value="active"   ${stStatus==='active'  ?'selected':''}>Active</option>
+          <option value="delayed"  ${stStatus==='delayed' ?'selected':''}>Delayed</option>
+          <option value="done"     ${stStatus==='done'    ?'selected':''}>Done</option>
+        </select>
+        <span class="sn${isDone?' done':''}">${st.name}</span>
+        ${st.assign?`<span class="stag">${st.assign}</span>`:''}
+        ${st.duration?`<span class="stag" style="color:var(--ts)">${st.duration}d</span>`:'<span class="stag" style="color:var(--ts)">1d</span>'}
+        ${st.start?`<span class="stag" style="color:var(--brand)">${fmtDate(st.start)}</span>`:''}
+        ${st.end?`<span class="stag" style="color:var(--ts)">→ ${fmtDate(st.end)}</span>`:''}
+        ${(st.predecessors||[]).length?`<span class="stag" style="color:var(--lavender)">⬅${st.predecessors.length}</span>`:''}
+        <button class="btn xs" onclick="rmTmpStep(${pi},${si})">✕</button>
+      </div>`;
+    }).join('');
+    const body=`<div class="ph-block-body">
+      <div style="margin-bottom:4px">${stHtml||'<div style="font-size:12px;color:var(--tt);padding:4px 0">No steps yet.</div>'}</div>
+      <div class="add-sr" style="flex-wrap:wrap">
+        <input id="sn-${pi}" class="fld" type="text" placeholder="Step name" style="flex:2;min-width:120px" onkeydown="if(event.key==='Enter')addTmpStep(${pi})">
+        <select id="sa-${pi}" class="fld" style="flex:1;min-width:130px"><option value="">Assignee…</option></select>
+        <select id="spred-${pi}" class="fld" multiple style="flex:1;min-width:130px;height:36px;font-size:12px" title="Predecessors (Ctrl+click)">
+          ${(ph.steps||[]).map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}
+        </select>
+        <input id="sdur-${pi}" class="fld" type="number" min="1" value="1" style="flex:0;min-width:70px" title="Duration in days" oninput="autoScheduleTmpStep(${pi})">
+        <input id="ss-${pi}" class="fld" type="date" style="flex:1;min-width:110px" title="Step start date" oninput="autoScheduleTmpStep(${pi})">
+        <button class="btn sm" onclick="addTmpStep(${pi})">+ Step</button>
+      </div>
+    </div>`;
+    return `<div class="ph-block" ondragover="allowTmpStepDrop(event)" ondrop="dropTmpStep(${pi},event)">
+      <div class="ph-block-hdr" onclick="togglePhEx('${ph.id}')">
+        <span class="ph-chev${isOpen?' open':''}">▶</span>
+        <span class="badge ${({active:'ba',planning:'bp',delayed:'bd',done:'bdo'})[ph.status]||'bp'}" style="font-size:10px">${ph.status}</span>
+        <span style="flex:1;font-weight:500;font-size:13px">${ph.name}</span>
+        ${cl}
+        <span style="font-size:11px;color:var(--tt);font-style:italic">${ph.start&&ph.end?fmtRange(ph.start,ph.end):'dates from steps'}</span>
+        <select style="font-size:11px;padding:2px 5px;border-radius:4px;border:.5px solid var(--bsc);background:var(--bp);color:var(--tp);font-family:var(--font)" onclick="event.stopPropagation()" onchange="tempPhases[${pi}].status=this.value;renderPhaseList()">
+          <option value="planning" ${ph.status==='planning'?'selected':''}>Planning</option>
+          <option value="active"   ${ph.status==='active'  ?'selected':''}>Active</option>
+          <option value="delayed"  ${ph.status==='delayed' ?'selected':''}>Delayed</option>
+          <option value="done"     ${ph.status==='done'    ?'selected':''}>Done</option>
+        </select>
+        <button class="btn xs" style="color:var(--dant);flex-shrink:0" onclick="event.stopPropagation();tempPhases.splice(${pi},1);renderPhaseList()">✕</button>
+      </div>
+      ${isOpen?body:''}
+    </div>`;
+  }).join('');
+  // Populate all assignee selects now that DOM is updated
+  setTimeout(()=>{
+    tempPhases.forEach((_,pi)=>populateAssigneeSelect('sa-'+pi,''));
+    populateAssigneeSelect('ph-assign','');
+  },0);
+}
+function togglePhEx(id){expandedPh[id]=!expandedPh[id];renderPhaseList();}
+function startTmpStepDrag(fromPi, si, event){
+  tmpStepDrag={fromPi,si};
+  if(event?.dataTransfer){
+    event.dataTransfer.effectAllowed='move';
+    event.dataTransfer.setData('text/plain', `${fromPi}:${si}`);
+  }
+}
+function endTmpStepDrag(){ tmpStepDrag=null; }
+function allowTmpStepDrop(event){
+  if(!tmpStepDrag)return;
+  event.preventDefault();
+  if(event.dataTransfer) event.dataTransfer.dropEffect='move';
+}
+function dropTmpStep(toPi, event){
+  if(event) event.preventDefault();
+  if(!tmpStepDrag) return;
+  const {fromPi,si}=tmpStepDrag;
+  tmpStepDrag=null;
+  if(fromPi===toPi) return;
+  const fromPh=tempPhases[fromPi];
+  const toPh=tempPhases[toPi];
+  if(!fromPh||!toPh) return;
+  const moved=fromPh.steps?.splice(si,1)[0];
+  if(!moved) return;
+
+  const movedId=moved.id;
+  (fromPh.steps||[]).forEach(st=>{
+    st.predecessors=normalizePreds(st.predecessors).filter(pred=>pred.id!==movedId);
+    st.successors=(st.successors||[]).filter(id=>id!==movedId);
+  });
+
+  moved.predecessors=[];
+  moved.successors=[];
+  if(!toPh.steps) toPh.steps=[];
+  toPh.steps.push(moved);
+  syncStepLinks(fromPh);
+  syncStepLinks(toPh);
+  recalcPhaseDates(fromPh);
+  recalcPhaseDates(toPh);
+  syncPhaseStatus(fromPh);
+  syncPhaseStatus(toPh);
+  expandedPh[fromPh.id]=true;
+  expandedPh[toPh.id]=true;
+  renderPhaseList();
+}
+function autoScheduleTmpStep(pi){
+  // No-op: end is computed on save. Just a hook for future live preview if needed.
+}
+function addTmpStep(pi){
+  const n=document.getElementById('sn-'+pi).value.trim();
+  const a=document.getElementById('sa-'+pi).value;
+  const dur=parseInt(document.getElementById('sdur-'+pi)?.value)||1;
+  const predSel=document.getElementById('spred-'+pi);
+  const predIds=predSel?[...predSel.selectedOptions].map(o=>o.value):[];
+  const predecessors=predIds.map(id=>({id,lag:0}));
+  if(!n)return;
+  if(!tempPhases[pi].steps)tempPhases[pi].steps=[];
+  const rawStart=document.getElementById('ss-'+pi)?.value||'';
+  const start=rawStart?nextWorkday(rawStart):calcStepFirstAvailable(tempPhases[pi],predecessors);
+  const {end}=calcStepDates(start,dur);
+  tempPhases[pi].steps.push({id:'s'+Date.now(),name:n,assign:a,status:'planning',done:false,start,end,duration:dur,predecessors,successors:[]});
+  cascadeStepDates(tempPhases[pi]);
+  expandPhaseToFitStep(tempPhases[pi],start,end);
+  expandedPh[tempPhases[pi].id]=true;renderPhaseList();
+}
+function rmTmpStep(pi,si){tempPhases[pi].steps.splice(si,1);expandedPh[tempPhases[pi].id]=true;renderPhaseList();}
+function setTmpStepStatus(pi,si,status){
+  tempPhases[pi].steps[si].status=status;
+  tempPhases[pi].steps[si].done=(status==='done');
+  // Auto-sync the phase status in the modal
+  const ph=tempPhases[pi];
+  const steps=ph.steps||[];
+  if(steps.length){
+    const allDone=steps.every(s=>s.status==='done'||s.done);
+    const anyActive=steps.some(s=>s.status==='active');
+    if(allDone) ph.status='done';
+    else if(anyActive) ph.status='active';
+  }
+  expandedPh[ph.id]=true;renderPhaseList();
+}
+function toggleTmpStep(pi,si,done){setTmpStepStatus(pi,si,done?'done':'active');}
+function addPhase(){
+  const n=document.getElementById('ph-name').value.trim();if(!n)return;
+  const a=document.getElementById('ph-assign').value.trim();
+  const np={id:'ph'+Date.now(),name:n,start:'',end:'',assign:a,status:'planning',steps:[]};
+  tempPhases.push(np);expandedPh[np.id]=true;
+  document.getElementById('ph-name').value='';document.getElementById('ph-assign').value='';
+  renderPhaseList();
+}
+function saveProject(){
+  const n=document.getElementById('p-name').value.trim();if(!n){alert('Project name is required.');return;}
+  const pid=editingId||('p'+Date.now());
+  // Recalc all phase dates and sync status from steps before saving
+  tempPhases.forEach(ph=>{recalcPhaseDates(ph);syncPhaseStatus(ph);});
+  const data={name:n,desc:document.getElementById('p-desc').value,start:document.getElementById('p-start').value,end:document.getElementById('p-end').value,budget:parseFloat(document.getElementById('p-budget').value)||0,status:document.getElementById('p-status').value,manager:document.getElementById('p-mgr').value,address:document.getElementById('p-addr').value,progress:parseInt(document.getElementById('p-prog').value)||0,phases:tempPhases};
+  if(editingId){Object.assign(projects.find(x=>x.id===editingId),data);}else{projects.push({...data,id:pid});}
+  const effectivePid=editingId||pid;
+  tempPhases.forEach(ph=>(ph.steps||[]).forEach(st=>{if(st.end)syncStepTaskDue(effectivePid,st.name,st.end);}));
+  save();closeProjectModal();renderProjects();renderGantt();renderTasks();
+}
+function deleteProject(){
+  if(!confirm('Delete this project and all its tasks?'))return;
+  const id=editingId;
+  projects=projects.filter(p=>p.id!==id);tasks=tasks.filter(t=>t.projectId!==id);
+  dbDeleteProject(id).catch(e=>console.warn('delete project:',e));
+  save();closeProjectModal();renderProjects();renderGantt();
+}
+
+// ─── Schedule view switching ──────────────────────────────────
+let schedView='gantt';
+let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
+
+function setSchedView(v){
+  schedView=v;
+  document.getElementById('gantt-view').style.display=v==='gantt'?'':'none';
+  document.getElementById('calendar-view').style.display=v==='calendar'?'':'none';
+  document.getElementById('gantt-controls').style.display=v==='gantt'?'flex':'none';
+  const cc=document.getElementById('cal-controls');
+  cc.style.display=v==='calendar'?'flex':'none';
+  document.getElementById('view-gantt-btn').style.cssText=v==='gantt'?'background:var(--brand);color:#fff;border-color:transparent':'background:transparent';
+  document.getElementById('view-cal-btn').style.cssText=v==='calendar'?'background:var(--brand);color:#fff;border-color:transparent':'background:transparent';
+  if(v==='calendar')renderCalendar();
+}
+
+function onFilterChange(){
+  if(schedView==='gantt')renderGantt();
+  else renderCalendar();
+}
+
+function calNav(dir){
+  calMonth+=dir;
+  if(calMonth>11){calMonth=0;calYear++;}
+  if(calMonth<0){calMonth=11;calYear--;}
+  renderCalendar();
+}
+function calToday(){calYear=new Date().getFullYear();calMonth=new Date().getMonth();renderCalendar();}
+
+function renderCalendar(){
+  document.getElementById('cal-month-label').textContent=
+    new Date(calYear,calMonth,1).toLocaleString('default',{month:'long',year:'numeric'});
+
+  const filter=document.getElementById('g-filter').value;
+  const calProjects=filterSample(projects,new Set(SAMPLE_IDS.projects));
+  const filtered=filter==='all'?calProjects:calProjects.filter(p=>p.id===filter);
+  const calTasks=filterSample(tasks,new Set(SAMPLE_IDS.tasks));
+  const today=new Date().toISOString().slice(0,10);
+
+  const statusColors={active:['#1D9E75','#E1F5EE','#085041'],planning:['#3d4278','#eceef8','#2a2d5a'],delayed:['#E24B4A','#FCEBEB','#791F1F'],done:['#888780','#F1EFE8','#444441']};
+
+  // Collect items by date
+  const itemsByDate={}; // date -> [{type:'phase'|'step'|'task', item, project, ph?}]
+  function addItem(date, obj){
+    if(!itemsByDate[date]) itemsByDate[date]=[];
+    itemsByDate[date].push(obj);
+  }
+  filtered.forEach(p=>{
+    (p.phases||[]).forEach(ph=>{
+      if(ph.start&&ph.end){
+        const cur=new Date(ph.start);const end=new Date(ph.end);
+        while(cur<=end){addItem(cur.toISOString().slice(0,10),{type:'phase',item:ph,project:p});cur.setDate(cur.getDate()+1);}
+      }
+      (ph.steps||[]).forEach(st=>{
+        if(st.start&&st.end){
+          const cur=new Date(st.start);const end=new Date(st.end);
+          while(cur<=end){addItem(cur.toISOString().slice(0,10),{type:'step',item:st,project:p,ph});cur.setDate(cur.getDate()+1);}
+        }
+      });
+      // Delays: span from affected step's start for N days
+      (ph.delays||[]).forEach(dl=>{
+        const fromSt=ph.steps.find(s=>s.id===dl.stepId);
+        if(!fromSt||!fromSt.start) return;
+        const dlEnd=addCalDays(fromSt.start,dl.days);
+        const cur=new Date(fromSt.start);const end=new Date(dlEnd);
+        while(cur<=end){addItem(cur.toISOString().slice(0,10),{type:'delay',item:dl,project:p,ph,start:fromSt.start,end:dlEnd});cur.setDate(cur.getDate()+1);}
+      });
+    });
+    calTasks.filter(t=>t.projectId===p.id&&t.due).forEach(t=>{
+      addItem(t.due,{type:'task',item:t,project:p});
+    });
+  });
+
+  const firstDay=new Date(calYear,calMonth,1);
+  const lastDay=new Date(calYear,calMonth+1,0);
+  const gridStart=new Date(firstDay);
+  gridStart.setDate(gridStart.getDate()-gridStart.getDay());
+
+  // Build holiday lookup: date -> [{h, isStart, isEnd}]
+  const holidaysByDate={};
+  (settings.holidays||[]).forEach(h=>{
+    if(!h.date) return;
+    const start=h.date;
+    const end=(h.endDate&&h.endDate>=h.date)?h.endDate:h.date;
+    const cur=new Date(start+'T00:00:00');
+    const endD=new Date(end+'T00:00:00');
+    while(cur<=endD){
+      const dk=cur.toISOString().slice(0,10);
+      if(!holidaysByDate[dk]) holidaysByDate[dk]=[];
+      holidaysByDate[dk].push({h, isStart:dk===start, isEnd:dk===end, isSolo:start===end});
+      cur.setDate(cur.getDate()+1);
+    }
+  });
+
+  // ─── Slot assignment ─────────────────────────────────────────
+  // Assign each phase/step a persistent row slot such that no two
+  // overlapping items share the same slot. Process items sorted by
+  // start date so earlier items claim lower slots first.
+  const itemSlots={};
+  const allSpanItems=[];
+  filtered.forEach(p=>{
+    (p.phases||[]).forEach(ph=>{
+      if(ph.start&&ph.end) allSpanItems.push({id:ph.id,start:ph.start,end:ph.end});
+      (ph.steps||[]).forEach(st=>{
+        if(st.start&&st.end) allSpanItems.push({id:st.id,start:st.start,end:st.end});
+      });
+    });
+  });
+  allSpanItems.sort((a,b)=>a.start<b.start?-1:a.start>b.start?1:0);
+  allSpanItems.forEach(item=>{
+    // Find lowest slot not used by any item that overlaps this one
+    const overlapping=allSpanItems.filter(o=>
+      o.id!==item.id && itemSlots[o.id]!==undefined &&
+      o.start<=item.end && o.end>=item.start
+    );
+    const usedSlots=new Set(overlapping.map(o=>itemSlots[o.id]));
+    let slot=0;
+    while(usedSlots.has(slot))slot++;
+    itemSlots[item.id]=slot;
+  });
+
+  const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let html=`<div class="cal-grid">`;
+  DAYS.forEach(day=>{html+=`<div class="cal-dow">${day}</div>`;});
+
+  const HEADER_H=28; // px — date number area
+  const CHIP_H=20;   // chip height + gap
+  const HOL_H=18;    // holiday chip height + gap
+
+  const cur=new Date(gridStart);
+  for(let row=0;row<6;row++){
+    // First pass: compute how tall each cell in this row needs to be
+    const rowHeights=[];
+    for(let col=0;col<7;col++){
+      const d=new Date(cur);d.setDate(cur.getDate()+col);
+      const dk=d.toISOString().slice(0,10);
+      const hols=(holidaysByDate[dk]||[]).length;
+      const items=itemsByDate[dk]||[];
+      const phaseSlots=items.filter(o=>o.type==='phase').map(o=>itemSlots[o.item.id]||0);
+      const stepSlots=items.filter(o=>o.type==='step').map(o=>itemSlots[o.item.id]||0);
+      const maxSpanSlot=phaseSlots.concat(stepSlots).reduce((a,b)=>Math.max(a,b),-1);
+      const delayCount=items.filter(o=>o.type==='delay').length;
+      const taskCount=items.filter(o=>o.type==='task').length;
+      rowHeights.push(HEADER_H + hols*HOL_H + (maxSpanSlot+1)*CHIP_H + delayCount*HOL_H + taskCount*HOL_H + 24);
+    }
+    const rowH=Math.max(90,...rowHeights);
+
+    for(let col=0;col<7;col++){
+      const d=new Date(cur);d.setDate(cur.getDate()+col);
+      const dk=d.toISOString().slice(0,10);
+      const isOther=d.getMonth()!==calMonth;
+      const isToday=dk===today;
+      const holidaysHere=holidaysByDate[dk]||[];
+      const isHoliday=holidaysHere.length>0;
+      html+=`<div class="cal-cell${isOther?' other-month':''}${isToday?' today':''}${isHoliday?' holiday':''}" data-date="${dk}" style="height:${rowH}px">`;
+      html+=`<div class="cal-day-num">${d.getDate()}</div>`;
+
+      // Holiday chips — absolutely positioned above spans
+      holidaysHere.forEach(({h,isStart,isEnd,isSolo},hi)=>{
+        const posClass=isSolo?'solo':isStart?'start':isEnd?'end':'cont';
+        const label=(isStart||col===0)?(h.name||'Holiday'):'';
+        const top=HEADER_H+hi*HOL_H;
+        html+=`<div class="cal-chip-holiday ${posClass}" style="top:${top}px" title="${h.name||'Holiday'}${h.endDate&&h.endDate!==h.date?' ('+fmtDate(h.date)+' → '+fmtDate(h.endDate)+')':' ('+fmtDate(h.date)+')'}">${label}</div>`;
+      });
+      const holOffset=HEADER_H+holidaysHere.length*HOL_H;
+
+      const allHere=(itemsByDate[dk]||[]);
+      const rendered=new Set();
+
+      // Sort by type then slot — phases first, then steps, then delays, then tasks
+      const phases=allHere.filter(o=>o.type==='phase').sort((a,b)=>(itemSlots[a.item.id]||0)-(itemSlots[b.item.id]||0));
+      const steps=allHere.filter(o=>o.type==='step').sort((a,b)=>(itemSlots[a.item.id]||0)-(itemSlots[b.item.id]||0));
+      const delays=allHere.filter(o=>o.type==='delay');
+      const tasks=allHere.filter(o=>o.type==='task');
+
+      // Max span slot in this cell determines where delays+tasks start
+      const allSpanSlots=phases.concat(steps).map(o=>itemSlots[o.item.id]||0);
+      const maxSlot=allSpanSlots.length?Math.max(...allSpanSlots):-1;
+      const delayTop=holOffset+(maxSlot+1)*CHIP_H;
+      const taskTop=delayTop+delays.length*HOL_H;
+
+      phases.forEach(o=>{
+        if(rendered.has(o.item.id))return;
+        rendered.add(o.item.id);
+        const ph=o.item,p=o.project;
+        const isStart=dk===ph.start,isEnd=dk===ph.end,isSolo=isStart&&isEnd;
+        const posClass=isSolo?'solo':isStart?'start':isEnd?'end':'cont';
+        const label=(isStart||col===0)?ph.name:'';
+        const [bc,bg,tc]=statusColors[ph.status]||statusColors.planning;
+        const top=holOffset+(itemSlots[ph.id]||0)*CHIP_H;
+        html+=`<div class="cal-chip ${posClass}" style="top:${top}px;background:${bg};border-color:${bc};color:${tc};cursor:pointer" onclick="calEditPhase(event,'${p.id}','${ph.id}')" title="${ph.name}">${label}</div>`;
+      });
+
+      steps.forEach(o=>{
+        if(rendered.has(o.item.id))return;
+        rendered.add(o.item.id);
+        const st=o.item,p=o.project,ph=o.ph;
+        const isStart=dk===st.start,isEnd=dk===st.end,isSolo=isStart&&isEnd;
+        const posClass=isSolo?'solo':isStart?'start':isEnd?'end':'cont';
+        const label=(isStart||col===0)?'↳ '+st.name:'';
+        const [,sbg,stc]=BC[st.status||(st.done?'done':'planning')]||BC.planning;
+        const top=holOffset+(itemSlots[st.id]||0)*CHIP_H;
+        const chipId=`cal-chip-${st.id}-${dk}`;
+        html+=`<div class="cal-chip ${posClass}" id="${chipId}" style="top:${top}px;background:${sbg};border-color:${st.done?'#888780':'#9b9ec8'};color:${stc};font-style:italic;cursor:pointer" onclick="calEditStep(event,'${p.id}','${ph.id}','${st.id}')" title="${st.name}">${label}</div>`;
+      });
+
+      delays.forEach((o,di)=>{
+        if(rendered.has('dl-'+o.item.id))return;
+        rendered.add('dl-'+o.item.id);
+        const dl=o.item,p=o.project,ph=o.ph;
+        const isStart=dk===o.start,isEnd=dk===o.end,isSolo=isStart&&isEnd;
+        const posClass=isSolo?'solo':isStart?'start':isEnd?'end':'cont';
+        const label=(isStart||col===0)?`⚠ ${dl.cause}`:'';
+        const top=delayTop+di*HOL_H;
+        html+=`<div class="cal-chip ${posClass}" style="top:${top}px;background:#FCEBEB;border-color:#E24B4A;color:#791F1F;cursor:pointer;font-size:10px" onclick="openDelayModal('${p.id}','${ph.id}','${dl.id}')" title="⚠ ${dl.cause}${dl.description?' — '+dl.description:''}: ${dl.days}d">${label}</div>`;
+      });
+
+      tasks.forEach((o,ti)=>{
+        const t=o.item,p=o.project;
+        const ov=t.due<today&&!t.done;
+        const col2=t.done?'#888780':ov?'#E24B4A':'#BA7517';
+        const bg2=t.done?'#F1EFE8':ov?'#FCEBEB':'#FAEEDA';
+        const top=taskTop+ti*HOL_H;
+        html+=`<div class="cal-chip-task" style="top:${top}px;background:${bg2};color:${col2}">
+          <span style="font-size:9px">◆</span><span style="${t.done?'text-decoration:line-through':''}">${t.label}</span>
+        </div>`;
+      });
+
+      // Add buttons
+      html+=`<div style="display:flex;gap:3px;position:absolute;bottom:4px;left:6px;opacity:0;transition:opacity .1s" class="cal-add-btns">
+        <button class="btn xs" style="font-size:9px;padding:1px 4px" onclick="calAddPhase(event,'${dk}')">+Phase</button>
+        <button class="btn xs" style="font-size:9px;padding:1px 4px" onclick="calAddStep(event,'${dk}')">+Step</button>
+      </div>`;
+      html+='</div>';
+    }
+    cur.setDate(cur.getDate()+7);
+    if(cur.getMonth()!==calMonth&&cur>lastDay&&row>=4)break;
+  }
+  html+='</div>';
+  document.getElementById('cal-grid').innerHTML=html;
+
+  // Draw predecessor→successor arrows between step chips
+  drawCalArrows(filtered);
+
+  // Show add buttons on hover
+  document.querySelectorAll('.cal-cell').forEach(cell=>{
+    cell.addEventListener('mouseenter',()=>{const b=cell.querySelector('.cal-add-btns');if(b)b.style.opacity='1';});
+    cell.addEventListener('mouseleave',()=>{const b=cell.querySelector('.cal-add-btns');if(b)b.style.opacity='0';});
+  });
+}
+
+// ─── Calendar step dependency arrows ─────────────────────────
+function drawCalArrows(filteredProjects){
+  // Remove old overlay
+  const old=document.getElementById('cal-arrows-svg');
+  if(old)old.remove();
+
+  const grid=document.getElementById('cal-grid');
+  if(!grid)return;
+  const gridRect=grid.getBoundingClientRect();
+  const scrollX=window.scrollX,scrollY=window.scrollY;
+
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.id='cal-arrows-svg';
+  svg.style.cssText=`position:absolute;top:0;left:0;width:${grid.offsetWidth}px;height:${grid.offsetHeight}px;pointer-events:none;z-index:10;overflow:visible`;
+  grid.style.position='relative';
+
+  // Arrow marker
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  defs.innerHTML=`<marker id="cal-arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="#9b9ec8" opacity="0.8"/>
+  </marker>`;
+  svg.appendChild(defs);
+
+  filteredProjects.forEach(p=>{
+    (p.phases||[]).forEach(ph=>{
+      (ph.steps||[]).forEach(st=>{
+        (st.predecessors||[]).forEach(pred=>{
+          const predId=typeof pred==='string'?pred:pred.id;
+          const predStep=ph.steps.find(s=>s.id===predId);
+          if(!predStep||!predStep.end||!st.start)return;
+
+          // Find the chip for predStep's end day and st's start day
+          const fromEl=document.getElementById(`cal-chip-${predId}-${predStep.end}`);
+          const toEl=document.getElementById(`cal-chip-${st.id}-${st.start}`);
+          if(!fromEl||!toEl)return;
+
+          const fr=fromEl.getBoundingClientRect();
+          const tr=toEl.getBoundingClientRect();
+          const gx=gridRect.left;const gy=gridRect.top;
+
+          const x1=fr.right-gx;
+          const y1=fr.top+fr.height/2-gy;
+          const x2=tr.left-gx;
+          const y2=tr.top+tr.height/2-gy;
+
+          // Simple bezier from right-edge of pred end chip to left-edge of succ start chip
+          const cx1=x1+Math.min(40,Math.abs(x2-x1)*0.5);
+          const cx2=x2-Math.min(40,Math.abs(x2-x1)*0.5);
+
+          const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+          path.setAttribute('d',`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`);
+          path.setAttribute('stroke','#9b9ec8');
+          path.setAttribute('stroke-width','1.5');
+          path.setAttribute('fill','none');
+          path.setAttribute('opacity','0.7');
+          path.setAttribute('marker-end','url(#cal-arr)');
+          svg.appendChild(path);
+        });
+      });
+    });
+  });
+
+  grid.appendChild(svg);
+}
+
+// ─── Calendar popover helpers ─────────────────────────────────
+let _calPop=null;
+function closeCalPop(){if(_calPop){_calPop.remove();_calPop=null;}}
+function showCalPop(anchorEl,html){
+  closeCalPop();
+  const pop=document.createElement('div');
+  pop.className='cal-popover';
+  pop.innerHTML=html;
+  document.body.appendChild(pop);
+  _calPop=pop;
+  // Position near anchor
+  const r=anchorEl.getBoundingClientRect();
+  let top=r.bottom+6+window.scrollY;
+  let left=r.left+window.scrollX;
+  if(left+340>window.innerWidth)left=window.innerWidth-344;
+  if(top+360>window.innerHeight+window.scrollY)top=r.top-6+window.scrollY-320;
+  pop.style.top=top+'px';pop.style.left=left+'px';
+  setTimeout(()=>document.addEventListener('click',_outsideCalPop),0);
+}
+function _outsideCalPop(e){if(_calPop&&!_calPop.contains(e.target)){closeCalPop();document.removeEventListener('click',_outsideCalPop);}}
+
+// ─── Add phase from calendar ──────────────────────────────────
+function calAddPhase(e,date){
+  e.stopPropagation();
+  const filter=document.getElementById('g-filter').value;
+  const pOpts=projects.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  showCalPop(e.target,`
+    <h3>New Phase <button class="cal-pop-close" onclick="closeCalPop()">✕</button></h3>
+    <div class="cal-pop-field"><label>Project</label><select id="cp-proj">${pOpts}</select></div>
+    <div class="cal-pop-field"><label>Phase name</label><input id="cp-name" type="text" placeholder="e.g. Foundation" value=""></div>
+    <div class="cal-pop-field"><label>Assignee</label><select id="cp-assign"><option value="">Unassigned</option></select></div>
+    <div style="font-size:11px;color:var(--ts);font-style:italic;margin-bottom:4px">📅 Dates are set automatically from steps</div>
+    <div class="cal-pop-footer">
+      <button class="btn sm" onclick="closeCalPop()">Cancel</button>
+      <button class="btn sm pr" onclick="commitCalAddPhase()">Add Phase</button>
+    </div>`);
+  if(filter!=='all')document.getElementById('cp-proj').value=filter;
+  populateAssigneeSelect('cp-assign','');
+  document.getElementById('cp-name').focus();
+}
+function commitCalAddPhase(){
+  const pid=document.getElementById('cp-proj').value;
+  const name=document.getElementById('cp-name').value.trim();
+  if(!name)return;
+  const assign=document.getElementById('cp-assign').value.trim();
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  p.phases.push({id:'ph'+Date.now(),name,start:'',end:'',assign,status:'planning',steps:[]});
+  save();closeCalPop();renderCalendar();renderProjects();
+}
+
+// ─── Add step from calendar ───────────────────────────────────
+function calAddStep(e,date){
+  e.stopPropagation();
+  const filter=document.getElementById('g-filter').value;
+  const phOpts=projects.flatMap(p=>(p.phases||[]).map(ph=>`<option value="${p.id}|${ph.id}">${p.name} › ${ph.name}</option>`)).join('');
+  showCalPop(e.target,`
+    <h3>New Step <button class="cal-pop-close" onclick="closeCalPop()">✕</button></h3>
+    <div class="cal-pop-field"><label>Phase</label><select id="cs-ph">${phOpts}</select></div>
+    <div class="cal-pop-field"><label>Step name</label><input id="cs-name" type="text" placeholder="e.g. Excavation"></div>
+    <div class="cal-pop-row">
+      <div class="cal-pop-field"><label>Start</label><input id="cs-start" type="date" value="${date}" oninput="calStepPreviewEnd()"></div>
+      <div class="cal-pop-field"><label>Duration (days)</label><input id="cs-dur" type="number" min="1" value="1" oninput="calStepPreviewEnd()"></div>
+    </div>
+    <div class="cal-pop-field"><label style="color:var(--ts);font-weight:400">End (computed) <span id="cs-end-disp" style="color:var(--tp);font-weight:500"></span></label></div>
+    <div class="cal-pop-field"><label>Assignee</label><select id="cs-assign"><option value="">Unassigned</option></select></div>
+    <div class="cal-pop-footer">
+      <button class="btn sm" onclick="closeCalPop()">Cancel</button>
+      <button class="btn sm pr" onclick="commitCalAddStep()">Add Step</button>
+    </div>`);
+  populateAssigneeSelect('cs-assign','');
+  setTimeout(()=>calStepPreviewEnd(),0);
+  document.getElementById('cs-name').focus();
+}
+function calStepPreviewEnd(){
+  const start=document.getElementById('cs-start')?.value||'';
+  const dur=parseInt(document.getElementById('cs-dur')?.value)||1;
+  const disp=document.getElementById('cs-end-disp');
+  if(!disp)return;
+  if(start){const {end}=calcStepDates(start,dur);disp.textContent=end?fmtDate(end):'';}
+  else disp.textContent='';
+}
+function commitCalAddStep(){
+  const val=document.getElementById('cs-ph').value;
+  const [pid,phid]=val.split('|');
+  const name=document.getElementById('cs-name').value.trim();
+  if(!name)return;
+  const start=document.getElementById('cs-start').value;
+  const dur=parseInt(document.getElementById('cs-dur').value)||1;
+  const assign=document.getElementById('cs-assign').value.trim();
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);
+  const {end}=calcStepDates(start||calcStepFirstAvailable(ph,[]),dur);
+  ph.steps.push({id:'s'+Date.now(),name,assign,done:false,status:'planning',start:start||calcStepFirstAvailable(ph,[]),end,duration:dur,predecessors:[],successors:[]});
+  cascadeStepDates(ph);expandPhaseToFitStep(ph,start,end);syncPhaseStatus(ph);
+  if(end)syncStepTaskDue(pid,name,end);
+  save();closeCalPop();renderCalendar();renderProjects();
+}
+
+// ─── Edit phase from calendar ─────────────────────────────────
+function calEditPhase(e,pid,phid){
+  e.stopPropagation();
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);
+  const datesInfo=ph.start||ph.end?`${fmtDate(ph.start)||'?'} → ${fmtDate(ph.end)||'?'}`:'Dates set by steps';
+  showCalPop(e.target,`
+    <h3>Edit Phase <button class="cal-pop-close" onclick="closeCalPop()">✕</button></h3>
+    <div class="cal-pop-field"><label>Phase name</label><input id="ep-name" type="text" value="${ph.name}"></div>
+    <div class="cal-pop-field"><label>Assignee</label><select id="ep-assign"><option value="">Unassigned</option></select></div>
+    <div class="cal-pop-field"><label>Status</label>
+      <select id="ep-status">
+        <option value="planning" ${ph.status==='planning'?'selected':''}>Planning</option>
+        <option value="active"   ${ph.status==='active'  ?'selected':''}>Active</option>
+        <option value="delayed"  ${ph.status==='delayed' ?'selected':''}>Delayed</option>
+        <option value="done"     ${ph.status==='done'    ?'selected':''}>Done</option>
+      </select>
+    </div>
+    <div style="font-size:11px;color:var(--ts);font-style:italic;margin-bottom:8px">📅 ${datesInfo} — set via steps</div>
+    <div class="cal-pop-footer">
+      <button class="btn sm dn" onclick="calDeletePhase('${pid}','${phid}')">Delete</button>
+      <button class="btn sm" onclick="closeCalPop()">Cancel</button>
+      <button class="btn sm pr" onclick="commitCalEditPhase('${pid}','${phid}')">Save</button>
+    </div>`);
+  populateAssigneeSelect('ep-assign',ph.assign||'');
+  document.getElementById('ep-name').focus();
+}
+function commitCalEditPhase(pid,phid){
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);
+  ph.name=document.getElementById('ep-name').value.trim()||ph.name;
+  ph.assign=document.getElementById('ep-assign').value.trim();
+  ph.status=document.getElementById('ep-status').value;
+  save();closeCalPop();renderCalendar();renderProjects();
+}
+function calDeletePhase(pid,phid){
+  if(!confirm('Delete this phase?'))return;
+  const p=projects.find(x=>x.id===pid);
+  p.phases=p.phases.filter(ph=>ph.id!==phid);
+  save();closeCalPop();renderCalendar();renderProjects();
+}
+
+// ─── Edit step from calendar ──────────────────────────────────
+function calEditStep(e,pid,phid,stid){
+  e.stopPropagation();
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);const st=ph.steps.find(x=>x.id===stid);
+  const curDur=st.duration||1;
+  showCalPop(e.target,`
+    <h3>Edit Step <button class="cal-pop-close" onclick="closeCalPop()">✕</button></h3>
+    <div class="cal-pop-field"><label>Step name</label><input id="es-name" type="text" value="${st.name}"></div>
+    <div class="cal-pop-row">
+      <div class="cal-pop-field"><label>Start</label><input id="es-start" type="date" value="${st.start||''}" oninput="calEditStepPreviewEnd()"></div>
+      <div class="cal-pop-field"><label>Duration (days)</label><input id="es-dur" type="number" min="1" value="${curDur}" oninput="calEditStepPreviewEnd()"></div>
+    </div>
+    <div class="cal-pop-field"><label style="color:var(--ts);font-weight:400">End (computed) <span id="es-end-disp" style="color:var(--tp);font-weight:500">${st.end?fmtDate(st.end):''}</span></label></div>
+    <div class="cal-pop-field"><label>Assignee</label><select id="es-assign"><option value="">Unassigned</option></select></div>
+    <div class="cal-pop-field"><label>Status</label>
+      <select id="es-status">
+        <option value="planning" ${(st.status||'planning')==='planning'?'selected':''}>Planning</option>
+        <option value="active"   ${st.status==='active'  ?'selected':''}>Active</option>
+        <option value="delayed"  ${st.status==='delayed' ?'selected':''}>Delayed</option>
+        <option value="done"     ${(st.status==='done'||st.done)?'selected':''}>Done</option>
+      </select>
+    </div>
+    <div class="cal-pop-footer">
+      <button class="btn sm dn" onclick="calDeleteStep('${pid}','${phid}','${stid}')">Delete</button>
+      <button class="btn sm" onclick="closeCalPop()">Cancel</button>
+      <button class="btn sm pr" onclick="commitCalEditStep('${pid}','${phid}','${stid}')">Save</button>
+    </div>`);
+  populateAssigneeSelect('es-assign',st.assign||'');
+  document.getElementById('es-name').focus();
+}
+function calEditStepPreviewEnd(){
+  const start=document.getElementById('es-start')?.value||'';
+  const dur=parseInt(document.getElementById('es-dur')?.value)||1;
+  const disp=document.getElementById('es-end-disp');
+  if(!disp)return;
+  if(start){const {end}=calcStepDates(start,dur);disp.textContent=end?fmtDate(end):'';}
+  else disp.textContent='';
+}
+function commitCalEditStep(pid,phid,stid){
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);const st=ph.steps.find(x=>x.id===stid);
+  st.name=document.getElementById('es-name').value.trim()||st.name;
+  st.start=nextWorkday(document.getElementById('es-start').value)||document.getElementById('es-start').value;
+  st.duration=parseInt(document.getElementById('es-dur').value)||1;
+  st.assign=document.getElementById('es-assign').value.trim();
+  st.status=document.getElementById('es-status').value;
+  st.done=(st.status==='done');
+  if(st.start){const {end}=calcStepDates(st.start,st.duration);st.end=end;}
+  cascadeStepDates(ph,stid);expandPhaseToFitStep(ph,st.start,st.end);syncPhaseStatus(ph);
+  if(st.end)syncStepTaskDue(pid,st.name,st.end);
+  save();closeCalPop();renderCalendar();renderProjects();
+}
+function calDeleteStep(pid,phid,stid){
+  if(!confirm('Delete this step?'))return;
+  const p=projects.find(x=>x.id===pid);const ph=p.phases.find(x=>x.id===phid);
+  removeStepFromPhase(ph, stid);
+  save();closeCalPop();renderCalendar();renderProjects();renderTasks();
+}
+
+document.getElementById('delay-modal').addEventListener('click',function(e){if(e.target===this)closeDelayModal();});
+document.getElementById('proj-modal').addEventListener('click',function(e){if(e.target===this)closeProjectModal();});
+document.getElementById('task-modal').addEventListener('click',function(e){if(e.target===this)closeTaskModal();});
+document.getElementById('person-modal').addEventListener('click',function(e){if(e.target===this)closePersonModal();});
+document.getElementById('csv-modal').addEventListener('click',function(e){if(e.target===this)closeCsvImport();});
+maybeShowStorageBanner();
+dbLoad();
+</script>
+</body>
+</html>
