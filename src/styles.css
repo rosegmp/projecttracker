@@ -1647,6 +1647,30 @@ button.calendar-chip {
   flex-shrink: 0;
 }
 
+.files-folder-card.is-dragging,
+.files-hierarchy-folder.is-dragging,
+.files-list-row.is-dragging,
+.files-hierarchy-file-row.is-dragging {
+  opacity: 0.7;
+}
+
+.files-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.files-drag-handle:hover {
+  background: rgba(61, 66, 120, 0.08);
+  color: var(--text);
+}
+
 .files-folder-select {
   min-height: 28px;
   max-width: 120px;

@@ -1245,6 +1245,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   const [fileNameDrafts, setFileNameDrafts] = useState({});
   const [storageNotice, setStorageNotice] = useState('');
   const [moveFileDraft, setMoveFileDraft] = useState(null);
+  const [dragItem, setDragItem] = useState(null);
   const fileInputRefs = useRef({});
   const replaceFileInputRefs = useRef({});
 
@@ -1382,6 +1383,77 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function startFolderDrag(event, folderId) {
+    if (saving) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', folderId);
+    setDragItem({ type: 'folder', folderId });
+  }
+
+  function startFileDrag(event, folderId, fileId) {
+    if (saving) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', fileId);
+    setDragItem({ type: 'file', folderId, fileId });
+  }
+
+  function finishDrag() {
+    setDragItem(null);
+  }
+
+  function moveFolderByDrag(targetFolderId) {
+    if (!selectedProject || !dragItem || dragItem.type !== 'folder' || dragItem.folderId === targetFolderId) return;
+    void runFilesMutation(selectedProject.id, (project) => {
+      const current = [...(project.files?.folders || [])];
+      const sourceIndex = current.findIndex((folder) => folder.id === dragItem.folderId);
+      const targetIndex = current.findIndex((folder) => folder.id === targetFolderId);
+      if (sourceIndex < 0 || targetIndex < 0) return project;
+      const [movedFolder] = current.splice(sourceIndex, 1);
+      current.splice(targetIndex, 0, movedFolder);
+      return {
+        ...project,
+        files: {
+          folders: current,
+        },
+      };
+    });
+    finishDrag();
+  }
+
+  function moveFileByDrag(targetFolderId, targetFileId) {
+    if (
+      !selectedProject ||
+      !dragItem ||
+      dragItem.type !== 'file' ||
+      dragItem.folderId !== targetFolderId ||
+      dragItem.fileId === targetFileId
+    ) {
+      return;
+    }
+    void runFilesMutation(selectedProject.id, (project) => {
+      const foldersList = project.files?.folders || [];
+      return {
+        ...project,
+        files: {
+          folders: foldersList.map((folder) => {
+            if (folder.id !== targetFolderId) return folder;
+            const current = [...(folder.files || [])];
+            const sourceIndex = current.findIndex((file) => file.id === dragItem.fileId);
+            const targetIndex = current.findIndex((file) => file.id === targetFileId);
+            if (sourceIndex < 0 || targetIndex < 0) return folder;
+            const [movedFile] = current.splice(sourceIndex, 1);
+            current.splice(targetIndex, 0, movedFile);
+            return {
+              ...folder,
+              files: current,
+            };
+          }),
+        },
+      };
+    });
+    finishDrag();
   }
 
   function triggerFolderUpload(folderId) {
@@ -1701,9 +1773,40 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
     );
   }
 
+  function renderFolderDragHandle(folder) {
+    return (
+      <span
+        className="files-drag-handle"
+        draggable={!saving}
+        onDragStart={(event) => startFolderDrag(event, folder.id)}
+        onDragEnd={finishDrag}
+        title={`Drag to reorder folder ${folder.name}`}
+        aria-label={`Drag to reorder folder ${folder.name}`}
+      >
+        <span aria-hidden="true">&#8942;&#8942;</span>
+      </span>
+    );
+  }
+
+  function renderFileDragHandle(file, folderId) {
+    return (
+      <span
+        className="files-drag-handle"
+        draggable={!saving}
+        onDragStart={(event) => startFileDrag(event, folderId, file.id)}
+        onDragEnd={finishDrag}
+        title={`Drag to reorder ${file.name || file.originalName || 'file'}`}
+        aria-label={`Drag to reorder ${file.name || file.originalName || 'file'}`}
+      >
+        <span aria-hidden="true">&#8942;&#8942;</span>
+      </span>
+    );
+  }
+
   function renderFolderActions(folder, includeUpload = false) {
     return (
       <div className="panel-actions">
+        {renderFolderDragHandle(folder)}
         {includeUpload ? (
           <>
             <input
@@ -1759,6 +1862,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   function renderFileActions(file, folderId) {
     return (
       <div className="files-list-actions">
+        {renderFileDragHandle(file, folderId)}
         <input
           ref={(node) => {
             if (node) replaceFileInputRefs.current[file.id] = node;
@@ -1896,7 +2000,19 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
               {folders.map((folder) => {
                 const isDefault = DEFAULT_PROJECT_FILE_FOLDERS.includes(folder.name);
                 return (
-                  <article key={folder.id} className="files-folder-card">
+                  <article
+                    key={folder.id}
+                    className={`files-folder-card${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}`}
+                    onDragOver={(event) => {
+                      if (dragItem?.type === 'folder') {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      moveFolderByDrag(folder.id);
+                    }}
+                  >
                     <div className="files-folder-header">
                       <div>
                         <h3>{folder.name}</h3>
@@ -1908,7 +2024,21 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
                     {folder.files?.length ? (
                       <div className="files-list">
                         {folder.files.map((file) => (
-                          <div key={file.id} className="files-list-row">
+                          <div
+                            key={file.id}
+                            className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                            onDragOver={(event) => {
+                              if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              moveFileByDrag(folder.id, file.id);
+                            }}
+                          >
                             <div className="files-list-copy">
                               <input
                                 className="files-name-input"
@@ -1947,7 +2077,21 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
             ) : flatFiles.length ? (
               <div className="files-hierarchy" role="tree" aria-label="Project files hierarchy">
                 {folders.map((folder) => (
-                  <div key={folder.id} className="files-hierarchy-folder" role="treeitem" aria-expanded="true">
+                  <div
+                    key={folder.id}
+                    className={`files-hierarchy-folder${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}`}
+                    role="treeitem"
+                    aria-expanded="true"
+                    onDragOver={(event) => {
+                      if (dragItem?.type === 'folder') {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      moveFolderByDrag(folder.id);
+                    }}
+                  >
                     <div className="files-hierarchy-folder-row">
                       <div className="files-hierarchy-folder-copy">
                         <strong>{folder.name}</strong>
@@ -1959,7 +2103,22 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
                     {folder.files?.length ? (
                       <div className="files-hierarchy-children" role="group">
                         {folder.files.map((file) => (
-                          <div key={file.id} className="files-hierarchy-file-row" role="treeitem">
+                          <div
+                            key={file.id}
+                            className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                            role="treeitem"
+                            onDragOver={(event) => {
+                              if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              moveFileByDrag(folder.id, file.id);
+                            }}
+                          >
                             <div className="files-hierarchy-file-copy">
                               <strong>{file.name || 'Untitled file'}</strong>
                               <small>
