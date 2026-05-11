@@ -270,6 +270,40 @@ const tests = [
     },
   },
   {
+    name: 'buildCalendarItems includes inspections as day items on their inspection date',
+    run() {
+      const calendar = buildCalendarItems(
+        [
+          {
+            id: 'project-1',
+            name: 'House',
+            status: 'active',
+            inspections: [
+              {
+                id: 'inspection-1',
+                subcode: 'FRAME-220',
+                inspectionType: 'Framing inspection',
+                date: '2026-05-22',
+                status: 'requested',
+                agency: 'County',
+                notes: 'AM window',
+              },
+            ],
+            phases: [],
+          },
+        ],
+        new Map(),
+        { holidays: [] },
+      );
+
+      const inspectionItems = calendar.itemsByDate.get('2026-05-22') || [];
+      assert.equal(inspectionItems.length, 1);
+      assert.equal(inspectionItems[0].type, 'inspection');
+      assert.equal(inspectionItems[0].subcode, 'FRAME-220');
+      assert.equal(inspectionItems[0].inspectionType, 'Framing inspection');
+    },
+  },
+  {
     name: 'buildCalendarItems promotes multi-day holidays to range bars and keeps daily holiday shading',
     run() {
       const calendar = buildCalendarItems(

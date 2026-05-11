@@ -15,6 +15,7 @@ const EMPTY_SETTINGS = {
   showGanttTaskDueDates: true,
   showCalendarTaskDueDates: true,
   showCalendarPhases: true,
+  inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
 };
@@ -47,6 +48,20 @@ function normalizeProjectFile(file, index = 0) {
     storageBucket: String(file?.storageBucket || SUPABASE_FILES_BUCKET || ''),
     storagePath: String(file?.storagePath || ''),
     dataUrl: String(file?.dataUrl || ''),
+  };
+}
+
+function normalizeProjectInspection(inspection, index = 0) {
+  return {
+    id: inspection?.id || `inspection-${Date.now()}-${index}`,
+    subcode: String(inspection?.subcode || '').trim(),
+    inspectionType: String(inspection?.inspectionType || inspection?.name || '').trim(),
+    date: String(inspection?.date || inspection?.scheduledDate || inspection?.completedDate || ''),
+    status: String(inspection?.status || 'scheduled'),
+    agency: String(inspection?.agency || '').trim(),
+    notes: String(inspection?.notes || '').trim(),
+    stickerFile: inspection?.stickerFile ? normalizeProjectFile(inspection.stickerFile, index) : null,
+    reportFile: inspection?.reportFile ? normalizeProjectFile(inspection.reportFile, index + 1000) : null,
   };
 }
 
@@ -89,6 +104,9 @@ function normalizeProject(project) {
   return {
     ...project,
     files: normalizeProjectFolders(project?.files),
+    inspections: Array.isArray(project?.inspections)
+      ? project.inspections.map((inspection, index) => normalizeProjectInspection(inspection, index))
+      : [],
   };
 }
 
@@ -127,6 +145,26 @@ function sampleProjects() {
           steps: [{ id: 'react-step-3', name: 'Roof framing', done: false }],
         },
       ],
+      inspections: [
+        {
+          id: 'react-insp-1',
+          subcode: 'FOOT-101',
+          inspectionType: 'Footing inspection',
+          date: '2026-05-10',
+          status: 'passed',
+          agency: 'Franklin Building Department',
+          notes: 'Approved with no corrections.',
+        },
+        {
+          id: 'react-insp-2',
+          subcode: 'FRAME-220',
+          inspectionType: 'Framing inspection',
+          date: '2026-06-14',
+          status: 'requested',
+          agency: 'Franklin Building Department',
+          notes: '',
+        },
+      ],
     },
     {
       id: 'react-sample-2',
@@ -151,6 +189,17 @@ function sampleProjects() {
           id: 'react-phase-3',
           name: 'Interior prep',
           steps: [{ id: 'react-step-4', name: 'Selective demolition', done: false }],
+        },
+      ],
+      inspections: [
+        {
+          id: 'react-insp-3',
+          subcode: 'ELEC-310',
+          inspectionType: 'Electrical rough-in',
+          date: '2026-05-21',
+          status: 'requested',
+          agency: 'Nashville Codes',
+          notes: 'Coordinate with owner access window.',
         },
       ],
     },

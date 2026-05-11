@@ -169,6 +169,26 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
   }
 
   projects.forEach((project) => {
+    (project.inspections || []).forEach((inspection) => {
+      if (!inspection.date) return;
+      pushItem(inspection.date, {
+        id: `inspection-${inspection.id}`,
+        inspectionId: inspection.id,
+        type: 'inspection',
+        label: inspection.subcode || inspection.inspectionType || 'Inspection',
+        projectName: project.name,
+        projectId: project.id,
+        date: inspection.date,
+        subcode: inspection.subcode || '',
+        inspectionType: inspection.inspectionType || '',
+        agency: inspection.agency || '',
+        notes: inspection.notes || '',
+        stickerFile: inspection.stickerFile || null,
+        reportFile: inspection.reportFile || null,
+        status: inspection.status || 'requested',
+      });
+    });
+
     (project.phases || []).forEach((phase) => {
       const phaseStart = parseDateValue(phase.start);
       const phaseEnd = parseDateValue(phase.end || phase.start);
@@ -279,7 +299,7 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
 
   itemsByDate.forEach((items) =>
     items.sort((a, b) => {
-      const order = { phase: 0, step: 1, task: 2 };
+      const order = { phase: 0, step: 1, inspection: 2, task: 3 };
       if (order[a.type] !== order[b.type]) return order[a.type] - order[b.type];
       return a.label.localeCompare(b.label);
     }),

@@ -47,6 +47,7 @@ const tabs = [
   { id: 'projects', label: 'Projects' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'calendar', label: 'Calendar' },
+  { id: 'inspections', label: 'Inspections' },
   { id: 'files', label: 'Files' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'people', label: 'People' },
@@ -61,6 +62,7 @@ const GANTT_ZOOM_MIN = 0;
 const GANTT_ZOOM_MAX = 100;
 const GANTT_ZOOM_MIN_PIXELS_PER_DAY = 2;
 const GANTT_ZOOM_MAX_PIXELS_PER_DAY = 48;
+const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
 const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = {
@@ -127,11 +129,37 @@ function formatTooltipDate(iso) {
   return `${month}/${day}/${year}`;
 }
 
+function getProjectDetailReferenceMonth(project, tasks = []) {
+  const candidates = [
+    project?.start,
+    project?.end,
+    ...(project?.inspections || []).map((inspection) => inspection.date),
+    ...(project?.phases || []).flatMap((phase) => [
+      phase.start,
+      phase.end,
+      ...(phase.steps || []).flatMap((step) => [step.start, step.end]),
+    ]),
+    ...tasks.map((task) => task.due),
+  ]
+    .map((value) => parseDateValue(value))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+
+  return startOfMonth(candidates[0] || new Date());
+}
+
 function formatFileSize(bytes) {
   const size = Number(bytes) || 0;
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isImageFile(file) {
+  if (!file) return false;
+  if (String(file.type || '').toLowerCase().startsWith('image/')) return true;
+  const name = String(file.originalName || file.name || '').toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
 
 function getProjectAccentColor(seed) {
@@ -398,7 +426,7 @@ class AppErrorBoundary extends React.Component {
   }
 }
 
-function ProjectCard({ project, taskCount, onEdit }) {
+function ProjectCard({ project, taskCount, onEdit, onOpen }) {
   const health = getProjectHealth(project);
   const remaining = getDaysRemaining(project.end);
   const budget = formatCurrency(project.budget);
@@ -417,7 +445,11 @@ function ProjectCard({ project, taskCount, onEdit }) {
       <div className="project-card-header">
         <div>
           <p className="project-status">{health.label}</p>
-          <h3>{project.name}</h3>
+          <h3>
+            <button className="project-title-button" type="button" onClick={() => onOpen(project)}>
+              {project.name}
+            </button>
+          </h3>
           <p className="project-meta">{metaParts.length ? metaParts.join(' • ') : 'No project details yet'}</p>
         </div>
         <span className={`status-pill status-${project.status || 'planning'}`}>
@@ -605,6 +637,478 @@ function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEd
   );
 }
 
+function ProjectDetailCalendar({ project, tasks, settings }) {
+  const [calendarMonth, setCalendarMonth] = useState(() => getProjectDetailReferenceMonth(project, tasks));
+  const [expandedCalendarWeeks, setExpandedCalendarWeeks] = useState({});
+
+  useEffect(() => {
+    setCalendarMonth(getProjectDetailReferenceMonth(project, tasks));
+    setExpandedCalendarWeeks({});
+  }, [project.id, tasks]);
+
+  const tasksByProject = useMemo(() => {
+    const map = new Map();
+    map.set(project.id, tasks || []);
+    return map;
+  }, [project.id, tasks]);
+
+  const calendarData = useMemo(
+    () => buildCalendarItemsView([project], tasksByProject, settings),
+    [project, settings, tasksByProject],
+  );
+
+  const calendarCells = useMemo(() => {
+    const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const monthEnd = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+    const gridStart = startOfWeek(monthStart);
+    const gridEnd = endOfWeek(monthEnd);
+    const cells = [];
+    const todayKey = toIsoDate(new Date());
+
+    for (let day = new Date(gridStart); day <= gridEnd; day = addDays(day, 1)) {
+      const key = toIsoDate(day);
+      cells.push({
+        key,
+        date: new Date(day),
+        isCurrentMonth: day.getMonth() === calendarMonth.getMonth(),
+        isToday: key === todayKey,
+        isWeekend: day.getDay() === 0 || day.getDay() === 6,
+        holidays: calendarData.holidayMap.get(key) || [],
+        items: calendarData.itemsByDate.get(key) || [],
+      });
+    }
+    return cells;
+  }, [calendarData, calendarMonth]);
+
+  const calendarWeeks = useMemo(
+    () =>
+      buildCalendarWeeksView(
+        calendarCells,
+        calendarData.rangeItems,
+        CALENDAR_VISIBLE_RANGE_LANES,
+        new Set(Object.entries(expandedCalendarWeeks).filter(([, expanded]) => expanded).map(([key]) => key)),
+      ),
+    [calendarCells, calendarData.rangeItems, expandedCalendarWeeks],
+  );
+
+  return (
+    <section className="project-detail-section project-detail-calendar-card">
+      <div className="panel-header">
+        <div>
+          <h3>Project calendar</h3>
+        </div>
+        <div className="panel-actions">
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+          >
+            Previous
+          </button>
+          <strong className="project-calendar-month">
+            {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          </strong>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      <div className="calendar-grid-shell project-detail-calendar">
+        <div className="calendar-dow-row">
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+            <div className="calendar-dow" key={day}>
+              {day}
+            </div>
+          ))}
+        </div>
+
+        <div className="calendar-grid">
+          {calendarWeeks.map((week) => {
+            const allScheduleBars = week.scheduledBars || week.bars;
+            const holidayBars = week.holidayBars || [];
+            const collapsedLaneBudget = Math.max(
+              0,
+              Math.floor(
+                (CALENDAR_COLLAPSED_WEEK_HEIGHT -
+                  30 -
+                  week.holidayLaneCount * 28 -
+                  CALENDAR_COLLAPSED_BODY_MIN_HEIGHT -
+                  (week.laneCount > 0 ? 20 : 0)) /
+                  24,
+              ),
+            );
+            const collapsedVisibleLaneCount = Math.min(
+              week.laneCount,
+              Math.max(CALENDAR_VISIBLE_RANGE_LANES, collapsedLaneBudget),
+            );
+            const scheduleBars = week.isExpanded
+              ? allScheduleBars
+              : allScheduleBars.filter((item) => item.lane < collapsedVisibleLaneCount);
+            const hiddenScheduledBarCount = Math.max(0, allScheduleBars.length - scheduleBars.length);
+            const renderableScheduleBars = scheduleBars.flatMap((item) => splitStepBarAroundBlockedDays(item, week.cells));
+            const visibleLaneCount = week.isExpanded ? week.laneCount : collapsedVisibleLaneCount;
+            const baseSpanOffset = 30 + visibleLaneCount * 24 + (!week.isExpanded && hiddenScheduledBarCount ? 20 : 0);
+            const holidayTop = baseSpanOffset;
+            const spanOffset = holidayTop + week.holidayLaneCount * 28;
+            const provisionalAvailableBodyHeight = Math.max(0, CALENDAR_COLLAPSED_WEEK_HEIGHT - spanOffset - 10);
+            const maxVisibleDayItems = Math.max(0, Math.floor((provisionalAvailableBodyHeight + 6) / 42));
+            const weekBodyContentHeight = week.cells.reduce((maxHeight, cell) => {
+              const visibleCount = Math.min(cell.items.length, maxVisibleDayItems);
+              const hiddenCount = Math.max(0, cell.items.length - visibleCount);
+              const visibleHeight = visibleCount > 0 ? visibleCount * 36 + Math.max(0, visibleCount - 1) * 6 : 0;
+              const overflowHeight = hiddenCount > 0 ? 18 : 0;
+              const gapHeight = visibleHeight > 0 && overflowHeight > 0 ? 6 : 0;
+              return Math.max(maxHeight, visibleHeight + gapHeight + overflowHeight);
+            }, 0);
+            const cellHeight = week.isExpanded
+              ? Math.max(168, spanOffset + weekBodyContentHeight + 10)
+              : Math.max(spanOffset + 10, spanOffset + weekBodyContentHeight + 10);
+
+            return (
+              <div key={week.key} className="calendar-week">
+                {visibleLaneCount ? (
+                  <div
+                    className="calendar-span-layer"
+                    style={{
+                      gridTemplateRows: `repeat(${visibleLaneCount}, 20px)`,
+                    }}
+                  >
+                    {renderableScheduleBars.map((item) => {
+                      const spanColumns = item.endCol - item.startCol + 1;
+                      const estimatedCharCapacity = spanColumns * 13;
+                      const inlineProjectName =
+                        item.projectName &&
+                        spanColumns >= 2 &&
+                        `${item.label} - ${item.projectName}`.length <= estimatedCharCapacity;
+                      return (
+                        <div
+                          key={`${week.key}-${item.segmentKey || item.id}`}
+                          className={`calendar-span-bar ${item.type} status-${item.status || 'planning'}`}
+                          style={{
+                            gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
+                            gridRow: `${item.lane + 1}`,
+                            borderColor: getProjectAccentColor(item.projectId || item.projectName),
+                          }}
+                          title={`${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`}
+                        >
+                          <span>{inlineProjectName ? `${item.label} - ${item.projectName}` : item.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                {holidayBars.length ? (
+                  <div
+                    className="calendar-holiday-layer"
+                    style={{
+                      top: `${holidayTop}px`,
+                      gridTemplateRows: `repeat(${week.holidayLaneCount}, auto)`,
+                    }}
+                  >
+                    {holidayBars.map((item) => (
+                      <div
+                        key={`${week.key}-${item.id}`}
+                        className="calendar-chip holiday non-workday calendar-holiday-bar"
+                        style={{
+                          gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
+                          gridRow: `${item.lane + 1}`,
+                        }}
+                        title={item.label}
+                      >
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {hiddenScheduledBarCount && !week.isExpanded ? (
+                  <button
+                    type="button"
+                    className="calendar-span-overflow"
+                    onClick={() => setExpandedCalendarWeeks((current) => ({ ...current, [week.key]: true }))}
+                    title={`${hiddenScheduledBarCount} additional scheduled bar${hiddenScheduledBarCount === 1 ? '' : 's'} hidden for this week`}
+                  >
+                    +{hiddenScheduledBarCount} more scheduled
+                  </button>
+                ) : null}
+
+                {week.isExpanded && week.laneCount > collapsedVisibleLaneCount ? (
+                  <button
+                    type="button"
+                    className="calendar-span-overflow"
+                    onClick={() => setExpandedCalendarWeeks((current) => ({ ...current, [week.key]: false }))}
+                    title="Collapse this week"
+                  >
+                    Show fewer
+                  </button>
+                ) : null}
+
+                <div className="calendar-week-grid">
+                  {week.cells.map((cell) => {
+                    const holidayChips = cell.holidays.filter((holiday) => !holiday.isRange);
+                    const visibleItems = cell.items.slice(0, maxVisibleDayItems);
+                    const hiddenCount = cell.items.length - visibleItems.length;
+                    return (
+                      <article
+                        key={cell.key}
+                        className={`calendar-cell${cell.isCurrentMonth ? '' : ' other-month'}${cell.isToday ? ' today' : ''}${cell.holidays.length ? ' holiday' : ''}${cell.isWeekend ? ' weekend' : ''}`}
+                        style={{ height: `${cellHeight}px` }}
+                      >
+                        <div className="calendar-day-number" title={formatShortDate(cell.key)}>
+                          {cell.date.getDate()}
+                        </div>
+
+                        {holidayChips.length ? (
+                          <div className="calendar-cell-holiday-row" style={{ marginTop: `${holidayTop}px` }}>
+                            {holidayChips.map((holiday) => (
+                              <div
+                                key={`${cell.key}-${holiday.id}`}
+                                className={`calendar-chip holiday${holiday.nonWorkday ? ' non-workday' : ''}`}
+                                title={holiday.name}
+                              >
+                                <span>{holiday.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div
+                          className="calendar-cell-body"
+                          style={{
+                            marginTop: `${spanOffset}px`,
+                            maxHeight: `${Math.max(0, cellHeight - spanOffset - 10)}px`,
+                          }}
+                        >
+                          {visibleItems.map((item) => (
+                            <div
+                              key={`${cell.key}-${item.id}`}
+                              className={`calendar-chip ${item.type} status-${item.status || 'planning'}`}
+                              title={`${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`}
+                            >
+                              <span>{item.label}</span>
+                              {item.type === 'inspection' ? <small>{item.inspectionType || 'Inspection'}</small> : null}
+                            </div>
+                          ))}
+
+                          {hiddenCount > 0 ? <div className="calendar-more">+{hiddenCount} more</div> : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProjectDetailView({ project, tasks, settings, onBack, onEdit, onDownloadFile }) {
+  const health = getProjectHealth(project);
+  const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
+  const blockLotLabel =
+    project.block || project.lot
+      ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
+      : 'Not set';
+
+  return (
+    <div className="project-detail-page">
+      <div className="panel-header project-detail-header">
+        <div>
+          <p className="project-status">{health.label}</p>
+          <h2>{project.name}</h2>
+          <p className="project-meta">
+            {[project.manager, project.address].filter(Boolean).join(' • ') || 'No project details yet'}
+          </p>
+        </div>
+        <div className="panel-actions">
+          <button className="button secondary" type="button" onClick={onBack}>
+            Back to projects
+          </button>
+          <button className="button primary" type="button" onClick={() => onEdit(project)}>
+            Edit project
+          </button>
+        </div>
+      </div>
+
+      <div className="metrics-grid">
+        <DashboardStat label="Status" value={project.status || 'planning'} tone="brand" />
+        <DashboardStat label="Phases" value={project.phases?.length || 0} />
+        <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
+        <DashboardStat label="Files" value={allFiles.length} />
+      </div>
+
+      <div className="project-detail-grid">
+        <section className="project-detail-section">
+          <div className="panel-header">
+            <div>
+              <h3>Project details</h3>
+            </div>
+          </div>
+          <dl className="project-facts project-detail-facts">
+            <div>
+              <dt>Project manager</dt>
+              <dd>{project.manager || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Address</dt>
+              <dd>{project.address || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Permit #</dt>
+              <dd>{project.permitNumber || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Block / Lot</dt>
+              <dd>{blockLotLabel}</dd>
+            </div>
+            <div>
+              <dt>DR #</dt>
+              <dd>{project.drNumber || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Budget</dt>
+              <dd>{formatCurrency(project.budget)}</dd>
+            </div>
+            <div>
+              <dt>Start date</dt>
+              <dd>{project.start ? formatShortDate(project.start) : 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>End date</dt>
+              <dd>{project.end ? formatShortDate(project.end) : 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Customer</dt>
+              <dd>{project.customerName || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Customer phone</dt>
+              <dd>{project.customerPhone || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Customer email</dt>
+              <dd>{project.customerEmail || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Customer address</dt>
+              <dd>{project.customerAddress || 'Not set'}</dd>
+            </div>
+          </dl>
+          {project.desc ? (
+            <div className="project-detail-note">
+              <strong>Description</strong>
+              <p>{project.desc}</p>
+            </div>
+          ) : null}
+          {project.customerNotes ? (
+            <div className="project-detail-note">
+              <strong>Customer notes</strong>
+              <p>{project.customerNotes}</p>
+            </div>
+          ) : null}
+        </section>
+
+        <ProjectDetailCalendar project={project} tasks={tasks} settings={settings} />
+
+        <section className="project-detail-section">
+          <div className="panel-header">
+            <div>
+              <h3>Inspections</h3>
+            </div>
+          </div>
+          {project.inspections?.length ? (
+            <div className="inspection-grid">
+              {project.inspections.map((inspection) => (
+                <article key={inspection.id} className={`inspection-card inspection-${inspection.status || 'requested'}`}>
+                  <div className="inspection-card-header">
+                    <div>
+                      <p className="project-status">{inspection.status || 'requested'}</p>
+                      <h3>{inspection.subcode || 'No subcode'}</h3>
+                      <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
+                    </div>
+                  </div>
+                  <div className="inspection-meta">
+                    <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
+                    <span>Agency: {inspection.agency || 'Not set'}</span>
+                    <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
+                    {['failed', 'follow-up'].includes(inspection.status) ? (
+                      <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
+                    ) : null}
+                  </div>
+                  {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state compact">
+              <h3>No inspections yet</h3>
+              <p>This project does not have any inspections saved yet.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="project-detail-section">
+          <div className="panel-header">
+            <div>
+              <h3>Files</h3>
+            </div>
+          </div>
+          {project.files?.folders?.length ? (
+            <div className="project-files-grid">
+              {project.files.folders.map((folder) => (
+                <article key={folder.id} className="project-file-folder">
+                  <div className="project-file-folder-header">
+                    <strong>{folder.name}</strong>
+                    <small>{folder.files?.length || 0} file(s)</small>
+                  </div>
+                  {folder.files?.length ? (
+                    <div className="project-file-list">
+                      {folder.files.map((file) => (
+                        <div key={file.id} className="project-file-row">
+                          <div className="project-file-copy">
+                            <strong>{file.name || file.originalName || 'Untitled file'}</strong>
+                            <small>
+                              {file.originalName || 'No uploaded filename'}
+                              {file.size ? ` • ${formatFileSize(file.size)}` : ''}
+                              {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                            </small>
+                          </div>
+                          <button className="button secondary" type="button" onClick={() => void onDownloadFile(file)}>
+                            Download
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state compact">
+                      <h3>No files yet</h3>
+                      <p>This folder is ready for project documents.</p>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state compact">
+              <h3>No folders yet</h3>
+              <p>This project does not have any file folders yet.</p>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function TaskModal({ draft, projects, saving, onChange, onClose, onSave, onDelete }) {
   if (!draft) return null;
 
@@ -664,6 +1168,958 @@ function TaskModal({ draft, projects, saving, onChange, onClose, onSave, onDelet
         </div>
       </div>
     </div>,
+  );
+}
+
+function InspectionModal({ draft, project, projects, subcodes, saving, onChange, onAddSubcode, onClose, onSave, onDelete }) {
+  if (!draft) return null;
+  const isEditing = draft.mode === 'edit';
+  const showReportField = ['failed', 'follow-up'].includes(draft.status);
+
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Inspection</p>
+            <h2>{isEditing ? 'Edit inspection' : 'Add inspection'}</h2>
+            <p className="panel-copy">
+              {project?.name || 'Project'}
+            </p>
+          </div>
+        </div>
+
+        <div className="inspection-form-grid">
+          <label>
+            <span>Project</span>
+            <select value={draft.projectId} onChange={(event) => onChange('projectId', event.target.value)}>
+              {projects.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Subcode</span>
+            <div className="inspection-inline-field">
+              <select value={draft.subcode} onChange={(event) => onChange('subcode', event.target.value)}>
+                <option value="">Select subcode</option>
+                {subcodes.map((subcode) => (
+                  <option key={subcode} value={subcode}>
+                    {subcode}
+                  </option>
+                ))}
+              </select>
+              <button className="button secondary" type="button" onClick={onAddSubcode} disabled={saving}>
+                Add subcode
+              </button>
+            </div>
+          </label>
+          <label>
+            <span>Inspection type</span>
+            <input
+              type="text"
+              value={draft.inspectionType}
+              onChange={(event) => onChange('inspectionType', event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={draft.status} onChange={(event) => onChange('status', event.target.value)}>
+              {INSPECTION_STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Date</span>
+            <input
+              type="date"
+              value={draft.date}
+              onChange={(event) => onChange('date', event.target.value)}
+            />
+          </label>
+          <label className="inspection-form-span">
+            <span>Agency / inspector</span>
+            <input type="text" value={draft.agency} onChange={(event) => onChange('agency', event.target.value)} />
+          </label>
+          <label className="inspection-form-span">
+            <span>Notes</span>
+            <textarea value={draft.notes} onChange={(event) => onChange('notes', event.target.value)} rows={4} />
+          </label>
+          <label className="inspection-form-span">
+            <span>Inspection sticker photo</span>
+            <input type="file" accept="image/*,.pdf" onChange={(event) => onChange('stickerPendingFile', event.target.files?.[0] || null)} />
+            <small className="inspection-file-help">
+              {draft.stickerPendingFile
+                ? `Ready to upload: ${draft.stickerPendingFile.name}`
+                : draft.stickerFile?.originalName || 'No sticker photo uploaded yet.'}
+            </small>
+          </label>
+          {showReportField ? (
+            <label className="inspection-form-span">
+              <span>Failed inspection report</span>
+              <input type="file" accept="image/*,.pdf" onChange={(event) => onChange('reportPendingFile', event.target.files?.[0] || null)} />
+              <small className="inspection-file-help">
+                {draft.reportPendingFile
+                  ? `Ready to upload: ${draft.reportPendingFile.name}`
+                  : draft.reportFile?.originalName || 'No failed inspection report uploaded yet.'}
+              </small>
+            </label>
+          ) : null}
+        </div>
+
+        <div className="panel-actions">
+          <button className="button secondary" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          {isEditing ? (
+            <button className="button secondary danger" type="button" onClick={onDelete} disabled={saving}>
+              Delete
+            </button>
+          ) : null}
+          <button
+            className="button primary"
+            type="button"
+            onClick={onSave}
+            disabled={saving || !draft.subcode.trim() || !draft.inspectionType.trim()}
+          >
+            {saving ? 'Saving...' : 'Save inspection'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
+function InspectionImageEditorModal({ draft, saving, onClose, onSave }) {
+  const [imageElement, setImageElement] = useState(null);
+  const [rotation, setRotation] = useState(0);
+  const [crop, setCrop] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [imageBounds, setImageBounds] = useState({ width: 0, height: 0, left: 0, top: 0 });
+  const [error, setError] = useState('');
+  const previewCanvasRef = useRef(null);
+  const cropImageRef = useRef(null);
+  const cropWorkspaceRef = useRef(null);
+  const dragStartRef = useRef(null);
+
+  useEffect(() => {
+    if (!draft?.src) {
+      setImageElement(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => {
+      if (cancelled) return;
+      setImageElement(image);
+      setRotation(0);
+      setCrop({
+        x: 0,
+        y: 0,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      });
+    };
+    image.onerror = () => {
+      if (!cancelled) {
+        setError('Unable to load this image for editing.');
+      }
+    };
+    image.src = draft.src;
+    return () => {
+      cancelled = true;
+    };
+  }, [draft]);
+
+  useEffect(() => {
+    function updateImageBounds() {
+      const imageNode = cropImageRef.current;
+      const workspaceNode = cropWorkspaceRef.current;
+      if (!imageNode || !workspaceNode) return;
+      const imageRect = imageNode.getBoundingClientRect();
+      const workspaceRect = workspaceNode.getBoundingClientRect();
+      setImageBounds({
+        width: imageRect.width,
+        height: imageRect.height,
+        left: imageRect.left - workspaceRect.left,
+        top: imageRect.top - workspaceRect.top,
+      });
+    }
+
+    updateImageBounds();
+    window.addEventListener('resize', updateImageBounds);
+    return () => window.removeEventListener('resize', updateImageBounds);
+  }, [imageElement, draft]);
+
+  useEffect(() => {
+    if (!imageElement || !previewCanvasRef.current || !crop.width || !crop.height) return;
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = crop.width;
+    sourceCanvas.height = crop.height;
+    const sourceContext = sourceCanvas.getContext('2d');
+    if (!sourceContext) return;
+    sourceContext.drawImage(
+      imageElement,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height,
+    );
+
+    const normalizedRotation = ((rotation % 360) + 360) % 360;
+    const rotatedCanvas = document.createElement('canvas');
+    const swapSides = normalizedRotation === 90 || normalizedRotation === 270;
+    rotatedCanvas.width = swapSides ? crop.height : crop.width;
+    rotatedCanvas.height = swapSides ? crop.width : crop.height;
+    const rotatedContext = rotatedCanvas.getContext('2d');
+    if (!rotatedContext) return;
+    rotatedContext.save();
+    rotatedContext.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
+    rotatedContext.rotate((normalizedRotation * Math.PI) / 180);
+    rotatedContext.drawImage(sourceCanvas, -crop.width / 2, -crop.height / 2);
+    rotatedContext.restore();
+
+    const previewCanvas = previewCanvasRef.current;
+    const maxWidth = 560;
+    const scale = Math.min(1, maxWidth / rotatedCanvas.width);
+    previewCanvas.width = Math.max(1, Math.round(rotatedCanvas.width * scale));
+    previewCanvas.height = Math.max(1, Math.round(rotatedCanvas.height * scale));
+    const previewContext = previewCanvas.getContext('2d');
+    if (!previewContext) return;
+    previewContext.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    previewContext.drawImage(rotatedCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
+  }, [crop, imageElement, rotation]);
+
+  async function handleSave() {
+    if (!imageElement || !crop.width || !crop.height) return;
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = crop.width;
+    sourceCanvas.height = crop.height;
+    const sourceContext = sourceCanvas.getContext('2d');
+    if (!sourceContext) return;
+    sourceContext.drawImage(
+      imageElement,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height,
+    );
+
+    const normalizedRotation = ((rotation % 360) + 360) % 360;
+    const outputCanvas = document.createElement('canvas');
+    const swapSides = normalizedRotation === 90 || normalizedRotation === 270;
+    outputCanvas.width = swapSides ? crop.height : crop.width;
+    outputCanvas.height = swapSides ? crop.width : crop.height;
+    const outputContext = outputCanvas.getContext('2d');
+    if (!outputContext) return;
+    outputContext.save();
+    outputContext.translate(outputCanvas.width / 2, outputCanvas.height / 2);
+    outputContext.rotate((normalizedRotation * Math.PI) / 180);
+    outputContext.drawImage(sourceCanvas, -crop.width / 2, -crop.height / 2);
+    outputContext.restore();
+
+    const outputType = String(draft.attachment?.type || '').startsWith('image/') ? draft.attachment.type : 'image/png';
+    const blob = await new Promise((resolve) => outputCanvas.toBlob(resolve, outputType, 0.92));
+    if (!blob) {
+      setError('Unable to save image edits.');
+      return;
+    }
+    onSave(blob);
+  }
+
+  function getPointInImage(event) {
+    const workspaceNode = cropWorkspaceRef.current;
+    if (!workspaceNode || !imageElement || !imageBounds.width || !imageBounds.height) return null;
+    const workspaceRect = workspaceNode.getBoundingClientRect();
+    const xInWorkspace = event.clientX - workspaceRect.left;
+    const yInWorkspace = event.clientY - workspaceRect.top;
+    const xInImage = xInWorkspace - imageBounds.left;
+    const yInImage = yInWorkspace - imageBounds.top;
+    if (xInImage < 0 || yInImage < 0 || xInImage > imageBounds.width || yInImage > imageBounds.height) return null;
+    const scaleX = imageElement.naturalWidth / imageBounds.width;
+    const scaleY = imageElement.naturalHeight / imageBounds.height;
+    return {
+      x: clamp(Math.round(xInImage * scaleX), 0, imageElement.naturalWidth),
+      y: clamp(Math.round(yInImage * scaleY), 0, imageElement.naturalHeight),
+    };
+  }
+
+  function beginCropDrag(event) {
+    const point = getPointInImage(event);
+    if (!point) return;
+    dragStartRef.current = point;
+    setCrop({ x: point.x, y: point.y, width: 1, height: 1 });
+  }
+
+  function continueCropDrag(event) {
+    if (!dragStartRef.current || !imageElement) return;
+    const point = getPointInImage(event);
+    if (!point) return;
+    const start = dragStartRef.current;
+    const nextX = Math.min(start.x, point.x);
+    const nextY = Math.min(start.y, point.y);
+    const nextWidth = Math.max(1, Math.abs(point.x - start.x));
+    const nextHeight = Math.max(1, Math.abs(point.y - start.y));
+    setCrop({
+      x: clamp(nextX, 0, imageElement.naturalWidth - 1),
+      y: clamp(nextY, 0, imageElement.naturalHeight - 1),
+      width: Math.min(nextWidth, imageElement.naturalWidth - nextX),
+      height: Math.min(nextHeight, imageElement.naturalHeight - nextY),
+    });
+  }
+
+  function endCropDrag() {
+    dragStartRef.current = null;
+  }
+
+  const cropOverlayStyle =
+    imageElement && imageBounds.width && imageBounds.height
+      ? {
+          left: `${imageBounds.left + (crop.x / imageElement.naturalWidth) * imageBounds.width}px`,
+          top: `${imageBounds.top + (crop.y / imageElement.naturalHeight) * imageBounds.height}px`,
+          width: `${(crop.width / imageElement.naturalWidth) * imageBounds.width}px`,
+          height: `${(crop.height / imageElement.naturalHeight) * imageBounds.height}px`,
+        }
+      : null;
+
+  if (!draft) return null;
+
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card inspection-image-editor-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Inspection Image</p>
+            <h2>{draft.title}</h2>
+          </div>
+        </div>
+
+        {error ? <div className="error-banner"><strong>Error.</strong><span>{error}</span></div> : null}
+
+        <div className="inspection-image-editor-grid">
+          <div
+            ref={cropWorkspaceRef}
+            className="inspection-crop-workspace"
+            onPointerDown={beginCropDrag}
+            onPointerMove={continueCropDrag}
+            onPointerUp={endCropDrag}
+            onPointerLeave={endCropDrag}
+          >
+            <img
+              ref={cropImageRef}
+              className="inspection-crop-image"
+              src={draft.src}
+              alt={draft.title}
+              onLoad={() => {
+                const imageNode = cropImageRef.current;
+                const workspaceNode = cropWorkspaceRef.current;
+                if (!imageNode || !workspaceNode) return;
+                const imageRect = imageNode.getBoundingClientRect();
+                const workspaceRect = workspaceNode.getBoundingClientRect();
+                setImageBounds({
+                  width: imageRect.width,
+                  height: imageRect.height,
+                  left: imageRect.left - workspaceRect.left,
+                  top: imageRect.top - workspaceRect.top,
+                });
+              }}
+            />
+            {cropOverlayStyle ? <div className="inspection-crop-overlay" style={cropOverlayStyle} /> : null}
+          </div>
+          <div className="inspection-image-editor-preview">
+            <canvas ref={previewCanvasRef} />
+          </div>
+          <div className="inspection-image-editor-controls">
+            <div className="panel-actions">
+              <button className="button secondary" type="button" onClick={() => setRotation((current) => current - 90)}>
+                Rotate left
+              </button>
+              <button className="button secondary" type="button" onClick={() => setRotation((current) => current + 90)}>
+                Rotate right
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() =>
+                  imageElement
+                    ? setCrop({ x: 0, y: 0, width: imageElement.naturalWidth, height: imageElement.naturalHeight })
+                    : null
+                }
+              >
+                Reset crop
+              </button>
+            </div>
+
+            <div className="inspection-crop-help">
+              <strong>Crop visually</strong>
+              <p>Drag across the image to choose the crop area. The right preview updates with your crop and rotation.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-actions">
+          <button className="button secondary" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" type="button" onClick={handleSave} disabled={saving || !imageElement}>
+            {saving ? 'Saving...' : 'Save image'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
+function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [inspectionDraft, setInspectionDraft] = useState(null);
+  const [imageEditorDraft, setImageEditorDraft] = useState(null);
+  const [previewUrls, setPreviewUrls] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const visibleProjects = useMemo(
+    () =>
+      (data.projects || []).filter(
+        (project) => data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+      ),
+    [data.projects, data.settings],
+  );
+
+  useEffect(() => {
+    if (!visibleProjects.length) {
+      setSelectedProjectId('');
+      return;
+    }
+    if (!visibleProjects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId(visibleProjects[0].id);
+    }
+  }, [selectedProjectId, visibleProjects]);
+
+  const selectedProject = visibleProjects.find((project) => project.id === selectedProjectId) || null;
+  const inspectionSubcodes = useMemo(
+    () =>
+      Array.isArray(data.settings?.inspectionSubcodes)
+        ? data.settings.inspectionSubcodes.filter(Boolean)
+        : [],
+    [data.settings],
+  );
+  const inspections = useMemo(
+    () =>
+      [...(selectedProject?.inspections || [])].sort((left, right) => {
+        const leftDate = left.date || '';
+        const rightDate = right.date || '';
+        const leftLabel = `${left.subcode || ''} ${left.inspectionType || ''}`.trim();
+        const rightLabel = `${right.subcode || ''} ${right.inspectionType || ''}`.trim();
+        return leftDate.localeCompare(rightDate) || leftLabel.localeCompare(rightLabel);
+      }),
+    [selectedProject],
+  );
+
+  const statusCounts = useMemo(() => {
+    return inspections.reduce(
+      (counts, inspection) => {
+        counts[inspection.status] = (counts[inspection.status] || 0) + 1;
+        return counts;
+      },
+      { requested: 0, scheduled: 0, passed: 0, failed: 0, 'follow-up': 0 },
+    );
+  }, [inspections]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previewUrls]);
+
+  useEffect(() => {
+    const keepIds = new Set();
+    inspections.forEach((inspection) => {
+      [inspection.stickerFile, inspection.reportFile].forEach((file) => {
+        if (file?.storagePath && isImageFile(file)) {
+          keepIds.add(file.id);
+        }
+      });
+    });
+    setPreviewUrls((current) => {
+      const next = {};
+      Object.entries(current).forEach(([fileId, url]) => {
+        if (keepIds.has(fileId)) {
+          next[fileId] = url;
+        } else {
+          URL.revokeObjectURL(url);
+        }
+      });
+      return next;
+    });
+  }, [inspections]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const imageFiles = inspections.flatMap((inspection) =>
+      [inspection.stickerFile, inspection.reportFile].filter((file) => file?.storagePath && isImageFile(file)),
+    );
+
+    async function loadPreviews() {
+      for (const file of imageFiles) {
+        if (previewUrls[file.id]) continue;
+        try {
+          const blob = await downloadProjectFileFromStorage(file);
+          const url = URL.createObjectURL(blob);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          setPreviewUrls((current) => {
+            if (current[file.id]) {
+              URL.revokeObjectURL(url);
+              return current;
+            }
+            return { ...current, [file.id]: url };
+          });
+        } catch {
+          // Keep the card usable even if an image preview cannot be loaded.
+        }
+      }
+    }
+
+    void loadPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [inspections, previewUrls]);
+
+  function getInspectionAttachmentPreview(file) {
+    if (!file || !isImageFile(file)) return '';
+    return file.dataUrl || previewUrls[file.id] || '';
+  }
+
+  function readInspectionFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          id: `inspection-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: '',
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          dataUrl: String(reader.result || ''),
+          storageProvider: 'inline',
+          storageBucket: '',
+          storagePath: '',
+        });
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function createInspectionAttachmentRecord(projectId, kind, file) {
+    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (isSupabaseStorageConfigured()) {
+      try {
+        const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
+        return {
+          id: attachmentId,
+          name: '',
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          ...storageMeta,
+          dataUrl: '',
+        };
+      } catch {
+        // Fall back to inline storage for inspection attachments.
+      }
+    }
+    return readInspectionFileAsDataUrl(file);
+  }
+
+  function startCreate() {
+    if (!selectedProject) return;
+    setInspectionDraft({
+      mode: 'create',
+      id: '',
+      projectId: selectedProject.id,
+      originalProjectId: selectedProject.id,
+      subcode: '',
+      inspectionType: '',
+      status: 'requested',
+      date: '',
+      agency: '',
+      notes: '',
+      stickerFile: null,
+      reportFile: null,
+      stickerPendingFile: null,
+      reportPendingFile: null,
+    });
+  }
+
+  function startEdit(inspection) {
+    setInspectionDraft({
+      mode: 'edit',
+      id: inspection.id,
+      projectId: selectedProject?.id || '',
+      originalProjectId: selectedProject?.id || '',
+      subcode: inspection.subcode || '',
+      inspectionType: inspection.inspectionType || '',
+      status: inspection.status || 'requested',
+      date: inspection.date || '',
+      agency: inspection.agency || '',
+      notes: inspection.notes || '',
+      stickerFile: inspection.stickerFile || null,
+      reportFile: inspection.reportFile || null,
+      stickerPendingFile: null,
+      reportPendingFile: null,
+    });
+  }
+
+  function updateDraft(field, value) {
+    setInspectionDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  async function handleAddInspectionSubcode() {
+    const name = window.prompt('New inspection subcode');
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+    const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
+    const nextState = await updateSettings(data, { ...data.settings, inspectionSubcodes: nextSubcodes });
+    onStateChange(nextState);
+    setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+  }
+
+  async function openInspectionImageEditor(inspection, field) {
+    const attachment = inspection?.[field];
+    if (!attachment || !isImageFile(attachment)) return;
+    try {
+      let src = attachment.dataUrl || previewUrls[attachment.id] || '';
+      let revokeOnClose = false;
+      if (!src && attachment.storagePath) {
+        const blob = await downloadProjectFileFromStorage(attachment);
+        src = URL.createObjectURL(blob);
+        revokeOnClose = true;
+      }
+      if (!src) return;
+      setImageEditorDraft({
+        projectId: selectedProject?.id || '',
+        inspectionId: inspection.id,
+        field,
+        kind: field === 'reportFile' ? 'report' : 'sticker',
+        title: field === 'reportFile' ? 'Failed inspection report' : 'Inspection sticker photo',
+        attachment,
+        src,
+        revokeOnClose,
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to open image.');
+    }
+  }
+
+  function closeInspectionImageEditor() {
+    setImageEditorDraft((current) => {
+      if (current?.revokeOnClose && current.src) {
+        URL.revokeObjectURL(current.src);
+      }
+      return null;
+    });
+  }
+
+  async function saveInspectionImageEdits(blob) {
+    if (!imageEditorDraft?.projectId || !imageEditorDraft?.inspectionId) return;
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === imageEditorDraft.projectId);
+      if (!project) return;
+      const existingInspection = (project.inspections || []).find((inspection) => inspection.id === imageEditorDraft.inspectionId);
+      if (!existingInspection) return;
+      const existingAttachment = existingInspection[imageEditorDraft.field];
+      if (existingAttachment?.storagePath) {
+        await deleteProjectFileFromStorage(existingAttachment);
+      }
+      const fileName = existingAttachment?.originalName || `${imageEditorDraft.kind}.png`;
+      const fileType = blob.type || existingAttachment?.type || 'image/png';
+      const editedFile = new File([blob], fileName, { type: fileType });
+      const nextAttachment = await createInspectionAttachmentRecord(project.id, imageEditorDraft.kind, editedFile);
+      const nextProject = {
+        ...project,
+        inspections: (project.inspections || []).map((inspection) =>
+          inspection.id === imageEditorDraft.inspectionId
+            ? {
+                ...inspection,
+                [imageEditorDraft.field]: nextAttachment,
+              }
+            : inspection,
+        ),
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+      closeInspectionImageEditor();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveInspection() {
+    if (!inspectionDraft?.projectId) return;
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === inspectionDraft.projectId);
+      if (!project) return;
+      const sourceProjectId = inspectionDraft.originalProjectId || inspectionDraft.projectId;
+      const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
+      let stickerFile = inspectionDraft.stickerFile || null;
+      let reportFile = inspectionDraft.reportFile || null;
+      if (inspectionDraft.stickerPendingFile) {
+        if (stickerFile?.storagePath) {
+          await deleteProjectFileFromStorage(stickerFile);
+        }
+        stickerFile = await createInspectionAttachmentRecord(
+          project.id,
+          'sticker',
+          inspectionDraft.stickerPendingFile,
+        );
+      }
+      if (inspectionDraft.reportPendingFile) {
+        if (reportFile?.storagePath) {
+          await deleteProjectFileFromStorage(reportFile);
+        }
+        reportFile = await createInspectionAttachmentRecord(
+          project.id,
+          'report',
+          inspectionDraft.reportPendingFile,
+        );
+      }
+      if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
+        await deleteProjectFileFromStorage(reportFile);
+        reportFile = null;
+      } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
+        reportFile = null;
+      }
+      const nextInspection = {
+        id: inspectionDraft.id || `inspection-${Date.now()}`,
+        subcode: inspectionDraft.subcode.trim(),
+        inspectionType: inspectionDraft.inspectionType.trim(),
+        status: inspectionDraft.status,
+        date: inspectionDraft.date,
+        agency: inspectionDraft.agency.trim(),
+        notes: inspectionDraft.notes.trim(),
+        stickerFile,
+        reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? reportFile : null,
+      };
+      let nextState = data;
+      if (inspectionDraft.mode === 'edit' && sourceProject && sourceProject.id !== project.id) {
+        nextState = await updateProject(nextState, sourceProject.id, {
+          ...sourceProject,
+          inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
+        });
+        const refreshedTargetProject = nextState.projects.find((item) => item.id === project.id) || project;
+        nextState = await updateProject(nextState, project.id, {
+          ...refreshedTargetProject,
+          inspections: [...(refreshedTargetProject.inspections || []), nextInspection],
+        });
+      } else {
+        const nextProject = {
+          ...project,
+          inspections:
+            inspectionDraft.mode === 'edit'
+              ? (project.inspections || []).map((inspection) =>
+                  inspection.id === inspectionDraft.id ? nextInspection : inspection,
+                )
+              : [...(project.inspections || []), nextInspection],
+        };
+        nextState = await updateProject(nextState, project.id, nextProject);
+      }
+      onStateChange(nextState);
+      setInspectionDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteInspection() {
+    if (!inspectionDraft?.projectId || !inspectionDraft?.id) return;
+    const confirmed = window.confirm('Delete this inspection?');
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
+      if (!project) return;
+      const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
+      if (existing?.stickerFile?.storagePath) {
+        await deleteProjectFileFromStorage(existing.stickerFile);
+      }
+      if (existing?.reportFile?.storagePath) {
+        await deleteProjectFileFromStorage(existing.reportFile);
+      }
+      const nextProject = {
+        ...project,
+        inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+      setInspectionDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel native-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Inspections</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
+            {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+          </button>
+          <button className="button primary" type="button" onClick={startCreate} disabled={!selectedProject || saving}>
+            Add inspection
+          </button>
+        </div>
+      </div>
+
+      <div className="metrics-grid">
+        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+        <DashboardStat label="Inspections" value={inspections.length} />
+        <DashboardStat label="Requested" value={statusCounts.requested} />
+        <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
+        <DashboardStat label="Passed" value={statusCounts.passed} />
+        <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
+      </div>
+
+      {visibleProjects.length ? (
+        <>
+          <div className="files-toolbar">
+            <label className="task-filter">
+              <span>Project</span>
+              <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                {visibleProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {selectedProject ? (
+            inspections.length ? (
+              <div className="inspection-grid">
+                {inspections.map((inspection) => (
+                  <article key={inspection.id} className={`inspection-card inspection-${inspection.status}`}>
+                    <div className="inspection-card-header">
+                      <div>
+                        <p className="project-status">{inspection.status}</p>
+                        <h3>{inspection.subcode || 'No subcode'}</h3>
+                        <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
+                      </div>
+                      <button className="button secondary" type="button" onClick={() => startEdit(inspection)} disabled={saving}>
+                        Edit
+                      </button>
+                    </div>
+                    <div className="inspection-meta">
+                      <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
+                      <span>Agency: {inspection.agency || 'Not set'}</span>
+                      <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
+                      {['failed', 'follow-up'].includes(inspection.status) ? (
+                        <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
+                      ) : null}
+                    </div>
+                    {(
+                      (inspection.stickerFile && isImageFile(inspection.stickerFile)) ||
+                      (inspection.reportFile && isImageFile(inspection.reportFile))
+                    ) ? (
+                      <div className="inspection-thumbnail-row">
+                        {inspection.stickerFile && isImageFile(inspection.stickerFile) ? (
+                          <button
+                            type="button"
+                            className="inspection-thumbnail-button"
+                            onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
+                            title="Open sticker image"
+                          >
+                            <img
+                              className="inspection-thumbnail-image"
+                              src={getInspectionAttachmentPreview(inspection.stickerFile)}
+                              alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
+                            />
+                            <span>Sticker</span>
+                          </button>
+                        ) : null}
+                        {inspection.reportFile && isImageFile(inspection.reportFile) ? (
+                          <button
+                            type="button"
+                            className="inspection-thumbnail-button"
+                            onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
+                            title="Open report image"
+                          >
+                            <img
+                              className="inspection-thumbnail-image"
+                              src={getInspectionAttachmentPreview(inspection.reportFile)}
+                              alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
+                            />
+                            <span>Report</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state compact">
+                <h3>No inspections yet</h3>
+                <p>Add inspections for this project to track upcoming and completed approvals.</p>
+              </div>
+            )
+          ) : (
+            <div className="empty-state compact">
+              <h3>No project selected</h3>
+              <p>Choose a project to manage its inspections.</p>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="empty-state">
+          <h3>No projects loaded</h3>
+          <p>Create a project first, then add inspections for permits, framing, finals, and any other required reviews.</p>
+        </div>
+      )}
+
+      <InspectionModal
+        draft={inspectionDraft}
+        project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || selectedProject}
+        projects={visibleProjects}
+        subcodes={inspectionSubcodes}
+        saving={saving}
+        onChange={updateDraft}
+        onAddSubcode={handleAddInspectionSubcode}
+        onClose={() => setInspectionDraft(null)}
+        onSave={saveInspection}
+        onDelete={deleteInspection}
+      />
+      <InspectionImageEditorModal
+        draft={imageEditorDraft}
+        saving={saving}
+        onClose={closeInspectionImageEditor}
+        onSave={saveInspectionImageEdits}
+      />
+    </section>
   );
 }
 
@@ -987,6 +2443,7 @@ function DependencyModal({ draft, saving, onTogglePred, onLagChange, onClose, on
 
 function NativeProjectsView({ data, refresh, loading, onStateChange }) {
   const [projectDraft, setProjectDraft] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
   const [saving, setSaving] = useState(false);
   const visibleProjects = useMemo(
     () =>
@@ -997,13 +2454,30 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     [data.projects, data.settings],
   );
 
+  const visibleTasks = useMemo(
+    () =>
+      (data.tasks || []).filter(
+        (task) => data.settings?.showSampleData !== false || !SAMPLE_IDS.tasks.includes(task.id),
+      ),
+    [data.tasks, data.settings],
+  );
+
   const taskCountByProject = useMemo(() => {
     const counts = new Map();
-    (data.tasks || []).forEach((task) => {
+    visibleTasks.forEach((task) => {
       counts.set(task.projectId, (counts.get(task.projectId) || 0) + 1);
     });
     return counts;
-  }, [data.tasks]);
+  }, [visibleTasks]);
+
+  const selectedProject = useMemo(
+    () => visibleProjects.find((project) => project.id === selectedProjectId) || null,
+    [selectedProjectId, visibleProjects],
+  );
+  const selectedProjectTasks = useMemo(
+    () => visibleTasks.filter((task) => task.projectId === selectedProjectId),
+    [selectedProjectId, visibleTasks],
+  );
 
   const totals = useMemo(() => {
     const phases = visibleProjects.reduce(
@@ -1022,6 +2496,12 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     const tasks = [...taskCountByProject.values()].reduce((sum, count) => sum + count, 0);
     return { phases, steps, tasks };
   }, [taskCountByProject, visibleProjects]);
+
+  useEffect(() => {
+    if (selectedProjectId && !visibleProjects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId('');
+    }
+  }, [selectedProjectId, visibleProjects]);
 
   function startCreate() {
     setProjectDraft({
@@ -1100,45 +2580,83 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     await runProjectMutation(() => deleteProject(data, projectDraft.id));
   }
 
+  async function handleDownloadProjectFile(file) {
+    if (!file) return;
+    try {
+      let blob = null;
+      if (file.storagePath) {
+        blob = await downloadProjectFileFromStorage(file);
+      } else if (file.dataUrl) {
+        const response = await fetch(file.dataUrl);
+        blob = await response.blob();
+      }
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.originalName || file.name || 'project-file';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to download this file.');
+    }
+  }
+
   return (
     <section className="panel native-panel">
       <div className="panel-header">
         <div>
-          <h2>Projects Dashboard</h2>
+          <h2>{selectedProject ? 'Project page' : 'Projects Dashboard'}</h2>
         </div>
         <div className="panel-actions">
           <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
             {loading ? 'Refreshing...' : 'Refresh data'}
           </button>
-          <button className="button primary" type="button" onClick={startCreate}>
-            New project
-          </button>
+          {!selectedProject ? (
+            <button className="button primary" type="button" onClick={startCreate}>
+              New project
+            </button>
+          ) : null}
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
-        <DashboardStat label="Phases" value={totals.phases} />
-        <DashboardStat label="Steps" value={totals.steps} />
-        <DashboardStat label="Tasks" value={totals.tasks} />
-      </div>
-
-      {visibleProjects.length ? (
-        <div className="project-grid">
-          {visibleProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              taskCount={taskCountByProject.get(project.id) || 0}
-              onEdit={startEdit}
-            />
-          ))}
-        </div>
+      {selectedProject ? (
+        <ProjectDetailView
+          project={selectedProject}
+          tasks={selectedProjectTasks}
+          settings={data.settings}
+          onBack={() => setSelectedProjectId('')}
+          onEdit={startEdit}
+          onDownloadFile={handleDownloadProjectFile}
+        />
       ) : (
-        <div className="empty-state">
-          <h3>No projects loaded</h3>
-          <p>Connect Supabase or create your first project to populate this view.</p>
-        </div>
+        <>
+          <div className="metrics-grid">
+            <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+            <DashboardStat label="Phases" value={totals.phases} />
+            <DashboardStat label="Steps" value={totals.steps} />
+            <DashboardStat label="Tasks" value={totals.tasks} />
+          </div>
+
+          {visibleProjects.length ? (
+            <div className="project-grid">
+              {visibleProjects.map((project) => (
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  taskCount={taskCountByProject.get(project.id) || 0}
+                  onEdit={startEdit}
+                  onOpen={() => setSelectedProjectId(project.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <h3>No projects loaded</h3>
+              <p>Connect Supabase or create your first project to populate this view.</p>
+            </div>
+          )}
+        </>
       )}
       {projectDraft ? (
         <ProjectModal
@@ -1246,6 +2764,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   const [storageNotice, setStorageNotice] = useState('');
   const [moveFileDraft, setMoveFileDraft] = useState(null);
   const [dragItem, setDragItem] = useState(null);
+  const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
   const fileInputRefs = useRef({});
   const replaceFileInputRefs = useRef({});
 
@@ -1401,6 +2920,40 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
 
   function finishDrag() {
     setDragItem(null);
+  }
+
+  function isExternalFileDrag(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+  }
+
+  function handleFolderUploadDragOver(event, folderId) {
+    if (dragItem?.type === 'folder') {
+      event.preventDefault();
+      return;
+    }
+    if (isExternalFileDrag(event)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setUploadTargetFolderId(folderId);
+    }
+  }
+
+  function handleFolderUploadDragLeave(event, folderId) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setUploadTargetFolderId((current) => (current === folderId ? '' : current));
+    }
+  }
+
+  function handleFolderUploadDrop(event, folderId) {
+    if (dragItem?.type === 'folder') {
+      event.preventDefault();
+      moveFolderByDrag(folderId);
+      return;
+    }
+    if (!selectedProject || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setUploadTargetFolderId('');
+    void handleFolderUpload(selectedProject.id, folderId, event.dataTransfer.files);
   }
 
   function moveFolderByDrag(targetFolderId) {
@@ -2002,15 +3555,13 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
                 return (
                   <article
                     key={folder.id}
-                    className={`files-folder-card${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}`}
+                    className={`files-folder-card${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
                     onDragOver={(event) => {
-                      if (dragItem?.type === 'folder') {
-                        event.preventDefault();
-                      }
+                      handleFolderUploadDragOver(event, folder.id);
                     }}
+                    onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
                     onDrop={(event) => {
-                      event.preventDefault();
-                      moveFolderByDrag(folder.id);
+                      handleFolderUploadDrop(event, folder.id);
                     }}
                   >
                     <div className="files-folder-header">
@@ -2079,17 +3630,15 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
                 {folders.map((folder) => (
                   <div
                     key={folder.id}
-                    className={`files-hierarchy-folder${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}`}
+                    className={`files-hierarchy-folder${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
                     role="treeitem"
                     aria-expanded="true"
                     onDragOver={(event) => {
-                      if (dragItem?.type === 'folder') {
-                        event.preventDefault();
-                      }
+                      handleFolderUploadDragOver(event, folder.id);
                     }}
+                    onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
                     onDrop={(event) => {
-                      event.preventDefault();
-                      moveFolderByDrag(folder.id);
+                      handleFolderUploadDrop(event, folder.id);
                     }}
                   >
                     <div className="files-hierarchy-folder-row">
@@ -3032,6 +4581,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   const [editorDraft, setEditorDraft] = useState(null);
   const [delayDraft, setDelayDraft] = useState(null);
   const [dependencyDraft, setDependencyDraft] = useState(null);
+  const [inspectionDraft, setInspectionDraft] = useState(null);
   const [editorPredecessorDraft, setEditorPredecessorDraft] = useState(null);
   const [taskDraft, setTaskDraft] = useState(null);
   const [dragDependency, setDragDependency] = useState(null);
@@ -3067,6 +4617,13 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false);
   const showCalendarTasks =
     data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false);
+  const inspectionSubcodes = useMemo(
+    () =>
+      Array.isArray(data.settings?.inspectionSubcodes)
+        ? data.settings.inspectionSubcodes.filter(Boolean)
+        : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
+    [data.settings],
+  );
 
   const tasksByProject = useMemo(() => {
     const map = new Map();
@@ -3676,6 +5233,178 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     }
     if (item.type === 'task') {
       openTaskEditor(item);
+      return;
+    }
+    if (item.type === 'inspection') {
+      openInspectionEditor(item);
+    }
+  }
+
+  function openInspectionEditor(inspectionLike) {
+    setInspectionDraft({
+      mode: 'edit',
+      id: inspectionLike.inspectionId || inspectionLike.entityId,
+      projectId: inspectionLike.projectId || inspectionLike.parentProjectId || '',
+      originalProjectId: inspectionLike.projectId || inspectionLike.parentProjectId || '',
+      subcode: inspectionLike.subcode || '',
+      inspectionType: inspectionLike.inspectionType || inspectionLike.label || '',
+      status: inspectionLike.status || 'requested',
+      date: inspectionLike.date || inspectionLike.start || '',
+      agency: inspectionLike.agency || '',
+      notes: inspectionLike.notes || '',
+      stickerFile: inspectionLike.stickerFile || null,
+      reportFile: inspectionLike.reportFile || null,
+      stickerPendingFile: null,
+      reportPendingFile: null,
+    });
+  }
+
+  function updateInspectionDraft(field, value) {
+    setInspectionDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  async function handleAddInspectionSubcodeFromSchedule() {
+    const name = window.prompt('New inspection subcode');
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+    const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
+    const nextState = await updateSettings(data, { ...data.settings, inspectionSubcodes: nextSubcodes });
+    onStateChange(nextState);
+    setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+  }
+
+  function readInspectionFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          id: `inspection-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: '',
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          dataUrl: String(reader.result || ''),
+          storageProvider: 'inline',
+          storageBucket: '',
+          storagePath: '',
+        });
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function createInspectionAttachmentRecord(projectId, kind, file) {
+    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (isSupabaseStorageConfigured()) {
+      try {
+        const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
+        return {
+          id: attachmentId,
+          name: '',
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          ...storageMeta,
+          dataUrl: '',
+        };
+      } catch {
+        // Fall back to inline storage for inspection attachments.
+      }
+    }
+    return readInspectionFileAsDataUrl(file);
+  }
+
+  async function handleSaveInspectionDraft() {
+    if (!inspectionDraft?.projectId) return;
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === inspectionDraft.projectId);
+      if (!project) return;
+      const sourceProjectId = inspectionDraft.originalProjectId || inspectionDraft.projectId;
+      const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
+      let stickerFile = inspectionDraft.stickerFile || null;
+      let reportFile = inspectionDraft.reportFile || null;
+      if (inspectionDraft.stickerPendingFile) {
+        if (stickerFile?.storagePath) {
+          await deleteProjectFileFromStorage(stickerFile);
+        }
+        stickerFile = await createInspectionAttachmentRecord(project.id, 'sticker', inspectionDraft.stickerPendingFile);
+      }
+      if (inspectionDraft.reportPendingFile) {
+        if (reportFile?.storagePath) {
+          await deleteProjectFileFromStorage(reportFile);
+        }
+        reportFile = await createInspectionAttachmentRecord(project.id, 'report', inspectionDraft.reportPendingFile);
+      }
+      if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
+        await deleteProjectFileFromStorage(reportFile);
+        reportFile = null;
+      } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
+        reportFile = null;
+      }
+      const nextInspection = {
+        id: inspectionDraft.id,
+        subcode: inspectionDraft.subcode.trim(),
+        inspectionType: inspectionDraft.inspectionType.trim(),
+        status: inspectionDraft.status,
+        date: inspectionDraft.date,
+        agency: inspectionDraft.agency.trim(),
+        notes: inspectionDraft.notes.trim(),
+        stickerFile,
+        reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? reportFile : null,
+      };
+      let nextState = data;
+      if (sourceProject && sourceProject.id !== project.id) {
+        nextState = await updateProject(nextState, sourceProject.id, {
+          ...sourceProject,
+          inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
+        });
+        const refreshedTargetProject = nextState.projects.find((item) => item.id === project.id) || project;
+        nextState = await updateProject(nextState, project.id, {
+          ...refreshedTargetProject,
+          inspections: [...(refreshedTargetProject.inspections || []), nextInspection],
+        });
+      } else {
+        nextState = await updateProject(nextState, project.id, {
+          ...project,
+          inspections: (project.inspections || []).map((inspection) =>
+            inspection.id === inspectionDraft.id ? nextInspection : inspection,
+          ),
+        });
+      }
+      onStateChange(nextState);
+      setInspectionDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteInspectionDraft() {
+    if (!inspectionDraft?.projectId || !inspectionDraft?.id) return;
+    const confirmed = window.confirm(`Delete inspection "${inspectionDraft.subcode || inspectionDraft.inspectionType}"?`);
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
+      if (!project) return;
+      const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
+      if (existing?.stickerFile?.storagePath) {
+        await deleteProjectFileFromStorage(existing.stickerFile);
+      }
+      if (existing?.reportFile?.storagePath) {
+        await deleteProjectFileFromStorage(existing.reportFile);
+      }
+      const nextState = await updateProject(data, project.id, {
+        ...project,
+        inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
+      });
+      onStateChange(nextState);
+      setInspectionDraft(null);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -5164,6 +6893,18 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         onSave={handleSaveTaskDraft}
         onDelete={handleDeleteTaskDraft}
       />
+      <InspectionModal
+        draft={inspectionDraft}
+        project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || null}
+        projects={visibleProjects}
+        subcodes={inspectionSubcodes}
+        saving={saving}
+        onChange={updateInspectionDraft}
+        onAddSubcode={handleAddInspectionSubcodeFromSchedule}
+        onClose={() => setInspectionDraft(null)}
+        onSave={handleSaveInspectionDraft}
+        onDelete={handleDeleteInspectionDraft}
+      />
     </section>
   );
 }
@@ -5287,6 +7028,9 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarTaskDueDates: data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
+      inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
+        ? data.settings.inspectionSubcodes.filter(Boolean)
+        : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
       peopleListColumns: Array.isArray(data.settings?.peopleListColumns)
         ? data.settings.peopleListColumns
         : DEFAULT_PEOPLE_LIST_COLUMNS,
@@ -5380,6 +7124,25 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     runSettingsMutation({ ...settings, peopleListBoldColumns: next });
   }
 
+  function handleInspectionSubcodeChange(index, value) {
+    const inspectionSubcodes = settings.inspectionSubcodes.map((item, itemIndex) =>
+      itemIndex === index ? value : item,
+    );
+    runSettingsMutation({ ...settings, inspectionSubcodes });
+  }
+
+  function handleAddInspectionSubcode() {
+    runSettingsMutation({
+      ...settings,
+      inspectionSubcodes: [...settings.inspectionSubcodes, ''],
+    });
+  }
+
+  function handleRemoveInspectionSubcode(index) {
+    const inspectionSubcodes = settings.inspectionSubcodes.filter((_, itemIndex) => itemIndex !== index);
+    runSettingsMutation({ ...settings, inspectionSubcodes });
+  }
+
   return (
     <section className="panel native-panel">
       <div className="panel-header">
@@ -5398,6 +7161,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         <DashboardStat label="Gantt task dates" value={settings.showGanttTaskDueDates ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Calendar task dates" value={settings.showCalendarTaskDueDates ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Calendar phases" value={settings.showCalendarPhases ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
         <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
         <DashboardStat label="Sample data" value={settings.showSampleData ? 'Shown' : 'Hidden'} />
       </div>
@@ -5489,6 +7253,47 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
             <div className="empty-state compact">
               <h3>No sample data found</h3>
               <p>This workspace does not currently include any starter records to toggle.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <div>
+              <h3>Inspection subcodes</h3>
+              <p>Manage the dropdown list used in the inspection editor.</p>
+            </div>
+            <button className="button primary" type="button" onClick={handleAddInspectionSubcode} disabled={saving}>
+              Add subcode
+            </button>
+          </div>
+
+          {settings.inspectionSubcodes.length ? (
+            <div className="inspection-subcode-list">
+              {settings.inspectionSubcodes.map((subcode, index) => (
+                <div key={`inspection-subcode-${index}`} className="inspection-subcode-row">
+                  <input
+                    type="text"
+                    value={subcode}
+                    placeholder="Inspection subcode"
+                    onChange={(event) => handleInspectionSubcodeChange(index, event.target.value)}
+                    disabled={saving}
+                  />
+                  <button
+                    className="button secondary danger"
+                    type="button"
+                    onClick={() => handleRemoveInspectionSubcode(index)}
+                    disabled={saving}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state compact">
+              <h3>No subcodes yet</h3>
+              <p>Add subcodes here to make them available in the inspection modal dropdown.</p>
             </div>
           )}
         </section>
@@ -5670,6 +7475,7 @@ export default function App() {
       showGanttTaskDueDates: true,
       showCalendarTaskDueDates: true,
       showCalendarPhases: true,
+      inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
     },
     storageMode: 'loading',
   });
@@ -5733,6 +7539,17 @@ export default function App() {
     if (activeTab === 'files') {
       return (
         <NativeFilesView
+          data={trackerState}
+          onStateChange={setTrackerState}
+          refresh={refreshData}
+          loading={loading}
+        />
+      );
+    }
+
+    if (activeTab === 'inspections') {
+      return (
+        <NativeInspectionsView
           data={trackerState}
           onStateChange={setTrackerState}
           refresh={refreshData}
