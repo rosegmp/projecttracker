@@ -436,6 +436,13 @@ export function isSupabaseStorageConfigured() {
   return !!(isSupabaseConfigured() && SUPABASE_FILES_BUCKET);
 }
 
+export function getSupabaseDiagnosticsInfo() {
+  return {
+    url: SUPABASE_URL,
+    configured: isSupabaseConfigured(),
+  };
+}
+
 function storageAuthHeaders(extraHeaders = {}) {
   return {
     apikey: SUPABASE_KEY,
@@ -911,6 +918,39 @@ export function getStorageBannerMessage(storageMode, storageIssue = '') {
       ? `Supabase is unavailable right now. ${storageIssue}`
       : 'Supabase is unavailable right now, so this React slice is reading browser-stored data on this device.',
   };
+}
+
+export async function testSupabaseConnection() {
+  if (!isSupabaseConfigured()) {
+    return {
+      ok: false,
+      message: 'Supabase URL or key is not configured in this build.',
+    };
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=id&limit=1`, {
+      headers: HEADERS,
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: `Supabase responded with ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`,
+      };
+    }
+
+    return {
+      ok: true,
+      message: 'Supabase responded successfully from this device.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to fetch.',
+    };
+  }
 }
 
 export function getProjectHealth(project) {

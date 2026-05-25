@@ -11,11 +11,13 @@ import {
   deleteProject,
   deleteTask,
   downloadProjectFileFromStorage,
+  getSupabaseDiagnosticsInfo,
   getProjectHealth,
   getStorageBannerMessage,
   importPeople,
   isSupabaseStorageConfigured,
   loadTrackerData,
+  testSupabaseConnection,
   uploadProjectFileToStorage,
   updatePerson,
   updateProject,
@@ -8385,6 +8387,7 @@ export default function App() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
 
   async function refreshData() {
     setLoading(true);
@@ -8420,6 +8423,16 @@ export default function App() {
     trackerState.storageMode,
     trackerState.storageIssue,
   );
+  const supabaseDiagnostics = getSupabaseDiagnosticsInfo();
+
+  async function handleTestSupabaseConnection() {
+    setConnectionTest({ status: 'testing', message: '' });
+    const result = await testSupabaseConnection();
+    setConnectionTest({
+      status: result.ok ? 'success' : 'error',
+      message: result.message,
+    });
+  }
   const activeView = (() => {
     if (activeTab === 'projects') {
       return (
@@ -8529,8 +8542,30 @@ export default function App() {
 
       {storageBanner ? (
         <section className="storage-banner">
-          <strong>{storageBanner.title}</strong>
-          <span>{storageBanner.message}</span>
+          <div className="storage-banner-copy">
+            <strong>{storageBanner.title}</strong>
+            <span>{storageBanner.message}</span>
+            <small className="storage-diagnostics-line">
+              Supabase URL: {supabaseDiagnostics.url || 'Not configured'}
+            </small>
+            {connectionTest.message ? (
+              <small
+                className={`storage-diagnostics-line${connectionTest.status === 'error' ? ' error' : ''}`}
+              >
+                Connection test: {connectionTest.message}
+              </small>
+            ) : null}
+          </div>
+          <div className="storage-banner-actions">
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void handleTestSupabaseConnection()}
+              disabled={connectionTest.status === 'testing'}
+            >
+              {connectionTest.status === 'testing' ? 'Testing...' : 'Test connection'}
+            </button>
+          </div>
         </section>
       ) : null}
 

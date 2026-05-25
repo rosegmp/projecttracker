@@ -266,6 +266,30 @@ a {
   margin-right: 8px;
 }
 
+.storage-banner-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.storage-banner-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.storage-diagnostics-line {
+  color: inherit;
+  opacity: 0.9;
+  overflow-wrap: anywhere;
+}
+
+.storage-diagnostics-line.error {
+  font-weight: 700;
+}
+
 .react-tabs {
   display: flex;
   flex-wrap: wrap;
