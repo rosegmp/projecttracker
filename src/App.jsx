@@ -17,6 +17,7 @@ import {
   importPeople,
   isSupabaseStorageConfigured,
   loadTrackerData,
+  runSupabaseStartupCheck,
   testSupabaseConnection,
   uploadProjectFileToStorage,
   updatePerson,
@@ -8388,6 +8389,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
+  const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
 
   async function refreshData() {
     setLoading(true);
@@ -8429,6 +8431,15 @@ export default function App() {
     setConnectionTest({ status: 'testing', message: '' });
     const result = await testSupabaseConnection();
     setConnectionTest({
+      status: result.ok ? 'success' : 'error',
+      message: result.message,
+    });
+  }
+
+  async function handleRunSupabaseStartupCheck() {
+    setStartupCheck({ status: 'testing', message: '' });
+    const result = await runSupabaseStartupCheck();
+    setStartupCheck({
       status: result.ok ? 'success' : 'error',
       message: result.message,
     });
@@ -8555,6 +8566,13 @@ export default function App() {
                 Connection test: {connectionTest.message}
               </small>
             ) : null}
+            {startupCheck.message ? (
+              <small
+                className={`storage-diagnostics-line${startupCheck.status === 'error' ? ' error' : ''}`}
+              >
+                Startup check: {startupCheck.message}
+              </small>
+            ) : null}
           </div>
           <div className="storage-banner-actions">
             <button
@@ -8564,6 +8582,14 @@ export default function App() {
               disabled={connectionTest.status === 'testing'}
             >
               {connectionTest.status === 'testing' ? 'Testing...' : 'Test connection'}
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void handleRunSupabaseStartupCheck()}
+              disabled={startupCheck.status === 'testing'}
+            >
+              {startupCheck.status === 'testing' ? 'Checking...' : 'Run full check'}
             </button>
           </div>
         </section>

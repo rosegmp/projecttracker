@@ -953,6 +953,43 @@ export async function testSupabaseConnection() {
   }
 }
 
+export async function runSupabaseStartupCheck() {
+  if (!isSupabaseConfigured()) {
+    return {
+      ok: false,
+      message: 'Supabase URL or key is not configured in this build.',
+    };
+  }
+
+  const checks = [
+    { label: 'Projects', path: '/rest/v1/projects?select=id&limit=1' },
+    { label: 'Tasks', path: '/rest/v1/tasks?select=id&limit=1' },
+    { label: 'Subcontractors', path: '/rest/v1/subs?select=id&limit=1' },
+    { label: 'Employees', path: '/rest/v1/employees?select=id&limit=1' },
+    { label: 'Settings', path: '/rest/v1/settings?id=eq.app_settings&select=id' },
+  ];
+
+  const results = await Promise.all(
+    checks.map(async (check) => {
+      try {
+        const data = await fetchSupabaseJson(check.path, check.label);
+        if (!Array.isArray(data)) {
+          return `${check.label}: invalid response`;
+        }
+        return `${check.label}: ok`;
+      } catch (error) {
+        return `${check.label}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      }
+    }),
+  );
+
+  const failures = results.filter((line) => !line.endsWith(': ok'));
+  return {
+    ok: failures.length === 0,
+    message: results.join(' | '),
+  };
+}
+
 export function getProjectHealth(project) {
   const status = project.status || 'planning';
   const labels = {
