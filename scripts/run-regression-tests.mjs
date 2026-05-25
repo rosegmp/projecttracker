@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   applyDelayToStep,
+  cascadePhaseDates,
   cascadeStepDates,
   computeStepEndDate,
   normalizePreds,
@@ -8,6 +9,7 @@ import {
   syncProjectPhaseDates,
   syncProjectTasks,
   syncStepLinks,
+  wouldCreatePhaseCycleFromPreds,
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
 import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows } from '../src/utils/scheduleView.js';
@@ -137,6 +139,55 @@ const tests = [
       assert.equal(synced[2].due, '');
       assert.equal(project.phases[0].start, '2026-05-18');
       assert.equal(project.phases[0].end, '2026-05-28');
+    },
+  },
+  {
+    name: 'wouldCreatePhaseCycleFromPreds blocks reverse links that would create a phase cycle',
+    run() {
+      const project = {
+        phases: [
+          { id: 'phase-a', predecessors: [] },
+          { id: 'phase-b', predecessors: [{ id: 'phase-a', lag: 0 }] },
+          { id: 'phase-c', predecessors: [{ id: 'phase-b', lag: 0 }] },
+        ],
+      };
+
+      assert.equal(wouldCreatePhaseCycleFromPreds(project, 'phase-c', 'phase-a'), true);
+      assert.equal(wouldCreatePhaseCycleFromPreds(project, 'phase-a', 'phase-c'), false);
+    },
+  },
+  {
+    name: 'cascadePhaseDates shifts dependent phases after predecessor phase end dates',
+    run() {
+      const project = {
+        id: 'project-1',
+        status: 'active',
+        phases: [
+          {
+            id: 'phase-a',
+            name: 'Foundation',
+            steps: [
+              { id: 'step-a', name: 'Footings', start: '2026-05-18', duration: 3, end: '2026-05-20', predecessors: [] },
+            ],
+          },
+          {
+            id: 'phase-b',
+            name: 'Framing',
+            predecessors: [{ id: 'phase-a', lag: 1 }],
+            steps: [
+              { id: 'step-b1', name: 'Walls', start: '2026-05-19', duration: 2, end: '2026-05-20', predecessors: [] },
+              { id: 'step-b2', name: 'Trusses', start: '2026-05-21', duration: 1, end: '2026-05-21', predecessors: [{ id: 'step-b1', lag: 0 }] },
+            ],
+          },
+        ],
+      };
+
+      const cascaded = syncProjectPhaseDates(cascadePhaseDates(syncProjectPhaseDates(project), weekdaySettings));
+
+      assert.equal(cascaded.phases[1].start, '2026-05-22');
+      assert.equal(cascaded.phases[1].steps[0].start, '2026-05-22');
+      assert.equal(cascaded.phases[1].steps[0].end, '2026-05-26');
+      assert.equal(cascaded.phases[1].steps[1].start, '2026-05-27');
     },
   },
   {

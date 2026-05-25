@@ -27,6 +27,7 @@ import {
   addWorkdaysFromSettings,
   applyDelayToStep,
   calcStepFirstAvailable,
+  cascadePhaseDates,
   cascadeStepDates,
   computeStepEndDate,
   isOverdue,
@@ -35,6 +36,7 @@ import {
   syncProjectPhaseDates,
   syncProjectTasks,
   syncStepLinks,
+  wouldCreatePhaseCycleFromPreds,
   wouldCreateCycleFromPreds,
 } from './utils/schedule.js';
 import {
@@ -127,6 +129,18 @@ function formatTooltipDate(iso) {
   const day = new Intl.DateTimeFormat('en-US', { day: '2-digit' }).format(date);
   const year = new Intl.DateTimeFormat('en-US', { year: 'numeric' }).format(date);
   return `${month}/${day}/${year}`;
+}
+
+function formatHebrewCalendarLabel(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const formatter = new Intl.DateTimeFormat('en-US-u-ca-hebrew', {
+    month: 'short',
+    day: 'numeric',
+  });
+  const parts = formatter.formatToParts(date);
+  const dayPart = parts.find((part) => part.type === 'day')?.value || '';
+  const monthPart = parts.find((part) => part.type === 'month')?.value || '';
+  return dayPart && monthPart ? `${dayPart} ${monthPart}` : formatter.format(date);
 }
 
 function getProjectDetailReferenceMonth(project, tasks = []) {
@@ -350,6 +364,169 @@ function addDays(date, days) {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
+}
+
+function getNthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
+  const firstDay = new Date(year, monthIndex, 1);
+  const offset = (weekday - firstDay.getDay() + 7) % 7;
+  return new Date(year, monthIndex, 1 + offset + (occurrence - 1) * 7);
+}
+
+function getLastWeekdayOfMonth(year, monthIndex, weekday) {
+  const lastDay = new Date(year, monthIndex + 1, 0);
+  const offset = (lastDay.getDay() - weekday + 7) % 7;
+  return new Date(year, monthIndex, lastDay.getDate() - offset);
+}
+
+function getObservedHolidayDate(date) {
+  const day = date.getDay();
+  if (day === 6) return addDays(date, -1);
+  if (day === 0) return addDays(date, 1);
+  return new Date(date);
+}
+
+function sortHolidays(holidays) {
+  return [...holidays].sort((left, right) => {
+    const leftDate = left.date || '';
+    const rightDate = right.date || '';
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    return String(left.name || '').localeCompare(String(right.name || ''));
+  });
+}
+
+function normalizeHolidayEntry(holiday) {
+  return {
+    id: holiday?.id || '',
+    date: holiday?.date || '',
+    endDate: holiday?.endDate || '',
+    name: holiday?.name || '',
+    nonWorkday: holiday?.nonWorkday !== false,
+  };
+}
+
+function holidaysMatch(left, right) {
+  const normalizedLeft = normalizeHolidayEntry(left);
+  const normalizedRight = normalizeHolidayEntry(right);
+  return (
+    normalizedLeft.id === normalizedRight.id &&
+    normalizedLeft.date === normalizedRight.date &&
+    normalizedLeft.endDate === normalizedRight.endDate &&
+    normalizedLeft.name === normalizedRight.name &&
+    normalizedLeft.nonWorkday === normalizedRight.nonWorkday
+  );
+}
+
+function buildLegalHolidayCandidatesForYear(year) {
+  return [
+    { name: "New Year's Day", date: new Date(year, 0, 1) },
+    { name: 'Martin Luther King Jr. Day', date: getNthWeekdayOfMonth(year, 0, 1, 3) },
+    { name: "Washington's Birthday", date: getNthWeekdayOfMonth(year, 1, 1, 3) },
+    { name: 'Memorial Day', date: getLastWeekdayOfMonth(year, 4, 1) },
+    { name: 'Juneteenth National Independence Day', date: new Date(year, 5, 19) },
+    { name: 'Independence Day', date: new Date(year, 6, 4) },
+    { name: 'Labor Day', date: getNthWeekdayOfMonth(year, 8, 1, 1) },
+    { name: 'Columbus Day', date: getNthWeekdayOfMonth(year, 9, 1, 2) },
+    { name: 'Veterans Day', date: new Date(year, 10, 11) },
+    { name: 'Thanksgiving Day', date: getNthWeekdayOfMonth(year, 10, 4, 4) },
+    { name: 'Christmas Day', date: new Date(year, 11, 25) },
+  ];
+}
+
+function buildNextTwelveMonthsLegalHolidays(today = new Date()) {
+  const rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 12, rangeStart.getDate());
+  const years = [rangeStart.getFullYear(), rangeEnd.getFullYear()];
+  const holidays = [];
+
+  years.forEach((year) => {
+    buildLegalHolidayCandidatesForYear(year).forEach((holiday, index) => {
+      const observed = getObservedHolidayDate(holiday.date);
+      if (observed < rangeStart || observed >= rangeEnd) return;
+      const observedName =
+        toIsoDate(observed) === toIsoDate(holiday.date) ? holiday.name : `${holiday.name} (Observed)`;
+      holidays.push({
+        id: `legal-${year}-${index}-${toIsoDate(observed)}`,
+        date: toIsoDate(observed),
+        endDate: '',
+        name: observedName,
+        nonWorkday: true,
+      });
+    });
+  });
+
+  return sortHolidays(holidays);
+}
+
+function getHebrewDateParts(date) {
+  const formatter = new Intl.DateTimeFormat('en-US-u-ca-hebrew', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const parts = formatter.formatToParts(date);
+  return {
+    month: parts.find((part) => part.type === 'month')?.value || '',
+    day: Number(parts.find((part) => part.type === 'day')?.value || 0),
+    year: Number(parts.find((part) => part.type === 'year')?.value || 0),
+  };
+}
+
+function buildNextTwelveMonthsJewishHolidays(today = new Date()) {
+  const rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 12, rangeStart.getDate());
+  const holidayByHebrewDate = {
+    Tishri: {
+      1: 'Rosh Hashanah',
+      2: 'Rosh Hashanah',
+      10: 'Yom Kippur',
+      15: 'Sukkot',
+      16: 'Sukkot',
+      22: 'Shemini Atzeret',
+      23: 'Simchat Torah',
+    },
+    Nisan: {
+      15: 'Passover',
+      16: 'Passover',
+      21: 'Passover (Last Days)',
+      22: 'Passover (Last Days)',
+    },
+    Sivan: {
+      6: 'Shavuot',
+      7: 'Shavuot',
+    },
+  };
+  const rawHolidays = [];
+
+  for (let day = new Date(rangeStart); day < rangeEnd; day = addDays(day, 1)) {
+    const hebrew = getHebrewDateParts(day);
+    const name = holidayByHebrewDate[hebrew.month]?.[hebrew.day];
+    if (!name) continue;
+    rawHolidays.push({
+      date: toIsoDate(day),
+      name,
+      nonWorkday: true,
+    });
+  }
+
+  const holidays = [];
+  rawHolidays.forEach((holiday) => {
+    const previous = holidays[holidays.length - 1];
+    const previousEnd = previous?.endDate || previous?.date || '';
+    const expectedNextDate = previousEnd ? toIsoDate(addDays(new Date(`${previousEnd}T00:00:00`), 1)) : '';
+    if (previous && previous.name === holiday.name && holiday.date === expectedNextDate) {
+      previous.endDate = holiday.date;
+      return;
+    }
+    holidays.push({
+      id: `jewish-${holiday.date}-${holiday.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      date: holiday.date,
+      endDate: '',
+      name: holiday.name,
+      nonWorkday: true,
+    });
+  });
+
+  return sortHolidays(holidays);
 }
 
 function getTimelineStyle(row, minDate, maxDate) {
@@ -637,12 +814,13 @@ function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEd
   );
 }
 
-function ProjectDetailCalendar({ project, tasks, settings }) {
-  const [calendarMonth, setCalendarMonth] = useState(() => getProjectDetailReferenceMonth(project, tasks));
+function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemClick }) {
+  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [expandedCalendarWeeks, setExpandedCalendarWeeks] = useState({});
+  const showHebrewDates = settings?.showCalendarHebrewDates === true;
 
   useEffect(() => {
-    setCalendarMonth(getProjectDetailReferenceMonth(project, tasks));
+    setCalendarMonth(startOfMonth(new Date()));
     setExpandedCalendarWeeks({});
   }, [project.id, tasks]);
 
@@ -719,7 +897,7 @@ function ProjectDetailCalendar({ project, tasks, settings }) {
       </div>
 
       <div className="calendar-grid-shell project-detail-calendar">
-        <div className="calendar-dow-row">
+        <div className="calendar-dow-grid">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
             <div className="calendar-dow" key={day}>
               {day}
@@ -785,9 +963,12 @@ function ProjectDetailCalendar({ project, tasks, settings }) {
                         item.projectName &&
                         spanColumns >= 2 &&
                         `${item.label} - ${item.projectName}`.length <= estimatedCharCapacity;
+                      const isClickable = item.type === 'step';
+                      const Tag = isClickable ? 'button' : 'div';
                       return (
-                        <div
+                        <Tag
                           key={`${week.key}-${item.segmentKey || item.id}`}
+                          type={isClickable ? 'button' : undefined}
                           className={`calendar-span-bar ${item.type} status-${item.status || 'planning'}`}
                           style={{
                             gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
@@ -795,9 +976,17 @@ function ProjectDetailCalendar({ project, tasks, settings }) {
                             borderColor: getProjectAccentColor(item.projectId || item.projectName),
                           }}
                           title={`${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`}
+                          onClick={
+                            isClickable
+                              ? (event) => {
+                                  event.stopPropagation();
+                                  onItemClick?.(item, event);
+                                }
+                              : undefined
+                          }
                         >
                           <span>{inlineProjectName ? `${item.label} - ${item.projectName}` : item.label}</span>
-                        </div>
+                        </Tag>
                       );
                     })}
                   </div>
@@ -860,9 +1049,20 @@ function ProjectDetailCalendar({ project, tasks, settings }) {
                         className={`calendar-cell${cell.isCurrentMonth ? '' : ' other-month'}${cell.isToday ? ' today' : ''}${cell.holidays.length ? ' holiday' : ''}${cell.isWeekend ? ' weekend' : ''}`}
                         style={{ height: `${cellHeight}px` }}
                       >
-                        <div className="calendar-day-number" title={formatShortDate(cell.key)}>
-                          {cell.date.getDate()}
-                        </div>
+                        <button
+                          type="button"
+                          className="calendar-day-number"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDateClick?.(cell.key, event);
+                          }}
+                          title={`Add step on ${formatShortDate(cell.key)}`}
+                        >
+                          <span>{cell.date.getDate()}</span>
+                          {showHebrewDates ? (
+                            <small className="calendar-lunar-date">{formatHebrewCalendarLabel(cell.date)}</small>
+                          ) : null}
+                        </button>
 
                         {holidayChips.length ? (
                           <div className="calendar-cell-holiday-row" style={{ marginTop: `${holidayTop}px` }}>
@@ -911,7 +1111,16 @@ function ProjectDetailCalendar({ project, tasks, settings }) {
   );
 }
 
-function ProjectDetailView({ project, tasks, settings, onBack, onEdit, onDownloadFile }) {
+function ProjectDetailView({
+  project,
+  tasks,
+  settings,
+  onBack,
+  onEdit,
+  onDownloadFile,
+  onDateClick,
+  onCalendarItemClick,
+}) {
   const health = getProjectHealth(project);
   const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
   const blockLotLabel =
@@ -1017,7 +1226,13 @@ function ProjectDetailView({ project, tasks, settings, onBack, onEdit, onDownloa
           ) : null}
         </section>
 
-        <ProjectDetailCalendar project={project} tasks={tasks} settings={settings} />
+        <ProjectDetailCalendar
+          project={project}
+          tasks={tasks}
+          settings={settings}
+          onDateClick={onDateClick}
+          onItemClick={onCalendarItemClick}
+        />
 
         <section className="project-detail-section">
           <div className="panel-header">
@@ -2264,18 +2479,32 @@ function ScheduleItemModal({
               </div>
             </>
           ) : (
-            <label className="full">
-              <span>Dates</span>
-              <input
-                type="text"
-                value={
-                  draft.start || draft.end
-                    ? `${draft.start ? formatShortDate(draft.start) : 'No start'} - ${draft.end ? formatShortDate(draft.end) : 'No end'}`
-                    : 'Dates are driven by scheduled steps'
-                }
-                readOnly
-              />
-            </label>
+            <>
+              <label className="full">
+                <span>Dates</span>
+                <input
+                  type="text"
+                  value={
+                    draft.start || draft.end
+                      ? `${draft.start ? formatShortDate(draft.start) : 'No start'} - ${draft.end ? formatShortDate(draft.end) : 'No end'}`
+                      : 'Dates are driven by scheduled steps'
+                  }
+                  readOnly
+                />
+              </label>
+
+              <div className="project-form-field full">
+                <span>Predecessors</span>
+                <div className="dependency-help inline">
+                  {(draft.predecessorOptions || []).filter((option) => option.selected).length
+                    ? `${(draft.predecessorOptions || []).filter((option) => option.selected).length} predecessor(s) selected.`
+                    : 'No predecessors selected.'}
+                </div>
+                <button className="button secondary" type="button" onClick={onOpenPreds} disabled={saving}>
+                  Edit predecessors
+                </button>
+              </div>
+            </>
           )}
         </div>
 
@@ -2444,6 +2673,8 @@ function DependencyModal({ draft, saving, onTogglePred, onLagChange, onClose, on
 function NativeProjectsView({ data, refresh, loading, onStateChange }) {
   const [projectDraft, setProjectDraft] = useState(null);
   const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [stepDraft, setStepDraft] = useState(null);
+  const [stepPredecessorDraft, setStepPredecessorDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const visibleProjects = useMemo(
     () =>
@@ -2553,6 +2784,24 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     });
   }
 
+  function handleProjectDetailCalendarDateClick(dateKey) {
+    if (!selectedProject) return;
+    const targetPhaseId = resolveProjectDetailPhaseForDate(selectedProject, dateKey);
+    setStepPredecessorDraft(null);
+    setStepDraft(buildProjectStepDraft(data, selectedProject.id, targetPhaseId, dateKey));
+  }
+
+  function handleProjectDetailCalendarItemClick(item) {
+    if (!selectedProject || item?.type !== 'step') return;
+    const phase = (selectedProject.phases || []).find(
+      (entry) => entry.id === (item.phaseId || item.parentPhaseId),
+    );
+    const step = phase?.steps?.find((entry) => entry.id === (item.stepId || item.entityId));
+    if (!phase || !step) return;
+    setStepPredecessorDraft(null);
+    setStepDraft(buildProjectStepEditDraft(data, selectedProject.id, phase.id, step));
+  }
+
   async function runProjectMutation(mutation) {
     setSaving(true);
     try {
@@ -2602,6 +2851,448 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     }
   }
 
+  function buildProjectStepDependencyOptions(projectId, phaseId, selectedPreds = [], projectsSource = data.projects) {
+    const project = (projectsSource || []).find((item) => item.id === projectId);
+    const phase = project?.phases?.find((item) => item.id === phaseId);
+    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [pred.id, pred.lag || 0]));
+    return (phase?.steps || [])
+      .slice()
+      .sort((a, b) => {
+        const aKey = a.start || a.end || '9999-12-31';
+        const bKey = b.start || b.end || '9999-12-31';
+        if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+        return (a.name || '').localeCompare(b.name || '');
+      })
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        dateLabel: item.start
+          ? `${formatShortDate(item.start)} - ${item.end ? formatShortDate(item.end) : 'No end'}`
+          : item.end
+            ? `Ends ${formatShortDate(item.end)}`
+            : 'Date not set',
+        selected: selectedMap.has(item.id),
+        lag: selectedMap.get(item.id) || 0,
+      }));
+  }
+
+  function getProjectDetailDefaultStepStart(project, phaseId, settings, startOverride = '') {
+    if (startOverride) return normalizeStartDate(startOverride, settings);
+    const phase = project?.phases?.find((item) => item.id === phaseId);
+    if (!phase) return '';
+    const latestDate = (phase.steps || []).reduce((latest, step) => {
+      const candidate = step.end || step.start || '';
+      if (!candidate) return latest;
+      return !latest || candidate > latest ? candidate : latest;
+    }, phase.end || '');
+    if (!latestDate) return '';
+    const latest = parseDateValue(latestDate);
+    if (!latest) return '';
+    return normalizeStartDate(toIsoDate(addDays(latest, 1)), settings);
+  }
+
+  function buildProjectStepDraft(state, projectId, phaseId, startOverride = '') {
+    const project = state.projects.find((item) => item.id === projectId);
+    const start = getProjectDetailDefaultStepStart(project, phaseId, state.settings, startOverride);
+    return {
+      mode: 'create',
+      type: 'step',
+      projectId,
+      phaseId,
+      sourceProjectId: projectId,
+      sourcePhaseId: phaseId,
+      stepId: '',
+      name: '',
+      assign: '',
+      status: 'planning',
+      start,
+      duration: 1,
+      endPreview: start ? computeStepEndDate(start, 1, state.settings) : '',
+      predecessorOptions: buildProjectStepDependencyOptions(projectId, phaseId, [], state.projects),
+      autoStart: !startOverride,
+    };
+  }
+
+  function buildProjectStepEditDraft(state, projectId, phaseId, step) {
+    const duration = Math.max(1, Number(step.duration) || 1);
+    return {
+      mode: 'edit',
+      type: 'step',
+      projectId,
+      phaseId,
+      sourceProjectId: projectId,
+      sourcePhaseId: phaseId,
+      stepId: step.id,
+      name: step.name || '',
+      assign: step.assign || '',
+      status: step.status || (step.done ? 'done' : 'planning'),
+      start: step.start || '',
+      duration,
+      endPreview: step.start ? computeStepEndDate(step.start, duration, state.settings) : '',
+      predecessorOptions: buildProjectStepDependencyOptions(projectId, phaseId, step.predecessors, state.projects),
+      autoStart: false,
+    };
+  }
+
+  function resolveProjectDetailPhaseForDate(project, dateKey) {
+    const phases = project?.phases || [];
+    if (!phases.length) return '';
+
+    const containingPhase = phases.find((phase) => {
+      const start = phase.start || '';
+      const end = phase.end || phase.start || '';
+      return start && end && dateKey >= start && dateKey <= end;
+    });
+    if (containingPhase) return containingPhase.id;
+
+    const phasesBefore = phases
+      .filter((phase) => (phase.end || phase.start || '') && (phase.end || phase.start || '') <= dateKey)
+      .sort((a, b) => (a.end || a.start || '').localeCompare(b.end || b.start || ''));
+    if (phasesBefore.length) return phasesBefore[phasesBefore.length - 1].id;
+
+    const phasesAfter = phases
+      .filter((phase) => (phase.start || phase.end || '') && (phase.start || phase.end || '') >= dateKey)
+      .sort((a, b) => (a.start || a.end || '').localeCompare(b.start || b.end || ''));
+    if (phasesAfter.length) return phasesAfter[0].id;
+
+    return phases[0]?.id || '';
+  }
+
+  function resyncProjectSchedule(project) {
+    return syncProjectPhaseDates(cascadePhaseDates(syncProjectPhaseDates(project), data.settings));
+  }
+
+  function updateProjectStepDraft(field, value) {
+    setStepDraft((current) => {
+      if (!current) return current;
+      const next = { ...current, [field]: value };
+      if (field === 'projectId') {
+        const nextProject = data.projects.find((project) => project.id === value);
+        const phaseExists = (nextProject?.phases || []).some((phase) => phase.id === next.phaseId);
+        if (!phaseExists) {
+          next.phaseId = nextProject?.phases?.[0]?.id || '';
+        }
+      }
+      if (field === 'phaseId' && next.autoStart) {
+        next.start = getProjectDetailDefaultStepStart(
+          data.projects.find((project) => project.id === next.projectId),
+          value,
+          data.settings,
+        );
+      }
+      if (field === 'start') {
+        next.autoStart = false;
+      }
+      if (field === 'duration') {
+        next.duration = Math.max(1, Number(value) || 1);
+      }
+      next.endPreview = next.start ? computeStepEndDate(next.start, next.duration, data.settings) : '';
+      next.predecessorOptions = buildProjectStepDependencyOptions(
+        next.projectId,
+        next.phaseId,
+        (next.predecessorOptions || []).filter((option) => option.selected).map((option) => ({
+          id: option.id,
+          lag: option.lag || 0,
+        })),
+      );
+      return next;
+    });
+  }
+
+  function openProjectStepPredecessors() {
+    if (!stepDraft) return;
+    setStepPredecessorDraft({
+      entityType: 'step',
+      name: stepDraft.name || 'New step',
+      options: (stepDraft.predecessorOptions || []).map((option) => ({ ...option })),
+    });
+  }
+
+  function toggleProjectStepPred(stepId, checked) {
+    setStepPredecessorDraft((current) =>
+      current
+        ? {
+            ...current,
+            options: current.options.map((option) =>
+              option.id === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function changeProjectStepPredLag(stepId, value) {
+    setStepPredecessorDraft((current) =>
+      current
+        ? {
+            ...current,
+            options: current.options.map((option) =>
+              option.id === stepId ? { ...option, lag: Number(value) || 0 } : option,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function saveProjectStepPredecessors() {
+    if (!stepPredecessorDraft) return;
+    setStepDraft((current) =>
+      current
+        ? {
+            ...current,
+            predecessorOptions: stepPredecessorDraft.options.map((option) => ({ ...option })),
+          }
+        : current,
+    );
+    setStepPredecessorDraft(null);
+  }
+
+  async function handleQuickAddProjectDetailPhase(projectId) {
+    if (!projectId) return;
+    const name = window.prompt('New phase name');
+    if (!name || !name.trim()) return;
+
+    setSaving(true);
+    try {
+      const project = data.projects.find((item) => item.id === projectId);
+      if (!project) return;
+      const newPhase = {
+        id: `ph${Date.now()}`,
+        name: name.trim(),
+        assign: '',
+        status: 'planning',
+        start: '',
+        end: '',
+        predecessors: [],
+        steps: [],
+      };
+      const nextProject = {
+        ...project,
+        phases: [...(project.phases || []), newPhase],
+      };
+      const syncedProject = resyncProjectSchedule(nextProject);
+      const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
+      const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
+      onStateChange(nextState);
+      setStepDraft((current) => {
+        if (!current) return current;
+        const nextDraft = {
+          ...current,
+          projectId,
+          phaseId: newPhase.id,
+          predecessorOptions: buildProjectStepDependencyOptions(projectId, newPhase.id, [], nextState.projects),
+        };
+        if (nextDraft.autoStart) {
+          nextDraft.start = '';
+          nextDraft.endPreview = '';
+        }
+        return nextDraft;
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveProjectDetailStep(nextAction = 'close') {
+    if (!stepDraft?.name.trim()) return;
+    if (!stepDraft.projectId || !stepDraft.phaseId) {
+      window.alert('Choose a project and phase before saving the step.');
+      return;
+    }
+
+    setSaving(true);
+    setStepPredecessorDraft(null);
+    try {
+      const project = data.projects.find((item) => item.id === stepDraft.projectId);
+      if (!project) return;
+      const targetPhase = project.phases?.find((phase) => phase.id === stepDraft.phaseId);
+      if (!targetPhase) {
+        window.alert('The selected phase no longer exists.');
+        return;
+      }
+      const existingStep =
+        stepDraft.mode === 'edit'
+          ? data.projects
+              .find((item) => item.id === (stepDraft.sourceProjectId || stepDraft.projectId))
+              ?.phases?.find((phase) => phase.id === (stepDraft.sourcePhaseId || stepDraft.phaseId))
+              ?.steps?.find((step) => step.id === stepDraft.stepId)
+          : null;
+      const sourceProjectId = stepDraft.sourceProjectId || stepDraft.projectId;
+      const sourcePhaseId = stepDraft.sourcePhaseId || stepDraft.phaseId;
+      const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
+      const isMovingStep =
+        stepDraft.mode === 'edit' && (stepDraft.projectId !== sourceProjectId || stepDraft.phaseId !== sourcePhaseId);
+      const nextStep = {
+        ...(existingStep || {}),
+        id: stepDraft.mode === 'create' ? `s${Date.now()}` : stepDraft.stepId,
+        name: stepDraft.name.trim(),
+        assign: stepDraft.assign.trim(),
+        status: stepDraft.status,
+        done: stepDraft.status === 'done',
+        start: stepDraft.start || '',
+        duration: Math.max(1, Number(stepDraft.duration) || 1),
+        end: stepDraft.start ? stepDraft.endPreview || '' : '',
+        predecessors: (stepDraft.predecessorOptions || [])
+          .filter((option) => option.selected)
+          .map((option) => ({ id: option.id, lag: option.lag || 0 })),
+      };
+      if (isMovingStep) {
+        nextStep.successors = [];
+      }
+      nextStep.predecessors.forEach((pred) => {
+        if (wouldCreateCycleFromPreds(targetPhase, pred.id, nextStep.id)) {
+          throw new Error('Cannot create a circular dependency.');
+        }
+      });
+
+      const removeStepFromPhase = (phase) => {
+        const filteredSteps = (phase.steps || []).map((step) => ({
+          ...step,
+          predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== stepDraft.stepId),
+          successors: Array.isArray(step.successors)
+            ? step.successors.filter((successorId) => successorId !== stepDraft.stepId)
+            : step.successors,
+        }));
+        const nextPhase = {
+          ...phase,
+          steps: filteredSteps.filter((step) => step.id !== stepDraft.stepId),
+          delays: (phase.delays || []).filter((delay) => delay.stepId !== stepDraft.stepId),
+        };
+        syncStepLinks(nextPhase);
+        cascadeStepDates(nextPhase, data.settings);
+        return nextPhase;
+      };
+
+      const upsertStepInPhase = (phase, preserveExistingLinks) => {
+        const existingSteps = [...(phase.steps || [])];
+        const nextSteps =
+          stepDraft.mode === 'create'
+            ? [...existingSteps, nextStep]
+            : existingSteps.some((step) => step.id === stepDraft.stepId)
+              ? existingSteps.map((step) =>
+                  step.id === stepDraft.stepId
+                    ? {
+                        ...nextStep,
+                        predecessors: nextStep.predecessors || [],
+                        successors: preserveExistingLinks && !isMovingStep ? step.successors : nextStep.successors,
+                      }
+                    : step,
+                )
+              : [...existingSteps, nextStep];
+        const nextPhase = {
+          ...phase,
+          steps: nextSteps,
+        };
+        syncStepLinks(nextPhase);
+        cascadeStepDates(nextPhase, data.settings);
+        return nextPhase;
+      };
+
+      if (!isMovingStep || !sourceProject || sourceProject.id === project.id) {
+        const nextProject = {
+          ...project,
+          phases: (project.phases || []).map((phase) => {
+            if (stepDraft.mode === 'create') {
+              if (phase.id !== stepDraft.phaseId) return phase;
+              return upsertStepInPhase(phase, false);
+            }
+            if (isMovingStep) {
+              if (phase.id === sourcePhaseId) return removeStepFromPhase(phase);
+              if (phase.id === stepDraft.phaseId) return upsertStepInPhase(phase, false);
+              return phase;
+            }
+            if (phase.id !== stepDraft.phaseId) return phase;
+            return upsertStepInPhase(phase, true);
+          }),
+        };
+        const syncedProject = resyncProjectSchedule(nextProject);
+        const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
+        const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
+        onStateChange(nextState);
+        if (nextAction === 'new') {
+          setStepDraft(buildProjectStepDraft(nextState, stepDraft.projectId, stepDraft.phaseId));
+        } else {
+          setStepDraft(null);
+        }
+        return;
+      }
+
+      const nextSourceProject = resyncProjectSchedule({
+        ...sourceProject,
+        phases: (sourceProject.phases || []).map((phase) =>
+          phase.id === sourcePhaseId ? removeStepFromPhase(phase) : phase,
+        ),
+      });
+
+      const nextTargetProject = resyncProjectSchedule({
+        ...project,
+        phases: (project.phases || []).map((phase) =>
+          phase.id === stepDraft.phaseId ? upsertStepInPhase(phase, false) : phase,
+        ),
+      });
+
+      let nextTasks = syncProjectTasks(sourceProject.id, nextSourceProject, data.tasks);
+      nextTasks = syncProjectTasks(project.id, nextTargetProject, nextTasks);
+      const sourceState = await updateProject(data, sourceProject.id, nextSourceProject);
+      const nextState = await updateProjectAndTasks(sourceState, project.id, nextTargetProject, nextTasks);
+      onStateChange(nextState);
+      if (nextAction === 'new') {
+        setStepDraft(buildProjectStepDraft(nextState, stepDraft.projectId, stepDraft.phaseId));
+      } else {
+        setStepDraft(null);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to save the step.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteProjectDetailStep() {
+    if (!stepDraft || stepDraft.mode === 'create') return;
+    const confirmed = window.confirm(`Delete "${stepDraft.name}"?`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      const projectId = stepDraft.sourceProjectId || stepDraft.projectId;
+      const phaseId = stepDraft.sourcePhaseId || stepDraft.phaseId;
+      const stepId = stepDraft.stepId;
+      const project = data.projects.find((item) => item.id === projectId);
+      if (!project || !phaseId || !stepId) return;
+
+      const nextProject = resyncProjectSchedule({
+        ...project,
+        phases: (project.phases || []).map((phase) => {
+          if (phase.id !== phaseId) return phase;
+          const nextPhase = {
+            ...phase,
+            steps: (phase.steps || [])
+              .map((step) => ({
+                ...step,
+                predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== stepId),
+                successors: Array.isArray(step.successors)
+                  ? step.successors.filter((successorId) => successorId !== stepId)
+                  : step.successors,
+              }))
+              .filter((step) => step.id !== stepId),
+            delays: (phase.delays || []).filter((delay) => delay.stepId !== stepId),
+          };
+          syncStepLinks(nextPhase);
+          cascadeStepDates(nextPhase, data.settings);
+          return nextPhase;
+        }),
+      });
+
+      const nextTasks = syncProjectTasks(projectId, nextProject, data.tasks);
+      const nextState = await updateProjectAndTasks(data, projectId, nextProject, nextTasks);
+      onStateChange(nextState);
+      setStepDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="panel native-panel">
       <div className="panel-header">
@@ -2628,6 +3319,8 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
           onBack={() => setSelectedProjectId('')}
           onEdit={startEdit}
           onDownloadFile={handleDownloadProjectFile}
+          onDateClick={handleProjectDetailCalendarDateClick}
+          onCalendarItemClick={handleProjectDetailCalendarItemClick}
         />
       ) : (
         <>
@@ -2669,6 +3362,32 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
           isEditing={!!projectDraft.id}
         />
       ) : null}
+      {stepDraft ? (
+        <ScheduleItemModal
+          draft={stepDraft}
+          type="step"
+          projects={visibleProjects}
+          saving={saving}
+          onChange={updateProjectStepDraft}
+          onOpenPreds={openProjectStepPredecessors}
+          onAddPhase={handleQuickAddProjectDetailPhase}
+          onClose={() => {
+            setStepPredecessorDraft(null);
+            setStepDraft(null);
+          }}
+          onSave={() => handleSaveProjectDetailStep('close')}
+          onSaveAndNew={() => handleSaveProjectDetailStep('new')}
+          onDelete={handleDeleteProjectDetailStep}
+        />
+      ) : null}
+      <StepPredecessorModal
+        draft={stepPredecessorDraft}
+        saving={saving}
+        onTogglePred={toggleProjectStepPred}
+        onLagChange={changeProjectStepPredLag}
+        onClose={() => setStepPredecessorDraft(null)}
+        onSave={saveProjectStepPredecessors}
+      />
     </section>
   );
 }
@@ -4615,6 +5334,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   const legacyShowTaskDueDates = data.settings?.showTaskDueDates;
   const showGanttTasks =
     data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false);
+  const showCalendarHebrewDates = data.settings?.showCalendarHebrewDates === true;
   const showCalendarTasks =
     data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false);
   const inspectionSubcodes = useMemo(
@@ -4917,6 +5637,8 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
 
   function openPhaseEditor(row, event = null) {
     setEditorPredecessorDraft(null);
+    const project = data.projects.find((item) => item.id === row.parentProjectId);
+    const phase = project?.phases?.find((item) => item.id === row.entityId);
     setEditorDraft({
       mode: 'edit',
       type: 'phase',
@@ -4927,6 +5649,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       status: row.status || 'planning',
       start: row.start || '',
       end: row.end || '',
+      predecessorOptions: buildPhaseDependencyOptions(row.parentProjectId, row.entityId, phase?.predecessors || []),
     });
   }
 
@@ -4971,6 +5694,33 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         const aKey = a.start || a.end || '9999-12-31';
         const bKey = b.start || b.end || '9999-12-31';
         if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+        return (a.name || '').localeCompare(b.name || '');
+      })
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        dateLabel: item.start
+          ? `${formatShortDate(item.start)} - ${item.end ? formatShortDate(item.end) : 'No end'}`
+          : item.end
+            ? `Ends ${formatShortDate(item.end)}`
+            : 'Date not set',
+        selected: selectedMap.has(item.id),
+        lag: selectedMap.get(item.id) || 0,
+      }));
+  }
+
+  function buildPhaseDependencyOptions(projectId, phaseId = '', selectedPreds = [], projectsSource = data.projects) {
+    const project = (projectsSource || []).find((item) => item.id === projectId);
+    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [pred.id, pred.lag || 0]));
+    return (project?.phases || [])
+      .filter((item) => item.id !== phaseId)
+      .sort((a, b) => {
+        const aKey = a.start || a.end || '9999-12-31';
+        const bKey = b.start || b.end || '9999-12-31';
+        if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+        const aEnd = a.end || a.start || '9999-12-31';
+        const bEnd = b.end || b.start || '9999-12-31';
+        if (aEnd !== bEnd) return aEnd < bEnd ? -1 : 1;
         return (a.name || '').localeCompare(b.name || '');
       })
       .map((item) => ({
@@ -5058,6 +5808,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       status: 'planning',
       start: '',
       end: '',
+      predecessorOptions: buildPhaseDependencyOptions(projectId),
     });
   }
 
@@ -5078,6 +5829,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         status: 'planning',
         start: '',
         end: '',
+        predecessors: [],
         steps: [],
       };
 
@@ -5086,7 +5838,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         phases: [...(project.phases || []), newPhase],
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -5131,6 +5883,10 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   function getDefaultNewStepStart(projectId, phaseId) {
     const project = data.projects.find((item) => item.id === projectId);
     return getDefaultNewStepStartFromProject(project, phaseId, data.settings);
+  }
+
+  function resyncProjectSchedule(project) {
+    return syncProjectPhaseDates(cascadePhaseDates(syncProjectPhaseDates(project), data.settings));
   }
 
   function startCreateStep(projectId, phaseId, startOverride = '') {
@@ -5582,9 +6338,10 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   }
 
   function openEditorPredecessors() {
-    if (editorDraft?.type !== 'step') return;
+    if (!editorDraft || (editorDraft.type !== 'step' && editorDraft.type !== 'phase')) return;
     setEditorPredecessorDraft({
-      name: editorDraft.name || 'New step',
+      entityType: editorDraft.type,
+      name: editorDraft.name || (editorDraft.type === 'phase' ? 'New phase' : 'New step'),
       options: (editorDraft.predecessorOptions || []).map((option) => ({ ...option })),
     });
   }
@@ -5618,7 +6375,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   function saveEditorPredecessors() {
     if (!editorPredecessorDraft) return;
     setEditorDraft((current) =>
-      current?.type === 'step'
+      current && (current.type === 'step' || current.type === 'phase')
         ? {
             ...current,
             predecessorOptions: editorPredecessorDraft.options.map((option) => ({ ...option })),
@@ -5676,7 +6433,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         }),
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -5752,36 +6509,48 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       if (editorDraft.type === 'phase') {
         const project = data.projects.find((item) => item.id === editorDraft.projectId);
         if (!project) return;
+        const phaseId = editorDraft.mode === 'create' ? `ph${Date.now()}` : editorDraft.phaseId;
+        const nextPreds = (editorDraft.predecessorOptions || [])
+          .filter((option) => option.selected)
+          .map((option) => ({ id: option.id, lag: option.lag || 0 }));
 
-        const nextProject = {
+        for (const pred of nextPreds) {
+          if (wouldCreatePhaseCycleFromPreds(project, pred.id, phaseId)) {
+            throw new Error('Cannot create a circular phase dependency.');
+          }
+        }
+
+        const nextProject = cascadePhaseDates({
           ...project,
           phases:
             editorDraft.mode === 'create'
               ? [
                   ...(project.phases || []),
                   {
-                    id: `ph${Date.now()}`,
+                    id: phaseId,
                     name: editorDraft.name.trim(),
                     assign: editorDraft.assign.trim(),
                     status: editorDraft.status,
                     start: '',
                     end: '',
+                    predecessors: nextPreds,
                     steps: [],
                   },
                 ]
               : (project.phases || []).map((phase) =>
-                  phase.id === editorDraft.phaseId
+                  phase.id === phaseId
                     ? {
                         ...phase,
                         name: editorDraft.name.trim(),
                         assign: editorDraft.assign.trim(),
                         status: editorDraft.status,
+                        predecessors: nextPreds,
                       }
                     : phase,
                 ),
-        };
+        }, data.settings);
 
-        const syncedProject = syncProjectPhaseDates(nextProject);
+        const syncedProject = resyncProjectSchedule(nextProject);
         const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
         const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
         onStateChange(nextState);
@@ -5904,7 +6673,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
           }),
         };
 
-        const syncedProject = syncProjectPhaseDates(nextProject);
+        const syncedProject = resyncProjectSchedule(nextProject);
         const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
         const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
         onStateChange(nextState);
@@ -5917,13 +6686,13 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       }
 
       if (!sourceProject) return;
-      const nextSourceProject = syncProjectPhaseDates({
+      const nextSourceProject = resyncProjectSchedule({
         ...sourceProject,
         phases: (sourceProject.phases || []).map((phase) =>
           phase.id === sourcePhaseId ? removeStepFromPhase(phase) : phase,
         ),
       });
-      const nextTargetProject = syncProjectPhaseDates({
+      const nextTargetProject = resyncProjectSchedule({
         ...targetProject,
         phases: (targetProject.phases || []).map((phase) =>
           phase.id === targetPhaseId ? upsertStepInPhase(phase, false) : phase,
@@ -5984,7 +6753,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       const project = data.projects.find((item) => item.id === projectId);
       if (!project || !phaseId || !stepId) return;
 
-      const nextProject = syncProjectPhaseDates(buildProjectAfterStepDelete(project, phaseId, stepId));
+      const nextProject = resyncProjectSchedule(buildProjectAfterStepDelete(project, phaseId, stepId));
       const nextTasks = syncProjectTasks(projectId, nextProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, projectId, nextProject, nextTasks);
       onStateChange(nextState);
@@ -6027,7 +6796,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         }),
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(projectId, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, projectId, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -6059,7 +6828,12 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         ...project,
         phases:
           editorDraft.type === 'phase'
-            ? (project.phases || []).filter((phase) => phase.id !== phaseId)
+            ? (project.phases || [])
+                .filter((phase) => phase.id !== phaseId)
+                .map((phase) => ({
+                  ...phase,
+                  predecessors: normalizePreds(phase.predecessors).filter((pred) => pred.id !== phaseId),
+                }))
             : (project.phases || []).map((phase) =>
                 phase.id === phaseId
                   ? {
@@ -6070,7 +6844,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
               ),
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(projectId, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, projectId, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -6143,7 +6917,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         }),
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -6198,7 +6972,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         }),
       };
 
-      const syncedProject = syncProjectPhaseDates(nextProject);
+      const syncedProject = resyncProjectSchedule(nextProject);
       const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
@@ -6791,7 +7565,10 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                           onClick={(event) => handleCalendarDateClick(cell, event)}
                           title={`Add step on ${formatShortDate(cell.key)}`}
                         >
-                          {cell.date.getDate()}
+                          <span>{cell.date.getDate()}</span>
+                          {showCalendarHebrewDates ? (
+                            <small className="calendar-lunar-date">{formatHebrewCalendarLabel(cell.date)}</small>
+                          ) : null}
                         </button>
 
                         {holidayChips.length ? (
@@ -6911,13 +7688,19 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
 
 function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange, onClose, onSave }) {
   if (!draft) return null;
+  const entityLabel = draft.entityType === 'phase' ? 'Phase' : 'Step';
+  const emptyTitle = draft.entityType === 'phase' ? 'No other phases in this project' : 'No other steps in this phase';
+  const emptyCopy =
+    draft.entityType === 'phase'
+      ? 'Add more phases to create dependencies between phases in this project.'
+      : 'Add more steps to create dependencies in this phase.';
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card dependency-modal-card" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Predecessors</p>
-            <h2>Step Predecessors</h2>
+            <h2>{entityLabel} Predecessors</h2>
             <p className="panel-copy">
               Editing: <strong>{draft.name}</strong>
             </p>
@@ -6956,8 +7739,8 @@ function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange, onClos
             ))
           ) : (
             <div className="empty-state compact">
-              <h3>No other steps in this phase</h3>
-              <p>Add more steps to create dependencies in this phase.</p>
+              <h3>{emptyTitle}</h3>
+              <p>{emptyCopy}</p>
             </div>
           )}
         </div>
@@ -7028,6 +7811,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarTaskDueDates: data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
+      showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
       inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
         ? data.settings.inspectionSubcodes.filter(Boolean)
         : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
@@ -7042,6 +7826,13 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     },
     [data.settings],
   );
+  const [holidayDrafts, setHolidayDrafts] = useState(() =>
+    (Array.isArray(data.settings?.holidays) ? data.settings.holidays : []).map(normalizeHolidayEntry),
+  );
+
+  useEffect(() => {
+    setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
+  }, [settings.holidays]);
 
   const sampleDataPresent = hasVisibleSampleData(data);
   const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
@@ -7060,32 +7851,99 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     runSettingsMutation({ ...settings, [field]: value });
   }
 
-  function handleHolidayChange(index, field, value) {
-    const holidays = settings.holidays.map((holiday, holidayIndex) =>
-      holidayIndex === index ? { ...holiday, [field]: value } : holiday,
+  function handleHolidayDraftChange(index, field, value) {
+    setHolidayDrafts((current) =>
+      current.map((holiday, holidayIndex) =>
+        holidayIndex === index ? normalizeHolidayEntry({ ...holiday, [field]: value }) : holiday,
+      ),
     );
-    runSettingsMutation({ ...settings, holidays });
   }
 
   function handleToggleHolidayRange(index, enabled) {
-    const holidays = settings.holidays.map((holiday, holidayIndex) =>
-      holidayIndex === index
-        ? { ...holiday, endDate: enabled ? holiday.endDate || holiday.date || '' : '' }
-        : holiday,
+    setHolidayDrafts((current) =>
+      current.map((holiday, holidayIndex) =>
+        holidayIndex === index
+          ? normalizeHolidayEntry({
+              ...holiday,
+              endDate: enabled ? holiday.endDate || holiday.date || '' : '',
+            })
+          : holiday,
+      ),
     );
-    runSettingsMutation({ ...settings, holidays });
+  }
+
+  function handleSaveHoliday(index) {
+    const draft = normalizeHolidayEntry(holidayDrafts[index]);
+    const existingIndex = settings.holidays.findIndex((holiday) => holiday.id === draft.id);
+    const holidays =
+      existingIndex >= 0
+        ? settings.holidays.map((holiday, holidayIndex) =>
+            holidayIndex === existingIndex ? draft : holiday,
+          )
+        : [...settings.holidays, draft];
+    runSettingsMutation({ ...settings, holidays: sortHolidays(holidays) });
   }
 
   function handleAddHoliday() {
-    const holidays = [
-      ...settings.holidays,
-      { id: `h${Date.now()}`, date: '', endDate: '', name: '', nonWorkday: true },
-    ];
-    runSettingsMutation({ ...settings, holidays });
+    setHolidayDrafts((current) =>
+      sortHolidays([
+        ...current,
+        { id: `h${Date.now()}`, date: '', endDate: '', name: '', nonWorkday: true },
+      ]).map(normalizeHolidayEntry),
+    );
   }
 
   function handleRemoveHoliday(index) {
-    const holidays = settings.holidays.filter((_, holidayIndex) => holidayIndex !== index);
+    const draft = holidayDrafts[index];
+    if (!draft) return;
+    const existingIndex = settings.holidays.findIndex((holiday) => holiday.id === draft.id);
+    if (existingIndex < 0) {
+      setHolidayDrafts((current) => current.filter((_, holidayIndex) => holidayIndex !== index));
+      return;
+    }
+    const holidays = settings.holidays.filter((_, holidayIndex) => holidayIndex !== existingIndex);
+    runSettingsMutation({ ...settings, holidays });
+  }
+
+  function handleAddStandardLegalHolidays() {
+    const confirmed = window.confirm(
+      'Add the standard U.S. legal holidays for the next 12 months? Existing matching holidays will be kept and not duplicated.',
+    );
+    if (!confirmed) return;
+    const generated = buildNextTwelveMonthsLegalHolidays(new Date());
+    const existingKeys = new Set(
+      settings.holidays.map((holiday) =>
+        `${holiday.date || ''}::${String(holiday.name || '').trim().toLowerCase()}`,
+      ),
+    );
+    const holidays = sortHolidays([
+      ...settings.holidays,
+      ...generated.filter((holiday) => {
+        const key = `${holiday.date || ''}::${String(holiday.name || '').trim().toLowerCase()}`;
+        return !existingKeys.has(key);
+      }),
+    ]);
+    runSettingsMutation({ ...settings, holidays });
+  }
+
+  function handleAddJewishHolidays() {
+    const confirmed = window.confirm(
+      'Add the major Jewish holidays for the next 12 months? Existing matching holidays will be kept and not duplicated.',
+    );
+    if (!confirmed) return;
+    const generated = buildNextTwelveMonthsJewishHolidays(new Date());
+    const existingKeys = new Set(
+      settings.holidays.map((holiday) =>
+        `${holiday.date || ''}::${holiday.endDate || ''}::${String(holiday.name || '').trim().toLowerCase()}`,
+      ),
+    );
+    const holidays = sortHolidays([
+      ...settings.holidays,
+      ...generated.filter((holiday) => {
+        const key = `${holiday.date || ''}::${holiday.endDate || ''}::${String(holiday.name || '').trim().toLowerCase()}`;
+        return !existingKeys.has(key);
+      }),
+    ]);
     runSettingsMutation({ ...settings, holidays });
   }
 
@@ -7161,6 +8019,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         <DashboardStat label="Gantt task dates" value={settings.showGanttTaskDueDates ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Calendar task dates" value={settings.showCalendarTaskDueDates ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Calendar phases" value={settings.showCalendarPhases ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Lunar dates" value={settings.showCalendarHebrewDates ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
         <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
         <DashboardStat label="Sample data" value={settings.showSampleData ? 'Shown' : 'Hidden'} />
@@ -7224,6 +8083,19 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
             <span>
               <strong>Show phases in calendar</strong>
               <small>Display phase bars in the Calendar tab.</small>
+            </span>
+          </label>
+
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.showCalendarHebrewDates}
+              onChange={(event) => handleToggle('showCalendarHebrewDates', event.target.checked)}
+              disabled={saving}
+            />
+            <span>
+              <strong>Show Jewish lunar dates in Calendar</strong>
+              <small>Display Hebrew calendar dates under each day number in month calendars.</small>
             </span>
           </label>
         </section>
@@ -7377,15 +8249,35 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
             <h3>Holiday calendar</h3>
             <p>Add single dates or inclusive date ranges for holidays and other blocked time.</p>
           </div>
-          <button className="button primary" type="button" onClick={handleAddHoliday} disabled={saving}>
-            Add holiday
-          </button>
+          <div className="settings-card-actions">
+            <button
+              className="button secondary"
+              type="button"
+              onClick={handleAddStandardLegalHolidays}
+              disabled={saving}
+            >
+              Add legal holidays
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={handleAddJewishHolidays}
+              disabled={saving}
+            >
+              Add Jewish holidays
+            </button>
+            <button className="button primary" type="button" onClick={handleAddHoliday} disabled={saving}>
+              Add holiday
+            </button>
+          </div>
         </div>
 
-        {settings.holidays.length ? (
+        {holidayDrafts.length ? (
           <div className="holiday-list">
-            {settings.holidays.map((holiday, index) => {
+            {holidayDrafts.map((holiday, index) => {
               const isRange = !!(holiday.endDate && holiday.endDate >= holiday.date && holiday.date);
+              const savedHoliday = settings.holidays.find((item) => item.id === holiday.id) || null;
+              const isDirty = !savedHoliday || !holidaysMatch(savedHoliday, holiday);
               return (
                 <article key={holiday.id || index} className="holiday-row">
                   <label>
@@ -7393,7 +8285,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                     <input
                       type="date"
                       value={holiday.date || ''}
-                      onChange={(event) => handleHolidayChange(index, 'date', event.target.value)}
+                      onChange={(event) => handleHolidayDraftChange(index, 'date', event.target.value)}
                       disabled={saving}
                     />
                   </label>
@@ -7414,7 +8306,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                       type="date"
                       value={holiday.endDate || ''}
                       min={holiday.date || ''}
-                      onChange={(event) => handleHolidayChange(index, 'endDate', event.target.value)}
+                      onChange={(event) => handleHolidayDraftChange(index, 'endDate', event.target.value)}
                       disabled={saving || !isRange}
                     />
                   </label>
@@ -7425,7 +8317,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                       type="text"
                       value={holiday.name || ''}
                       placeholder="Name (optional)"
-                      onChange={(event) => handleHolidayChange(index, 'name', event.target.value)}
+                      onChange={(event) => handleHolidayDraftChange(index, 'name', event.target.value)}
                       disabled={saving}
                     />
                   </label>
@@ -7434,20 +8326,30 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                     <input
                       type="checkbox"
                       checked={holiday.nonWorkday !== false}
-                      onChange={(event) => handleHolidayChange(index, 'nonWorkday', event.target.checked)}
+                      onChange={(event) => handleHolidayDraftChange(index, 'nonWorkday', event.target.checked)}
                       disabled={saving}
                     />
                     <span>Non-workday</span>
                   </label>
 
-                  <button
-                    className="button secondary danger"
-                    type="button"
-                    onClick={() => handleRemoveHoliday(index)}
-                    disabled={saving}
-                  >
-                    Remove
-                  </button>
+                  <div className="holiday-row-actions">
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => handleSaveHoliday(index)}
+                      disabled={saving || !isDirty}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="button secondary danger"
+                      type="button"
+                      onClick={() => handleRemoveHoliday(index)}
+                      disabled={saving}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </article>
               );
             })}
@@ -7475,6 +8377,7 @@ export default function App() {
       showGanttTaskDueDates: true,
       showCalendarTaskDueDates: true,
       showCalendarPhases: true,
+      showCalendarHebrewDates: false,
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
     },
     storageMode: 'loading',

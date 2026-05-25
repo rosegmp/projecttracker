@@ -15,6 +15,7 @@ const EMPTY_SETTINGS = {
   showGanttTaskDueDates: true,
   showCalendarTaskDueDates: true,
   showCalendarPhases: true,
+  showCalendarHebrewDates: false,
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
@@ -51,6 +52,21 @@ function normalizeProjectFile(file, index = 0) {
   };
 }
 
+function normalizeDependencyList(preds) {
+  const source = Array.isArray(preds)
+    ? preds
+    : typeof preds === 'string'
+      ? [{ id: preds, lag: 0 }]
+      : preds && typeof preds === 'object'
+        ? [preds]
+        : [];
+
+  return source
+    .map((item) => (typeof item === 'string' ? { id: item, lag: 0 } : item))
+    .filter((item) => item?.id)
+    .map((item) => ({ id: String(item.id), lag: Number(item.lag) || 0 }));
+}
+
 function normalizeProjectInspection(inspection, index = 0) {
   return {
     id: inspection?.id || `inspection-${Date.now()}-${index}`,
@@ -62,6 +78,28 @@ function normalizeProjectInspection(inspection, index = 0) {
     notes: String(inspection?.notes || '').trim(),
     stickerFile: inspection?.stickerFile ? normalizeProjectFile(inspection.stickerFile, index) : null,
     reportFile: inspection?.reportFile ? normalizeProjectFile(inspection.reportFile, index + 1000) : null,
+  };
+}
+
+function normalizeProjectPhase(phase, index = 0) {
+  return {
+    ...phase,
+    id: phase?.id || `phase-${Date.now()}-${index}`,
+    name: String(phase?.name || '').trim(),
+    assign: String(phase?.assign || '').trim(),
+    status: String(phase?.status || 'planning'),
+    start: String(phase?.start || ''),
+    end: String(phase?.end || ''),
+    predecessors: normalizeDependencyList(phase?.predecessors),
+    delays: Array.isArray(phase?.delays) ? phase.delays : [],
+    steps: Array.isArray(phase?.steps)
+      ? phase.steps.map((step, stepIndex) => ({
+          ...step,
+          id: step?.id || `step-${Date.now()}-${index}-${stepIndex}`,
+          predecessors: normalizeDependencyList(step?.predecessors),
+          successors: Array.isArray(step?.successors) ? step.successors.filter(Boolean) : [],
+        }))
+      : [],
   };
 }
 
@@ -103,6 +141,7 @@ function normalizeProjectFolders(filesState) {
 function normalizeProject(project) {
   return {
     ...project,
+    phases: Array.isArray(project?.phases) ? project.phases.map((phase, index) => normalizeProjectPhase(phase, index)) : [],
     files: normalizeProjectFolders(project?.files),
     inspections: Array.isArray(project?.inspections)
       ? project.inspections.map((inspection, index) => normalizeProjectInspection(inspection, index))

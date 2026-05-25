@@ -82,21 +82,24 @@ function summarizePhaseStatus(phase, fallbackStatus = 'planning') {
   return phase.status || fallbackStatus;
 }
 
+function syncSinglePhaseDates(phase, projectStatus = 'planning') {
+  const datedSteps = (phase.steps || []).filter((step) => step.start || step.end);
+  const starts = datedSteps.map((step) => parseDateValue(step.start)).filter(Boolean).sort((a, b) => a - b);
+  const ends = datedSteps
+    .map((step) => parseDateValue(step.end || step.start))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+
+  return {
+    ...phase,
+    start: starts.length ? toIsoDate(starts[0]) : phase.start || '',
+    end: ends.length ? toIsoDate(ends[ends.length - 1]) : phase.end || '',
+    status: summarizePhaseStatus(phase, projectStatus || 'planning'),
+  };
+}
+
 export function syncProjectPhaseDates(project) {
-  const phases = (project.phases || []).map((phase) => {
-    const datedSteps = (phase.steps || []).filter((step) => step.start || step.end);
-    const starts = datedSteps.map((step) => parseDateValue(step.start)).filter(Boolean).sort((a, b) => a - b);
-    const ends = datedSteps
-      .map((step) => parseDateValue(step.end || step.start))
-      .filter(Boolean)
-      .sort((a, b) => a - b);
-    return {
-      ...phase,
-      start: starts.length ? toIsoDate(starts[0]) : phase.start || '',
-      end: ends.length ? toIsoDate(ends[ends.length - 1]) : phase.end || '',
-      status: summarizePhaseStatus(phase, project.status || 'planning'),
-    };
-  });
+  const phases = (project.phases || []).map((phase) => syncSinglePhaseDates(phase, project.status || 'planning'));
 
   return {
     ...project,
@@ -166,6 +169,22 @@ export function calcStepFirstAvailable(phase, predecessors, settings) {
   return latestStart || normalizeStartDate(phase.start || toIsoDate(new Date()), settings);
 }
 
+export function calcPhaseFirstAvailable(project, predecessors, settings) {
+  const phases = project.phases || [];
+  let latestStart = '';
+
+  normalizePreds(predecessors).forEach(({ id, lag }) => {
+    const predecessor = phases.find((phase) => phase.id === id);
+    const predecessorEnd = predecessor?.end || predecessor?.start || '';
+    if (!predecessorEnd) return;
+    const candidate = addWorkdaysFromSettings(predecessorEnd, 1 + (parseInt(lag, 10) || 0), settings);
+    const normalized = normalizeStartDate(candidate, settings);
+    if (!latestStart || normalized > latestStart) latestStart = normalized;
+  });
+
+  return latestStart;
+}
+
 export function syncStepLinks(phase) {
   const validIds = new Set((phase.steps || []).map((step) => step.id));
   const successorMap = new Map();
@@ -200,6 +219,140 @@ export function wouldCreateCycleFromPreds(phase, fromStepId, toStepId) {
     return (successorMap.get(stepId) || []).some((nextId) => dfs(nextId));
   }
   return dfs(toStepId);
+}
+
+export function wouldCreatePhaseCycleFromPreds(project, fromPhaseId, toPhaseId) {
+  const successorMap = new Map();
+  (project.phases || []).forEach((phase) => successorMap.set(phase.id, []));
+  (project.phases || []).forEach((phase) => {
+    normalizePreds(phase.predecessors).forEach((pred) => {
+      if (!successorMap.has(pred.id)) successorMap.set(pred.id, []);
+      successorMap.get(pred.id).push(phase.id);
+    });
+  });
+
+  const visited = new Set();
+  function dfs(phaseId) {
+    if (phaseId === fromPhaseId) return true;
+    if (visited.has(phaseId)) return false;
+    visited.add(phaseId);
+    return (successorMap.get(phaseId) || []).some((nextId) => dfs(nextId));
+  }
+
+  return dfs(toPhaseId);
+}
+
+function diffWorkdaysFromSettings(fromIso, toIso, settings) {
+  if (!fromIso || !toIso || fromIso === toIso) return 0;
+  const start = parseDateValue(fromIso);
+  const end = parseDateValue(toIso);
+  if (!start || !end) return 0;
+  const holidayLookup = getHolidayLookup(settings);
+  const dir = start < end ? 1 : -1;
+  let cursor = new Date(start);
+  let diff = 0;
+  while (toIsoDate(cursor) !== toIsoDate(end)) {
+    cursor = addDays(cursor, dir);
+    if (isWorkingDay(cursor, settings, holidayLookup)) diff += dir;
+  }
+  return diff;
+}
+
+function shiftPhaseByWorkdays(phase, offset, settings) {
+  if (!offset) return { ...phase };
+
+  const nextPhase = {
+    ...phase,
+    steps: (phase.steps || []).map((step) => {
+      const nextStart = step.start ? addWorkdaysFromSettings(step.start, offset, settings) : '';
+      return {
+        ...step,
+        start: nextStart,
+        end: nextStart ? computeStepEndDate(nextStart, step.duration || 1, settings) : step.end || '',
+      };
+    }),
+  };
+
+  if (!(nextPhase.steps || []).length) {
+    nextPhase.start = phase.start ? addWorkdaysFromSettings(phase.start, offset, settings) : phase.start || '';
+    nextPhase.end = phase.end ? addWorkdaysFromSettings(phase.end, offset, settings) : nextPhase.start || phase.end || '';
+  }
+
+  return nextPhase;
+}
+
+export function cascadePhaseDates(project, settings, skipId = null) {
+  const phases = project.phases || [];
+  if (!phases.length) return project;
+
+  phases.forEach((phase) => {
+    phase.predecessors = normalizePreds(phase.predecessors);
+  });
+
+  const inDegree = {};
+  const adjacency = {};
+  phases.forEach((phase) => {
+    inDegree[phase.id] = 0;
+    adjacency[phase.id] = [];
+  });
+  phases.forEach((phase) => {
+    phase.predecessors.forEach(({ id }) => {
+      if (adjacency[id]) adjacency[id].push(phase.id);
+      if (inDegree[phase.id] !== undefined) inDegree[phase.id] += 1;
+    });
+  });
+
+  const queue = phases.filter((phase) => inDegree[phase.id] === 0).map((phase) => phase.id);
+  const order = [];
+  while (queue.length) {
+    const current = queue.shift();
+    order.push(current);
+    (adjacency[current] || []).forEach((dependentId) => {
+      inDegree[dependentId] -= 1;
+      if (inDegree[dependentId] === 0) queue.push(dependentId);
+    });
+  }
+
+  order.forEach((phaseId) => {
+    if (skipId && phaseId === skipId) return;
+    const phaseIndex = phases.findIndex((item) => item.id === phaseId);
+    const phase = phaseIndex >= 0 ? phases[phaseIndex] : null;
+    if (!phase) return;
+
+    const predecessors = normalizePreds(phase.predecessors);
+    if (!predecessors.length) {
+      phases[phaseIndex] = syncSinglePhaseDates(phase, project.status || 'planning');
+      return;
+    }
+
+    const requiredStart = calcPhaseFirstAvailable({ ...project, phases }, predecessors, settings);
+    const currentStart = phase.start || phase.end || '';
+    if (!requiredStart || (currentStart && currentStart >= requiredStart)) {
+      phases[phaseIndex] = syncSinglePhaseDates(phase, project.status || 'planning');
+      return;
+    }
+
+    if (!currentStart) {
+      const nextPhase = {
+        ...phase,
+        start: requiredStart,
+        end: phase.end || requiredStart,
+      };
+      phases[phaseIndex] = syncSinglePhaseDates(nextPhase, project.status || 'planning');
+      return;
+    }
+
+    const offset = diffWorkdaysFromSettings(currentStart, requiredStart, settings);
+    const shiftedPhase = shiftPhaseByWorkdays(phase, offset, settings);
+    syncStepLinks(shiftedPhase);
+    cascadeStepDates(shiftedPhase, settings);
+    phases[phaseIndex] = syncSinglePhaseDates(shiftedPhase, project.status || 'planning');
+  });
+
+  return {
+    ...project,
+    phases,
+  };
 }
 
 export function cascadeStepDates(phase, settings, skipId = null) {
