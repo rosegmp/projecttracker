@@ -8381,6 +8381,7 @@ export default function App() {
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
     },
     storageMode: 'loading',
+    storageIssue: '',
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -8415,7 +8416,10 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const storageBanner = getStorageBannerMessage(trackerState.storageMode);
+  const storageBanner = getStorageBannerMessage(
+    trackerState.storageMode,
+    trackerState.storageIssue,
+  );
   const activeView = (() => {
     if (activeTab === 'projects') {
       return (

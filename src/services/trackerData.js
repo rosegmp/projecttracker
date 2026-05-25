@@ -415,7 +415,7 @@ function writeStorage(key, value) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
-function getFallbackData() {
+function getFallbackData(overrides = {}) {
   return {
     projects: fromStorage('cx_p', sampleProjects()).map(normalizeProject),
     tasks: fromStorage('cx_t', sampleTasks()),
@@ -423,6 +423,8 @@ function getFallbackData() {
     employees: fromStorage('cx_e', sampleEmployees()),
     settings: fromStorage('cx_settings', EMPTY_SETTINGS),
     storageMode: 'local',
+    storageIssue: '',
+    ...overrides,
   };
 }
 
@@ -542,6 +544,25 @@ async function removeRemoteRow(table, id) {
   }
 }
 
+async function fetchSupabaseJson(path, label) {
+  const response = await fetch(`${SUPABASE_URL}${path}`, {
+    headers: HEADERS,
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `${label} request failed (${response.status} ${response.statusText}): ${text || 'No response body.'}`,
+    );
+  }
+
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${label} returned invalid JSON.`);
+  }
+}
+
 async function persistCollection(items, storageKey, table, storageMode, deletedId = null) {
   writeStorage(storageKey, items);
 
@@ -594,30 +615,29 @@ async function persistSettings(settings, storageMode) {
 
 export async function loadTrackerData() {
   if (!isSupabaseConfigured()) {
-    return { ...getFallbackData(), storageMode: 'local-unconfigured' };
+    return getFallbackData({
+      storageMode: 'local-unconfigured',
+      storageIssue: 'Supabase URL or key is not configured in this build.',
+    });
   }
 
   try {
     const [projectsResponse, tasksResponse, subsResponse, employeesResponse, settingsResponse] =
       await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=created_at.asc`, {
-          headers: HEADERS,
-        }).then((response) => response.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/tasks?select=*&order=created_at.asc`, {
-          headers: HEADERS,
-        }).then((response) => response.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/subs?select=*&order=created_at.asc`, {
-          headers: HEADERS,
-        }).then((response) => response.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/employees?select=*&order=created_at.asc`, {
-          headers: HEADERS,
-        }).then((response) => response.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/settings?id=eq.app_settings&select=*`, {
-          headers: HEADERS,
-        }).then((response) => response.json()),
+        fetchSupabaseJson('/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
+        fetchSupabaseJson('/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
+        fetchSupabaseJson('/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
+        fetchSupabaseJson('/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
+        fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings'),
       ]);
 
-    if (!Array.isArray(projectsResponse) || !Array.isArray(tasksResponse)) {
+    if (
+      !Array.isArray(projectsResponse) ||
+      !Array.isArray(tasksResponse) ||
+      !Array.isArray(subsResponse) ||
+      !Array.isArray(employeesResponse) ||
+      !Array.isArray(settingsResponse)
+    ) {
       throw new Error('Supabase returned an unexpected response.');
     }
 
@@ -641,9 +661,13 @@ export async function loadTrackerData() {
       employees: employees.length ? employees : sampleEmployees(),
       settings,
       storageMode: 'supabase',
+      storageIssue: '',
     };
-  } catch {
-    return getFallbackData();
+  } catch (error) {
+    const storageIssue =
+      error instanceof Error ? error.message : 'Unknown Supabase load error.';
+    console.error('Supabase load failed; falling back to local storage.', error);
+    return getFallbackData({ storageIssue });
   }
 }
 
@@ -873,18 +897,19 @@ export async function updateSettings(currentState, updates) {
   return { ...currentState, settings, storageMode };
 }
 
-export function getStorageBannerMessage(storageMode) {
+export function getStorageBannerMessage(storageMode, storageIssue = '') {
   if (storageMode === 'supabase' || storageMode === 'loading') return null;
   if (storageMode === 'local-unconfigured') {
     return {
       title: 'Supabase not configured.',
-      message: 'The React app is currently reading browser local storage only.',
+      message: storageIssue || 'The React app is currently reading browser local storage only.',
     };
   }
   return {
     title: 'Using local storage.',
-    message:
-      'Supabase is unavailable right now, so this React slice is reading browser-stored data on this device.',
+    message: storageIssue
+      ? `Supabase is unavailable right now. ${storageIssue}`
+      : 'Supabase is unavailable right now, so this React slice is reading browser-stored data on this device.',
   };
 }
 
