@@ -11,11 +11,12 @@ const HEADERS = {
 const EMPTY_SETTINGS = {
   weekdaysOnly: false,
   holidays: [],
-  showSampleData: true,
+  showSampleData: false,
   showGanttTaskDueDates: true,
   showCalendarTaskDueDates: true,
   showCalendarPhases: true,
   showCalendarHebrewDates: false,
+  showPageStats: true,
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
@@ -417,10 +418,10 @@ function writeStorage(key, value) {
 
 function getFallbackData(overrides = {}) {
   return {
-    projects: fromStorage('cx_p', sampleProjects()).map(normalizeProject),
-    tasks: fromStorage('cx_t', sampleTasks()),
-    subs: fromStorage('cx_s', sampleSubs()),
-    employees: fromStorage('cx_e', sampleEmployees()),
+    projects: fromStorage('cx_p', []).map(normalizeProject),
+    tasks: fromStorage('cx_t', []),
+    subs: fromStorage('cx_s', []),
+    employees: fromStorage('cx_e', []),
     settings: fromStorage('cx_settings', EMPTY_SETTINGS),
     storageMode: 'local',
     storageIssue: '',
@@ -652,20 +653,20 @@ export async function loadTrackerData() {
     const tasks = tasksResponse.map((row) => row.data || row);
     const subs = Array.isArray(subsResponse)
       ? subsResponse.map((row) => row.data || row)
-      : sampleSubs();
+      : [];
     const employees = Array.isArray(employeesResponse)
       ? employeesResponse.map((row) => row.data || row)
-      : sampleEmployees();
+      : [];
     const settings =
       Array.isArray(settingsResponse) && settingsResponse.length
         ? settingsResponse[0].data || EMPTY_SETTINGS
         : fromStorage('cx_settings', EMPTY_SETTINGS);
 
     return {
-      projects: projects.length ? projects : sampleProjects().map(normalizeProject),
-      tasks: tasks.length ? tasks : sampleTasks(),
-      subs: subs.length ? subs : sampleSubs(),
-      employees: employees.length ? employees : sampleEmployees(),
+      projects,
+      tasks,
+      subs,
+      employees,
       settings,
       storageMode: 'supabase',
       storageIssue: '',

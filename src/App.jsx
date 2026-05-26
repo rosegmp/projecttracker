@@ -573,6 +573,11 @@ function DashboardStat({ label, value, tone = 'default' }) {
   );
 }
 
+function PageStats({ settings, children }) {
+  if (settings?.showPageStats === false) return null;
+  return <div className="metrics-grid">{children}</div>;
+}
+
 class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -1151,13 +1156,6 @@ function ProjectDetailView({
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Status" value={project.status || 'planning'} tone="brand" />
-        <DashboardStat label="Phases" value={project.phases?.length || 0} />
-        <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
-        <DashboardStat label="Files" value={allFiles.length} />
-      </div>
-
       <div className="project-detail-grid">
         <section className="project-detail-section">
           <div className="panel-header">
@@ -1323,6 +1321,13 @@ function ProjectDetailView({
           )}
         </section>
       </div>
+
+      <PageStats settings={settings}>
+        <DashboardStat label="Status" value={project.status || 'planning'} tone="brand" />
+        <DashboardStat label="Phases" value={project.phases?.length || 0} />
+        <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
+        <DashboardStat label="Files" value={allFiles.length} />
+      </PageStats>
     </div>
   );
 }
@@ -1810,7 +1815,7 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
   const visibleProjects = useMemo(
     () =>
       (data.projects || []).filter(
-        (project) => data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+        (project) => data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
       ),
     [data.projects, data.settings],
   );
@@ -2211,15 +2216,6 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
-        <DashboardStat label="Inspections" value={inspections.length} />
-        <DashboardStat label="Requested" value={statusCounts.requested} />
-        <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
-        <DashboardStat label="Passed" value={statusCounts.passed} />
-        <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
-      </div>
-
       {visibleProjects.length ? (
         <>
           <div className="files-toolbar">
@@ -2318,6 +2314,15 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
           <p>Create a project first, then add inspections for permits, framing, finals, and any other required reviews.</p>
         </div>
       )}
+
+      <PageStats settings={data.settings}>
+        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+        <DashboardStat label="Inspections" value={inspections.length} />
+        <DashboardStat label="Requested" value={statusCounts.requested} />
+        <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
+        <DashboardStat label="Passed" value={statusCounts.passed} />
+        <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
+      </PageStats>
 
       <InspectionModal
         draft={inspectionDraft}
@@ -2683,7 +2688,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     () =>
       (data.projects || []).filter(
         (project) =>
-          data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
       ),
     [data.projects, data.settings],
   );
@@ -2691,7 +2696,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
   const visibleTasks = useMemo(
     () =>
       (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData !== false || !SAMPLE_IDS.tasks.includes(task.id),
+        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
       ),
     [data.tasks, data.settings],
   );
@@ -3327,13 +3332,6 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
         />
       ) : (
         <>
-          <div className="metrics-grid">
-            <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
-            <DashboardStat label="Phases" value={totals.phases} />
-            <DashboardStat label="Steps" value={totals.steps} />
-            <DashboardStat label="Tasks" value={totals.tasks} />
-          </div>
-
           {visibleProjects.length ? (
             <div className="project-grid">
               {visibleProjects.map((project) => (
@@ -3354,6 +3352,14 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
           )}
         </>
       )}
+      {!selectedProjectId ? (
+        <PageStats settings={data.settings}>
+          <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+          <DashboardStat label="Phases" value={totals.phases} />
+          <DashboardStat label="Steps" value={totals.steps} />
+          <DashboardStat label="Tasks" value={totals.tasks} />
+        </PageStats>
+      ) : null}
       {projectDraft ? (
         <ProjectModal
           draft={projectDraft}
@@ -3493,7 +3499,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   const visibleProjects = useMemo(
     () =>
       (data.projects || []).filter(
-        (project) => data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+        (project) => data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
       ),
     [data.projects, data.settings],
   );
@@ -4222,12 +4228,6 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
-        <DashboardStat label="Folders" value={folders.length} />
-        <DashboardStat label="Files" value={fileCount} />
-      </div>
-
       {storageNotice || !isSupabaseStorageConfigured() ? (
         <section className="storage-banner">
           <strong>Files storage notice.</strong>
@@ -4437,6 +4437,11 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
         onClose={() => setMoveFileDraft(null)}
         onSave={saveMoveFile}
       />
+      <PageStats settings={data.settings}>
+        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+        <DashboardStat label="Folders" value={folders.length} />
+        <DashboardStat label="Files" value={fileCount} />
+      </PageStats>
     </section>
   );
 }
@@ -4452,7 +4457,7 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
     () =>
       (data.projects || []).filter(
         (project) =>
-          data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
       ),
     [data.projects, data.settings],
   );
@@ -4460,7 +4465,7 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
   const visibleTasks = useMemo(
     () =>
       (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData !== false || !SAMPLE_IDS.tasks.includes(task.id),
+        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
       ),
     [data.tasks, data.settings],
   );
@@ -4551,13 +4556,6 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
         </button>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="All tasks" value={totals.total} tone="brand" />
-        <DashboardStat label="Open" value={totals.open} />
-        <DashboardStat label="Overdue" value={totals.overdue} />
-        <DashboardStat label="Projects" value={visibleProjects.length} />
-      </div>
-
       <form className="task-create-panel" onSubmit={handleCreateTask}>
         <div className="task-create-grid">
           <input
@@ -4631,6 +4629,12 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
           </div>
         )}
       </div>
+      <PageStats settings={data.settings}>
+        <DashboardStat label="All tasks" value={totals.total} tone="brand" />
+        <DashboardStat label="Open" value={totals.open} />
+        <DashboardStat label="Overdue" value={totals.overdue} />
+        <DashboardStat label="Projects" value={visibleProjects.length} />
+      </PageStats>
     </section>
   );
 }
@@ -4957,7 +4961,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   const visibleSubs = useMemo(
     () =>
       (data.subs || []).filter(
-        (person) => data.settings?.showSampleData !== false || !SAMPLE_IDS.subs.includes(person.id),
+        (person) => data.settings?.showSampleData === true || !SAMPLE_IDS.subs.includes(person.id),
       ),
     [data.subs, data.settings],
   );
@@ -4966,7 +4970,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
     () =>
       (data.employees || []).filter(
         (person) =>
-          data.settings?.showSampleData !== false || !SAMPLE_IDS.employees.includes(person.id),
+          data.settings?.showSampleData === true || !SAMPLE_IDS.employees.includes(person.id),
       ),
     [data.employees, data.settings],
   );
@@ -5179,13 +5183,6 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
         onChange={handleImportPeople}
       />
 
-      <div className="metrics-grid">
-        <DashboardStat label="Subcontractors" value={totals.subs} tone="brand" />
-        <DashboardStat label="Employees" value={totals.employees} />
-        <DashboardStat label="With email" value={totals.withEmail} />
-        <DashboardStat label="Tagged contacts" value={totals.tagged} />
-      </div>
-
       <div className="people-toolbar">
         <div className="people-toggle" role="tablist" aria-label="People types">
           <button
@@ -5284,6 +5281,12 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
           onDelete={handleDeleteDraft}
         />
       ) : null}
+      <PageStats settings={data.settings}>
+        <DashboardStat label="Subcontractors" value={totals.subs} tone="brand" />
+        <DashboardStat label="Employees" value={totals.employees} />
+        <DashboardStat label="With email" value={totals.withEmail} />
+        <DashboardStat label="Tagged contacts" value={totals.tagged} />
+      </PageStats>
     </section>
   );
 }
@@ -5317,7 +5320,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     () =>
       (data.projects || []).filter(
         (project) =>
-          data.settings?.showSampleData !== false || !SAMPLE_IDS.projects.includes(project.id),
+          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
       ),
     [data.projects, data.settings],
   );
@@ -5325,7 +5328,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   const visibleTasks = useMemo(
     () =>
       (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData !== false || !SAMPLE_IDS.tasks.includes(task.id),
+        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
       ),
     [data.tasks, data.settings],
   );
@@ -7000,16 +7003,6 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Projects" value={filteredProjects.length} tone="brand" />
-        <DashboardStat label="Phases" value={stats.phases} />
-        <DashboardStat label="Steps" value={stats.steps} />
-        <DashboardStat
-          label={isCalendarView ? 'Visible tasks' : 'Visible tasks'}
-          value={(isCalendarView ? showCalendarTasks : showGanttTasks) ? stats.visibleTaskCount : 0}
-        />
-      </div>
-
       <div className="schedule-toolbar">
         <label className="task-filter">
           <span>Project filter</span>
@@ -7685,6 +7678,15 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         onSave={handleSaveInspectionDraft}
         onDelete={handleDeleteInspectionDraft}
       />
+      <PageStats settings={data.settings}>
+        <DashboardStat label="Projects" value={filteredProjects.length} tone="brand" />
+        <DashboardStat label="Phases" value={stats.phases} />
+        <DashboardStat label="Steps" value={stats.steps} />
+        <DashboardStat
+          label="Visible tasks"
+          value={(isCalendarView ? showCalendarTasks : showGanttTasks) ? stats.visibleTaskCount : 0}
+        />
+      </PageStats>
     </section>
   );
 }
@@ -7810,21 +7812,22 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       const legacyShowTaskDueDates = data.settings?.showTaskDueDates;
       return {
         weekdaysOnly: !!data.settings?.weekdaysOnly,
-        showSampleData: data.settings?.showSampleData !== false,
+        showSampleData: data.settings?.showSampleData === true,
         showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarTaskDueDates: data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
-      showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
-      inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
-        ? data.settings.inspectionSubcodes.filter(Boolean)
-        : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
-      peopleListColumns: Array.isArray(data.settings?.peopleListColumns)
-        ? data.settings.peopleListColumns
-        : DEFAULT_PEOPLE_LIST_COLUMNS,
-      peopleListBoldColumns: Array.isArray(data.settings?.peopleListBoldColumns)
-        ? data.settings.peopleListBoldColumns
-        : ['name'],
-      holidays: Array.isArray(data.settings?.holidays) ? data.settings.holidays : [],
+        showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
+        showPageStats: data.settings?.showPageStats !== false,
+        inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
+          ? data.settings.inspectionSubcodes.filter(Boolean)
+          : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
+        peopleListColumns: Array.isArray(data.settings?.peopleListColumns)
+          ? data.settings.peopleListColumns
+          : DEFAULT_PEOPLE_LIST_COLUMNS,
+        peopleListBoldColumns: Array.isArray(data.settings?.peopleListBoldColumns)
+          ? data.settings.peopleListBoldColumns
+          : ['name'],
+        holidays: Array.isArray(data.settings?.holidays) ? data.settings.holidays : [],
       };
     },
     [data.settings],
@@ -8015,19 +8018,6 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         </button>
       </div>
 
-      <div className="metrics-grid">
-        <DashboardStat label="Holidays" value={settings.holidays.length} tone="brand" />
-        <DashboardStat label="Non-workdays" value={nonWorkdayCount} />
-        <DashboardStat label="Weekdays only" value={settings.weekdaysOnly ? 'On' : 'Off'} />
-        <DashboardStat label="Gantt task dates" value={settings.showGanttTaskDueDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Calendar task dates" value={settings.showCalendarTaskDueDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Calendar phases" value={settings.showCalendarPhases ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Lunar dates" value={settings.showCalendarHebrewDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
-        <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
-        <DashboardStat label="Sample data" value={settings.showSampleData ? 'Shown' : 'Hidden'} />
-      </div>
-
       <div className="settings-grid">
         <section className="settings-card">
           <div className="settings-card-header">
@@ -8099,6 +8089,19 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
             <span>
               <strong>Show Jewish lunar dates in Calendar</strong>
               <small>Display Hebrew calendar dates under each day number in month calendars.</small>
+            </span>
+          </label>
+
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.showPageStats}
+              onChange={(event) => handleToggle('showPageStats', event.target.checked)}
+              disabled={saving}
+            />
+            <span>
+              <strong>Show page stats</strong>
+              <small>Display summary stat cards at the bottom of each main page.</small>
             </span>
           </label>
         </section>
@@ -8364,6 +8367,20 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
           </div>
         )}
       </section>
+
+      <PageStats settings={settings}>
+        <DashboardStat label="Holidays" value={settings.holidays.length} tone="brand" />
+        <DashboardStat label="Non-workdays" value={nonWorkdayCount} />
+        <DashboardStat label="Weekdays only" value={settings.weekdaysOnly ? 'On' : 'Off'} />
+        <DashboardStat label="Gantt task dates" value={settings.showGanttTaskDueDates ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Calendar task dates" value={settings.showCalendarTaskDueDates ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Calendar phases" value={settings.showCalendarPhases ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Lunar dates" value={settings.showCalendarHebrewDates ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Page stats" value={settings.showPageStats ? 'Shown' : 'Hidden'} />
+        <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
+        <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
+        <DashboardStat label="Sample data" value={settings.showSampleData ? 'Shown' : 'Hidden'} />
+      </PageStats>
     </section>
   );
 }
@@ -8376,11 +8393,12 @@ export default function App() {
     subs: [],
     employees: [],
     settings: {
-      showSampleData: true,
+      showSampleData: false,
       showGanttTaskDueDates: true,
       showCalendarTaskDueDates: true,
       showCalendarPhases: true,
       showCalendarHebrewDates: false,
+      showPageStats: true,
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
     },
     storageMode: 'loading',
