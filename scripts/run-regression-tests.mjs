@@ -229,6 +229,65 @@ const tests = [
     },
   },
   {
+    name: 'buildScheduleRows can hide past phases and steps while keeping current and future ones',
+    run() {
+      const rows = buildScheduleRows(
+        [
+          {
+            id: 'project-1',
+            name: 'House',
+            status: 'active',
+            phases: [
+              {
+                id: 'phase-past',
+                name: 'Past',
+                start: '2026-05-01',
+                end: '2026-05-05',
+                status: 'done',
+                steps: [
+                  { id: 'step-past', name: 'Past step', start: '2026-05-01', end: '2026-05-05', duration: 5 },
+                ],
+                delays: [],
+              },
+              {
+                id: 'phase-current',
+                name: 'Current',
+                start: '2026-06-01',
+                end: '2026-06-04',
+                status: 'active',
+                steps: [
+                  { id: 'step-current', name: 'Current step', start: '2026-06-02', end: '2026-06-04', duration: 3 },
+                ],
+                delays: [],
+              },
+              {
+                id: 'phase-future',
+                name: 'Future',
+                start: '2026-06-10',
+                end: '2026-06-12',
+                status: 'active',
+                steps: [
+                  { id: 'step-future', name: 'Future step', start: '2026-06-10', end: '2026-06-12', duration: 3 },
+                ],
+                delays: [],
+              },
+            ],
+          },
+        ],
+        new Map(),
+        false,
+        { 'project-1': true },
+        { 'phase-past': true, 'phase-current': true, 'phase-future': true },
+        { showCurrentAndFutureOnly: true, todayIso: '2026-06-01' },
+      );
+
+      assert.deepEqual(
+        rows.map((row) => row.id),
+        ['project-project-1', 'phase-phase-current', 'step-step-current', 'phase-phase-future', 'step-step-future'],
+      );
+    },
+  },
+  {
     name: 'buildCalendarItems emits multi-day phases, steps, and delays as range items once',
     run() {
       const calendar = buildCalendarItems(

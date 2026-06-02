@@ -389,9 +389,14 @@ a {
 .task-create-grid,
 .task-edit-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+}
+
+.task-create-grid > *,
+.task-edit-grid > * {
+  min-width: 0;
 }
 
 .task-toolbar {
@@ -463,6 +468,24 @@ a {
   background: #fff;
   color: var(--text);
   font: inherit;
+}
+
+.schedule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.schedule-toggle input {
+  margin: 0;
 }
 
 .task-list {
@@ -605,7 +628,44 @@ a {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  margin-bottom: 16px;
+  align-items: start;
+}
+
+.settings-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.settings-sections {
+  display: grid;
+  gap: 22px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 12px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(61, 66, 120, 0.12);
+}
+
+.settings-section-header h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.settings-section-header p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .schedule-toolbar {
@@ -804,13 +864,6 @@ a {
   padding: 0;
   font-size: 14px;
   line-height: 1;
-}
-
-.icon-image {
-  width: 18px;
-  height: 18px;
-  display: block;
-  object-fit: contain;
 }
 
 .gantt-trash-button {
@@ -1398,10 +1451,15 @@ button.calendar-chip {
 .settings-card {
   display: grid;
   gap: 16px;
+  align-content: start;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: 20px;
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
+}
+
+.settings-card-full {
+  grid-column: 1 / -1;
 }
 
 .settings-card-header {
@@ -1470,7 +1528,7 @@ button.calendar-chip {
 .settings-order-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 14px 16px;
   border-radius: 16px;
@@ -1497,7 +1555,38 @@ button.calendar-chip {
 .files-toolbar {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 18px;
+}
+
+.files-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hero-user-controls {
+  margin-left: auto;
+}
+
+.hero-user-select {
+  min-width: 240px;
+}
+
+.user-role-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.85fr) auto auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.user-role-row input,
+.user-role-row select {
+  min-width: 0;
+  width: 100%;
 }
 
 .files-folder-grid {
@@ -1560,52 +1649,121 @@ button.calendar-chip {
 
 .files-hierarchy {
   display: grid;
-  gap: 16px;
+  gap: 4px;
+  padding: 8px 0;
 }
 
 .files-hierarchy-folder {
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: #fff;
-  overflow: hidden;
+  position: relative;
+  display: grid;
+  gap: 0;
 }
 
 .files-hierarchy-folder-row {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: start;
-  padding: 14px 18px;
-  background: rgba(61, 66, 120, 0.06);
-  border-bottom: 1px solid var(--border);
+  align-items: center;
+  padding: 8px 0 8px 12px;
+  border-radius: 12px;
+  background: rgba(61, 66, 120, 0.05);
+}
+
+.files-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.files-tree-caret {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.files-tree-caret.expanded {
+  transform: rotate(90deg);
 }
 
 .files-hierarchy-folder-copy {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 4px;
+  min-width: 0;
+}
+
+.files-hierarchy-folder-copy .files-tree-leading-icon,
+.files-hierarchy-file-copy .files-tree-leading-icon {
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 1px;
+}
+
+.files-hierarchy-folder-copy strong {
+  font-size: 14px;
 }
 
 .files-hierarchy-folder-copy small {
   color: var(--muted);
+  font-size: 12px;
 }
 
 .files-hierarchy-children {
   display: grid;
+  margin-left: 18px;
+  padding-left: 18px;
+  border-left: 1px solid rgba(61, 66, 120, 0.18);
+}
+
+.files-tree-empty {
+  margin-left: 18px;
+  padding: 8px 12px 8px 18px;
+  border-left: 1px solid rgba(61, 66, 120, 0.18);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.files-tree-empty p {
+  margin: 0;
 }
 
 .files-hierarchy-file-row {
+  position: relative;
   display: flex;
   justify-content: space-between;
   gap: 14px;
   align-items: center;
-  padding: 14px 18px 14px 34px;
-  border-top: 1px solid rgba(61, 66, 120, 0.08);
+  padding: 8px 0 8px 24px;
+  border-radius: 10px;
 }
 
 .files-hierarchy-file-copy {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 4px;
   min-width: 0;
+}
+
+.files-tree-leading-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--brand);
+}
+
+.files-tree-leading-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .files-hierarchy-file-copy strong,
@@ -1617,6 +1775,112 @@ button.calendar-chip {
 
 .files-hierarchy-file-copy small {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.project-photos-count {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.photo-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
+  box-shadow: 0 10px 24px rgba(25, 30, 70, 0.06);
+}
+
+.photo-thumb-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid rgba(61, 66, 120, 0.1);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(61, 66, 120, 0.05);
+  cursor: pointer;
+}
+
+.photo-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.photo-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  color: var(--muted);
+}
+
+.photo-placeholder span {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.photo-card-body {
+  display: grid;
+  gap: 10px;
+}
+
+.photo-card-body strong {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.inline-save-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.inline-save-button {
+  min-width: 0;
+}
+
+.photo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(61, 66, 120, 0.04);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.photo-actions {
+  justify-content: flex-end;
+}
+
+.files-hierarchy-file-row::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: 50%;
+  width: 14px;
+  border-top: 1px solid rgba(61, 66, 120, 0.18);
+}
+
+.files-hierarchy-folder-row:hover,
+.files-hierarchy-file-row:hover {
+  background: rgba(61, 66, 120, 0.08);
 }
 
 .files-folder-card {
@@ -1632,7 +1896,7 @@ button.calendar-chip {
   justify-content: space-between;
   gap: 16px;
   align-items: start;
-  padding: 18px 18px 14px;
+  padding: 18px 0 14px 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1647,6 +1911,24 @@ button.calendar-chip {
   font-size: 13px;
 }
 
+.files-card-title {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.files-card-title-copy {
+  min-width: 0;
+}
+
+.files-card-trailing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .files-list {
   display: grid;
 }
@@ -1656,7 +1938,7 @@ button.calendar-chip {
   justify-content: space-between;
   gap: 14px;
   align-items: center;
-  padding: 14px 18px;
+  padding: 14px 0 14px 18px;
   border-top: 1px solid var(--border);
 }
 
@@ -1664,6 +1946,12 @@ button.calendar-chip {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.files-list-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .files-name-input {
@@ -1683,6 +1971,10 @@ button.calendar-chip {
   font-weight: 500;
 }
 
+.files-list-copy .inline-save-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .files-list-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1695,8 +1987,33 @@ button.calendar-chip {
 
 .files-list-actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
+}
+
+.files-folder-card .gantt-icon-button,
+.files-list-row .gantt-icon-button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.files-folder-card .gantt-icon-button .fluent-icon,
+.files-list-row .gantt-icon-button .fluent-icon {
+  font-size: 13px !important;
+}
+
+.files-folder-card .files-drag-handle,
+.files-list-row .files-drag-handle {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+}
+
+.files-folder-card .files-drag-handle .fluent-icon,
+.files-list-row .files-drag-handle .fluent-icon {
+  font-size: 13px !important;
 }
 
 .files-folder-card.is-dragging,
@@ -1708,7 +2025,11 @@ button.calendar-chip {
 
 .files-folder-card.is-upload-target,
 .files-hierarchy-folder.is-upload-target {
-  border-color: rgba(61, 66, 120, 0.55);
+  box-shadow: none;
+}
+
+.files-hierarchy-folder.is-upload-target > .files-hierarchy-folder-row {
+  outline: 1px solid rgba(61, 66, 120, 0.35);
   box-shadow: 0 0 0 3px rgba(61, 66, 120, 0.12);
 }
 
@@ -1821,10 +2142,12 @@ button.calendar-chip {
 }
 
 .inspection-card {
+  display: grid;
+  gap: 14px;
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: #fff;
+  background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
   box-shadow: 0 10px 28px rgba(19, 26, 56, 0.06);
 }
 
@@ -1848,32 +2171,46 @@ button.calendar-chip {
 
 .inspection-card-header h3 {
   margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.35;
 }
 
 .inspection-type {
   margin: 6px 0 0;
   color: var(--muted);
+  font-size: 13px;
 }
 
 .inspection-meta {
-  display: grid;
-  gap: 6px;
-  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 12px;
+}
+
+.inspection-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(61, 66, 120, 0.05);
 }
 
 .inspection-notes {
-  margin: 14px 0 0;
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(61, 66, 120, 0.12);
   color: var(--text);
   line-height: 1.55;
+  font-size: 14px;
 }
 
 .inspection-thumbnail-row {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 14px;
 }
 
 .inspection-thumbnail-button {
@@ -2037,9 +2374,9 @@ button.calendar-chip {
 
 .inspection-subcode-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
-  align-items: center;
+  align-items: start;
 }
 
 .inspection-subcode-row input {
@@ -2116,7 +2453,7 @@ button.calendar-chip {
 
 .person-card {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -2125,7 +2462,7 @@ button.calendar-chip {
 
 .person-card-top {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .person-card-header {
@@ -2150,12 +2487,15 @@ button.calendar-chip {
 
 .person-card h3 {
   margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.35;
 }
 
 .person-subtitle {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .person-card-actions {
@@ -2211,6 +2551,7 @@ button.calendar-chip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .person-tag {
@@ -2244,6 +2585,10 @@ button.calendar-chip {
   border-radius: 24px;
   background: #fff;
   box-shadow: 0 30px 60px rgba(22, 27, 53, 0.22);
+}
+
+.compact-modal-card {
+  width: min(520px, 100%);
 }
 
 .project-form-grid {
@@ -2305,6 +2650,51 @@ button.calendar-chip {
   resize: vertical;
 }
 
+.project-access-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-alt);
+}
+
+.project-access-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.project-access-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.project-access-option input[type='checkbox'] {
+  margin-top: 2px;
+}
+
+.project-access-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.project-access-option small {
+  color: var(--muted);
+}
+
 .inline-field-action {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2330,6 +2720,7 @@ button.calendar-chip {
 
 .project-card {
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
+  box-shadow: 0 14px 32px rgba(25, 30, 70, 0.06);
 }
 
 .project-card-header {
@@ -2369,6 +2760,37 @@ button.calendar-chip {
 .project-meta {
   margin: 0;
   color: var(--muted);
+  font-size: 14px;
+}
+
+.project-card-timeline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 0;
+}
+
+.project-timeline-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(61, 66, 120, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.project-timeline-item span,
+.project-next-action span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-timeline-item strong {
+  display: block;
+  margin: 0;
   font-size: 14px;
 }
 
@@ -2427,6 +2849,25 @@ button.calendar-chip {
   background: linear-gradient(90deg, var(--brand), #6b73c5);
 }
 
+.project-summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.project-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(61, 66, 120, 0.08);
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .project-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2438,6 +2879,20 @@ button.calendar-chip {
   padding: 12px;
   border-radius: 14px;
   background: rgba(61, 66, 120, 0.04);
+}
+
+.project-next-action {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(61, 66, 120, 0.05);
+}
+
+.project-next-action p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .project-facts dt {
@@ -2455,46 +2910,141 @@ button.calendar-chip {
 
 .project-detail-page {
   display: grid;
-  gap: 18px;
+  gap: 14px;
+}
+
+.workspace-page {
+  display: grid;
+  gap: 14px;
 }
 
 .project-detail-header {
   margin-bottom: 0;
 }
 
+.project-detail-header-actions {
+  align-items: center;
+}
+
+.project-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-control-grid {
+  display: grid;
+  gap: 14px;
+}
+
+@media (min-width: 1040px) {
+  .workspace-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .workspace-control-card-wide {
+    grid-column: 1 / -1;
+  }
+}
+
 .project-detail-grid {
   display: grid;
-  gap: 18px;
+  gap: 14px;
+}
+
+.project-detail-primary-grid,
+.project-detail-secondary-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.project-detail-info-stack {
+  display: grid;
+  gap: 14px;
+}
+
+@media (min-width: 1100px) {
+  .project-detail-primary-grid {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.35fr);
+    align-items: start;
+  }
+
+  .project-detail-secondary-grid {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
 }
 
 .project-detail-section,
 .project-detail-calendar-card,
-.project-file-folder {
-  padding: 18px;
+.project-file-folder,
+.workspace-section {
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: 20px;
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
 }
 
-.project-detail-facts {
+.workspace-control-card .panel-header,
+.workspace-section .panel-header {
+  margin-bottom: 12px;
+}
+
+.workspace-plain-card {
   margin-bottom: 0;
 }
 
+.project-detail-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.project-detail-facts div {
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.project-detail-facts dt {
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+
+.project-detail-facts dd {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.project-fact-wide {
+  grid-column: 1 / -1;
+}
+
 .project-detail-note {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 
 .project-detail-note strong {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .project-detail-note p {
   margin: 0;
   color: var(--muted);
-  line-height: 1.6;
+  line-height: 1.45;
+  font-size: 14px;
+}
+
+.project-detail-overview .panel-header,
+.project-detail-calendar-card .panel-header {
+  margin-bottom: 12px;
 }
 
 .project-calendar-month {
@@ -2693,17 +3243,16 @@ button.calendar-chip {
     min-height: 28px;
   }
 
-  .icon-image {
-    width: 16px;
-    height: 16px;
-  }
-
   .react-tabs {
     gap: 8px;
   }
 
   .project-facts {
     grid-template-columns: 1fr;
+  }
+
+  .project-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .project-card-header,
@@ -2717,6 +3266,10 @@ button.calendar-chip {
   .settings-order-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .settings-section-header {
+    align-items: start;
   }
 
   .settings-order-actions {
@@ -2772,6 +3325,12 @@ button.calendar-chip {
   .project-form-grid,
   .person-details,
   .holiday-row {
+    grid-template-columns: 1fr;
+  }
+
+  .inspection-subcode-row,
+  .user-role-row,
+  .inline-save-row {
     grid-template-columns: 1fr;
   }
 
@@ -2948,6 +3507,14 @@ button.calendar-chip {
     font-size: 22px;
   }
 
+  .project-detail-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
   .button {
     min-height: 36px;
     padding: 0 10px;
@@ -2994,3 +3561,4 @@ button.calendar-chip {
     border-radius: 16px;
   }
 }
+

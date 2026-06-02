@@ -11,7 +11,6 @@ const HEADERS = {
 const EMPTY_SETTINGS = {
   weekdaysOnly: false,
   holidays: [],
-  showSampleData: false,
   showGanttTaskDueDates: true,
   showCalendarTaskDueDates: true,
   showCalendarPhases: true,
@@ -20,11 +19,22 @@ const EMPTY_SETTINGS = {
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
+  users: [
+    {
+      id: 'user-admin',
+      name: 'Admin',
+      email: '',
+      role: 'Admin',
+    },
+  ],
+  currentUserId: 'user-admin',
 };
 
-export const SAMPLE_IDS = {
-  projects: ['p1', 'p2', 'p3'],
-  tasks: ['t1', 't2', 't3', 't4', 't5'],
+export const USER_ROLE_OPTIONS = ['Admin', 'Edit', 'Customer', 'Subcontractor', 'View Only'];
+
+const LEGACY_SAMPLE_IDS = {
+  projects: ['react-sample-1', 'react-sample-2', 'p1', 'p2', 'p3'],
+  tasks: ['react-task-1', 'react-task-2', 'react-task-3', 't1', 't2', 't3', 't4', 't5'],
   subs: ['sub1', 'sub2', 'sub3', 'sub4', 'sub5', 'sub6'],
   employees: ['emp1', 'emp2', 'emp3', 'emp4'],
 };
@@ -50,6 +60,52 @@ function normalizeProjectFile(file, index = 0) {
     storageBucket: String(file?.storageBucket || SUPABASE_FILES_BUCKET || ''),
     storagePath: String(file?.storagePath || ''),
     dataUrl: String(file?.dataUrl || ''),
+  };
+}
+
+function normalizeAppUser(user, index = 0) {
+  const role = USER_ROLE_OPTIONS.includes(String(user?.role || '').trim())
+    ? String(user.role).trim()
+    : 'View Only';
+  return {
+    id: user?.id || `user-${Date.now()}-${index}`,
+    name: String(user?.name || '').trim() || 'Unnamed user',
+    email: String(user?.email || '').trim(),
+    role,
+  };
+}
+
+function normalizeSettings(settings) {
+  const users = Array.isArray(settings?.users) && settings.users.length
+    ? settings.users.map((user, index) => normalizeAppUser(user, index))
+    : EMPTY_SETTINGS.users.map((user, index) => normalizeAppUser(user, index));
+  const currentUserId = users.some((user) => user.id === settings?.currentUserId)
+    ? settings.currentUserId
+    : users[0]?.id || EMPTY_SETTINGS.currentUserId;
+
+  return {
+    ...EMPTY_SETTINGS,
+    ...(settings || {}),
+    holidays: Array.isArray(settings?.holidays) ? settings.holidays : EMPTY_SETTINGS.holidays,
+    inspectionSubcodes: Array.isArray(settings?.inspectionSubcodes) ? settings.inspectionSubcodes : EMPTY_SETTINGS.inspectionSubcodes,
+    peopleListColumns: Array.isArray(settings?.peopleListColumns) ? settings.peopleListColumns : EMPTY_SETTINGS.peopleListColumns,
+    peopleListBoldColumns: Array.isArray(settings?.peopleListBoldColumns) ? settings.peopleListBoldColumns : EMPTY_SETTINGS.peopleListBoldColumns,
+    users,
+    currentUserId,
+  };
+}
+
+function stripLegacySampleData(data) {
+  const projects = (data.projects || []).filter((project) => !LEGACY_SAMPLE_IDS.projects.includes(project.id));
+  const visibleProjectIds = new Set(projects.map((project) => project.id));
+  return {
+    ...data,
+    projects,
+    tasks: (data.tasks || []).filter(
+      (task) => !LEGACY_SAMPLE_IDS.tasks.includes(task.id) && (!task.projectId || visibleProjectIds.has(task.projectId)),
+    ),
+    subs: (data.subs || []).filter((person) => !LEGACY_SAMPLE_IDS.subs.includes(person.id)),
+    employees: (data.employees || []).filter((person) => !LEGACY_SAMPLE_IDS.employees.includes(person.id)),
   };
 }
 
@@ -142,264 +198,16 @@ function normalizeProjectFolders(filesState) {
 function normalizeProject(project) {
   return {
     ...project,
+    accessUserIds: Array.isArray(project?.accessUserIds)
+      ? Array.from(new Set(project.accessUserIds.map((value) => String(value || '').trim()).filter(Boolean)))
+      : [],
     phases: Array.isArray(project?.phases) ? project.phases.map((phase, index) => normalizeProjectPhase(phase, index)) : [],
     files: normalizeProjectFolders(project?.files),
+    photos: Array.isArray(project?.photos) ? project.photos.map((photo, index) => normalizeProjectFile(photo, index)) : [],
     inspections: Array.isArray(project?.inspections)
       ? project.inspections.map((inspection, index) => normalizeProjectInspection(inspection, index))
       : [],
   };
-}
-
-function sampleProjects() {
-  return [
-    {
-      id: 'react-sample-1',
-      name: 'Maple Grove Townhomes',
-      manager: 'James Okafor',
-      address: '412 Maple Grove Dr, Franklin',
-      permitNumber: 'PRM-24-1187',
-      drNumber: 'DR-4472',
-      block: '12',
-      lot: '7A',
-      customerName: 'Destiny Development Group',
-      customerPhone: '(555) 410-2200',
-      customerEmail: 'owners@destinydev.com',
-      customerAddress: '200 Commerce Plaza, Franklin',
-      customerNotes: 'Primary owner rep prefers Friday updates.',
-      budget: 1850000,
-      status: 'active',
-      progress: 62,
-      end: '2026-08-15',
-      phases: [
-        {
-          id: 'react-phase-1',
-          name: 'Sitework and foundation',
-          steps: [
-            { id: 'react-step-1', name: 'Excavation', done: true },
-            { id: 'react-step-2', name: 'Footings and slab', done: false },
-          ],
-        },
-        {
-          id: 'react-phase-2',
-          name: 'Framing and dry-in',
-          steps: [{ id: 'react-step-3', name: 'Roof framing', done: false }],
-        },
-      ],
-      inspections: [
-        {
-          id: 'react-insp-1',
-          subcode: 'FOOT-101',
-          inspectionType: 'Footing inspection',
-          date: '2026-05-10',
-          status: 'passed',
-          agency: 'Franklin Building Department',
-          notes: 'Approved with no corrections.',
-        },
-        {
-          id: 'react-insp-2',
-          subcode: 'FRAME-220',
-          inspectionType: 'Framing inspection',
-          date: '2026-06-14',
-          status: 'requested',
-          agency: 'Franklin Building Department',
-          notes: '',
-        },
-      ],
-    },
-    {
-      id: 'react-sample-2',
-      name: 'Cedar Ridge Renovation',
-      manager: 'Ava Bennett',
-      address: '89 Cedar Ridge Rd, Nashville',
-      permitNumber: 'PRM-26-0049',
-      drNumber: 'DR-1908',
-      block: '3',
-      lot: '22',
-      customerName: 'Harper Family',
-      customerPhone: '(555) 992-1440',
-      customerEmail: 'harpers@example.com',
-      customerAddress: '89 Cedar Ridge Rd, Nashville',
-      customerNotes: 'Selections handled directly with owner.',
-      budget: 420000,
-      status: 'planning',
-      progress: 18,
-      end: '2026-06-30',
-      phases: [
-        {
-          id: 'react-phase-3',
-          name: 'Interior prep',
-          steps: [{ id: 'react-step-4', name: 'Selective demolition', done: false }],
-        },
-      ],
-      inspections: [
-        {
-          id: 'react-insp-3',
-          subcode: 'ELEC-310',
-          inspectionType: 'Electrical rough-in',
-          date: '2026-05-21',
-          status: 'requested',
-          agency: 'Nashville Codes',
-          notes: 'Coordinate with owner access window.',
-        },
-      ],
-    },
-  ];
-}
-
-function sampleTasks() {
-  return [
-    {
-      id: 'react-task-1',
-      projectId: 'react-sample-1',
-      label: 'Confirm framing delivery',
-      done: false,
-      due: '',
-    },
-    {
-      id: 'react-task-2',
-      projectId: 'react-sample-1',
-      label: 'Schedule inspection',
-      done: false,
-      due: '',
-    },
-    {
-      id: 'react-task-3',
-      projectId: 'react-sample-2',
-      label: 'Finalize owner selections',
-      done: true,
-      due: '',
-    },
-  ];
-}
-
-function sampleSubs() {
-  return [
-    {
-      id: 'sub1',
-      first: 'Carlos',
-      last: 'Rivera',
-      company: 'Groundworks Co.',
-      role: 'Site Manager',
-      phone: '(555) 201-3344',
-      email: 'carlos@groundworks.co',
-      license: 'LIC-77821',
-      notes: 'Preferred partner for excavation',
-      tags: ['Excavation', 'Grading', 'Site Prep'],
-    },
-    {
-      id: 'sub2',
-      first: 'Maria',
-      last: 'Santos',
-      company: 'Concrete Bros',
-      role: 'Lead Foreman',
-      phone: '(555) 309-5512',
-      email: 'maria@concretebros.com',
-      license: 'LIC-44093',
-      notes: '',
-      tags: ['Concrete', 'Foundations', 'Flatwork'],
-    },
-    {
-      id: 'sub3',
-      first: 'David',
-      last: 'Park',
-      company: 'Steel Crew',
-      role: 'Structural Lead',
-      phone: '(555) 412-8820',
-      email: 'dpark@steelcrew.net',
-      license: 'LIC-55610',
-      notes: 'Available Mon-Fri only',
-      tags: ['Steel Erection', 'Framing', 'Metal Decking'],
-    },
-    {
-      id: 'sub4',
-      first: 'Angela',
-      last: 'Torres',
-      company: 'Unified MEP',
-      role: 'MEP Superintendent',
-      phone: '(555) 518-2277',
-      email: 'atorres@unifiedmep.com',
-      license: 'LIC-66341',
-      notes: '',
-      tags: ['Plumbing', 'Electrical', 'HVAC'],
-    },
-    {
-      id: 'sub5',
-      first: 'Brian',
-      last: 'Chen',
-      company: 'Interior Pros',
-      role: 'Finish Foreman',
-      phone: '(555) 623-9901',
-      email: 'bchen@interiorpros.com',
-      license: '',
-      notes: '',
-      tags: ['Drywall', 'Flooring', 'Cabinetry'],
-    },
-    {
-      id: 'sub6',
-      first: 'Nadia',
-      last: 'Hoffman',
-      company: 'Facade Systems',
-      role: 'Curtain Wall Specialist',
-      phone: '(555) 731-4466',
-      email: 'nhoffman@facade.sys',
-      license: 'LIC-88002',
-      notes: '',
-      tags: ['Curtain Wall', 'Glazing', 'Roofing'],
-    },
-  ];
-}
-
-function sampleEmployees() {
-  return [
-    {
-      id: 'emp1',
-      first: 'James',
-      last: 'Okafor',
-      company: 'Destiny Homes',
-      role: 'Project Manager',
-      phone: '(555) 100-2233',
-      email: 'jokafor@destinyhomes.com',
-      license: '',
-      notes: 'Lead PM for Tech Campus',
-      tags: ['Project Management', 'Estimating'],
-    },
-    {
-      id: 'emp2',
-      first: 'Sarah',
-      last: 'Chen',
-      company: 'Destiny Homes',
-      role: 'Site Supervisor',
-      phone: '(555) 100-4455',
-      email: 'schen@destinyhomes.com',
-      license: '',
-      notes: 'Harbor Bridge lead',
-      tags: ['Site Supervision', 'Safety'],
-    },
-    {
-      id: 'emp3',
-      first: 'Tom',
-      last: 'Bauer',
-      company: 'Destiny Homes',
-      role: 'Estimator',
-      phone: '(555) 100-6677',
-      email: 'tbauer@destinyhomes.com',
-      license: '',
-      notes: '',
-      tags: ['Estimating', 'Procurement'],
-    },
-    {
-      id: 'emp4',
-      first: 'Lisa',
-      last: 'Nguyen',
-      company: 'Destiny Homes',
-      role: 'Safety Officer',
-      phone: '(555) 100-8899',
-      email: 'lnguyen@destinyhomes.com',
-      license: 'OSHA-30',
-      notes: '',
-      tags: ['Safety', 'Compliance'],
-    },
-  ];
 }
 
 function fromStorage(key, fallback) {
@@ -417,16 +225,21 @@ function writeStorage(key, value) {
 }
 
 function getFallbackData(overrides = {}) {
-  return {
+  const nextData = stripLegacySampleData({
     projects: fromStorage('cx_p', []).map(normalizeProject),
     tasks: fromStorage('cx_t', []),
     subs: fromStorage('cx_s', []),
     employees: fromStorage('cx_e', []),
-    settings: fromStorage('cx_settings', EMPTY_SETTINGS),
+    settings: normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS)),
     storageMode: 'local',
     storageIssue: '',
     ...overrides,
-  };
+  });
+  writeStorage('cx_p', nextData.projects);
+  writeStorage('cx_t', nextData.tasks);
+  writeStorage('cx_s', nextData.subs);
+  writeStorage('cx_e', nextData.employees);
+  return nextData;
 }
 
 function isSupabaseConfigured() {
@@ -659,10 +472,10 @@ export async function loadTrackerData() {
       : [];
     const settings =
       Array.isArray(settingsResponse) && settingsResponse.length
-        ? settingsResponse[0].data || EMPTY_SETTINGS
-        : fromStorage('cx_settings', EMPTY_SETTINGS);
+        ? normalizeSettings(settingsResponse[0].data || EMPTY_SETTINGS)
+        : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
 
-    return {
+    return stripLegacySampleData({
       projects,
       tasks,
       subs,
@@ -670,7 +483,7 @@ export async function loadTrackerData() {
       settings,
       storageMode: 'supabase',
       storageIssue: '',
-    };
+    });
   } catch (error) {
     const storageIssue =
       error instanceof Error ? error.message : 'Unknown Supabase load error.';
@@ -727,8 +540,10 @@ export async function createProject(currentState, payload) {
     customerAddress: payload.customerAddress?.trim() || '',
     customerNotes: payload.customerNotes?.trim() || '',
     progress: Number(payload.progress) || 0,
+    accessUserIds: Array.isArray(payload.accessUserIds) ? payload.accessUserIds : [],
     phases: payload.phases || [],
     files: payload.files,
+    photos: payload.photos || [],
   });
   const projects = [...currentState.projects, project];
   const storageMode = await persistProjects(projects, currentState.storageMode);
@@ -891,16 +706,41 @@ export async function importPeople(currentState, type, payloads) {
 }
 
 export async function updateSettings(currentState, updates) {
-  const settings = {
+  const persistedSettings = normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
+  const currentSettings = normalizeSettings(currentState.settings || EMPTY_SETTINGS);
+  const baselineSettings = normalizeSettings({
+    ...persistedSettings,
+    ...currentSettings,
+    holidays:
+      Array.isArray(currentSettings.holidays) && currentSettings.holidays.length
+        ? currentSettings.holidays
+        : persistedSettings.holidays,
+    inspectionSubcodes:
+      Array.isArray(currentSettings.inspectionSubcodes) && currentSettings.inspectionSubcodes.length
+        ? currentSettings.inspectionSubcodes
+        : persistedSettings.inspectionSubcodes,
+    peopleListColumns:
+      Array.isArray(currentSettings.peopleListColumns) && currentSettings.peopleListColumns.length
+        ? currentSettings.peopleListColumns
+        : persistedSettings.peopleListColumns,
+    peopleListBoldColumns:
+      Array.isArray(currentSettings.peopleListBoldColumns) && currentSettings.peopleListBoldColumns.length
+        ? currentSettings.peopleListBoldColumns
+        : persistedSettings.peopleListBoldColumns,
+    users:
+      Array.isArray(currentSettings.users) && currentSettings.users.length
+        ? currentSettings.users
+        : persistedSettings.users,
+    currentUserId: currentSettings.currentUserId || persistedSettings.currentUserId,
+  });
+  const settings = normalizeSettings({
     ...EMPTY_SETTINGS,
-    ...(currentState.settings || {}),
+    ...baselineSettings,
     ...updates,
     holidays: Array.isArray(updates.holidays)
       ? updates.holidays
-      : Array.isArray(currentState.settings?.holidays)
-        ? currentState.settings.holidays
-        : [],
-  };
+      : baselineSettings.holidays,
+  });
   const storageMode = await persistSettings(settings, currentState.storageMode);
   return { ...currentState, settings, storageMode };
 }

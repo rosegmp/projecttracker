@@ -1,8 +1,28 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Add24Regular,
+  AppFolder24Regular,
+  ArrowBidirectionalUpDown24Regular,
+  ArrowClockwise24Regular,
+  ArrowDown24Regular,
+  ArrowDownload24Regular,
+  ArrowMove24Regular,
+  ArrowUp24Regular,
+  ArrowUpload24Regular,
+  Camera24Regular,
+  Checkmark24Regular,
+  ChevronRight24Regular,
+  Delete24Regular,
+  Document24Regular,
+  Edit24Regular,
+  Eye24Regular,
+  ReOrderDotsVertical24Regular,
+  Warning24Regular,
+} from '@fluentui/react-icons';
+import {
   DEFAULT_PROJECT_FILE_FOLDERS,
-  SAMPLE_IDS,
+  USER_ROLE_OPTIONS,
   createPerson,
   createProject,
   createTask,
@@ -54,6 +74,7 @@ const tabs = [
   { id: 'calendar', label: 'Calendar' },
   { id: 'inspections', label: 'Inspections' },
   { id: 'files', label: 'Files' },
+  { id: 'photos', label: 'Photos' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'people', label: 'People' },
   { id: 'settings', label: 'Settings' },
@@ -87,6 +108,95 @@ const PEOPLE_LIST_COLUMN_DEFS = [
   { id: 'tags', label: 'Tags', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.tags },
 ];
 const validTabIds = new Set(tabs.map((tab) => tab.id));
+const NON_EDITOR_TAB_IDS = ['projects', 'calendar', 'inspections', 'files', 'photos'];
+
+function FluentIcon({ name, size = 18, className = '' }) {
+  const icons = {
+    drag: ReOrderDotsVertical24Regular,
+    upload: ArrowUpload24Regular,
+    download: ArrowDownload24Regular,
+    move: ArrowMove24Regular,
+    replace: ArrowClockwise24Regular,
+    edit: Edit24Regular,
+    delete: Delete24Regular,
+    camera: Camera24Regular,
+    eye: Eye24Regular,
+    dependency: ArrowBidirectionalUpDown24Regular,
+    check: Checkmark24Regular,
+    chevronRight: ChevronRight24Regular,
+    arrowUp: ArrowUp24Regular,
+    arrowDown: ArrowDown24Regular,
+    folder: AppFolder24Regular,
+    document: Document24Regular,
+    add: Add24Regular,
+    warning: Warning24Regular,
+  };
+
+  const IconComponent = icons[name];
+  if (!IconComponent) return null;
+
+  return (
+    <IconComponent
+      className={`fluent-icon ${className}`.trim()}
+      aria-hidden="true"
+      focusable="false"
+      style={{ fontSize: `${size}px` }}
+    />
+  );
+}
+function normalizeAppUserRole(role) {
+  return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only';
+}
+
+function getUserCapabilities(role) {
+  const normalizedRole = normalizeAppUserRole(role);
+  const canManageUsers = normalizedRole === 'Admin';
+  const canEdit = normalizedRole === 'Admin' || normalizedRole === 'Edit';
+  const readOnlyAllowedTabs =
+    normalizedRole === 'Customer'
+      ? ['projects']
+      : NON_EDITOR_TAB_IDS;
+  const allowedTabs =
+    normalizedRole === 'Admin'
+      ? tabs.map((tab) => tab.id)
+      : normalizedRole === 'Edit'
+        ? tabs.filter((tab) => tab.id !== 'settings').map((tab) => tab.id)
+        : readOnlyAllowedTabs;
+
+  return {
+    role: normalizedRole,
+    canEdit,
+    canManageUsers,
+    canAccessSettings: canManageUsers,
+    showTabs: normalizedRole !== 'Customer',
+    allowedTabs,
+  };
+}
+
+function normalizeProjectAccessUserIds(userIds) {
+  return Array.isArray(userIds)
+    ? Array.from(new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean)))
+    : [];
+}
+
+function canUserViewProject(project, activeUser) {
+  const role = normalizeAppUserRole(activeUser?.role || 'View Only');
+  if (role === 'Admin') return true;
+  const accessUserIds = normalizeProjectAccessUserIds(project?.accessUserIds);
+  if (accessUserIds.length > 0) {
+    return !!activeUser?.id && accessUserIds.includes(activeUser.id);
+  }
+  return role === 'Edit';
+}
+
+function getVisibleProjectsForUser(projects, settings, activeUser) {
+  return (projects || []).filter((project) => canUserViewProject(project, activeUser));
+}
+
+function getVisibleTasksForUser(tasks, settings, visibleProjects) {
+  const visibleProjectIds = new Set((visibleProjects || []).map((project) => project.id));
+  return (tasks || []).filter((task) => !task.projectId || visibleProjectIds.has(task.projectId));
+}
 
 function getTabFromLocation() {
   if (typeof window === 'undefined') return 'projects';
@@ -235,6 +345,37 @@ function getDaysRemaining(endDate) {
   return Math.ceil((end - today) / 86400000);
 }
 
+function getProjectStepCount(project) {
+  return (project?.phases || []).reduce((sum, phase) => sum + (phase.steps?.length || 0), 0);
+}
+
+function getUpcomingInspection(project) {
+  const todayKey = toIsoDate(new Date());
+  return [...(project?.inspections || [])]
+    .filter((inspection) => inspection.date && inspection.date >= todayKey)
+    .sort((left, right) => left.date.localeCompare(right.date))[0] || null;
+}
+
+function getProjectDashboardNextAction(project, taskCount) {
+  const phaseCount = project?.phases?.length || 0;
+  const stepCount = getProjectStepCount(project);
+  const remaining = getDaysRemaining(project?.end);
+  const nextInspection = getUpcomingInspection(project);
+
+  if (!project?.start) return 'Set a project start date to anchor the schedule.';
+  if (!phaseCount) return 'Add the first phase to start building the schedule.';
+  if (!stepCount) return 'Add the first step so the project can appear on the schedule.';
+  if ((taskCount || 0) > 0) return `${taskCount} open task${taskCount === 1 ? '' : 's'} to review.`;
+  if (nextInspection) {
+    return `Upcoming inspection: ${nextInspection.subcode || nextInspection.inspectionType || 'Inspection'} on ${formatShortDate(nextInspection.date)}.`;
+  }
+  if (remaining !== null && remaining < 0 && project.status !== 'done') {
+    return `Target end date has passed by ${Math.abs(remaining)} day${Math.abs(remaining) === 1 ? '' : 's'}.`;
+  }
+  if (!project?.end) return 'Set a target end date to make progress easier to track.';
+  return 'Project is in a good spot. Review progress and upcoming milestones.';
+}
+
 function splitTags(value) {
   if (Array.isArray(value)) return value;
   return String(value || '')
@@ -308,15 +449,6 @@ function personNameOnly(person) {
 function personInitials(person) {
   const initials = `${person.first?.[0] || ''}${person.last?.[0] || ''}`.toUpperCase();
   return initials || person.company?.[0]?.toUpperCase() || '?';
-}
-
-function hasVisibleSampleData(data) {
-  return (
-    (data.projects || []).some((item) => SAMPLE_IDS.projects.includes(item.id)) ||
-    (data.tasks || []).some((item) => SAMPLE_IDS.tasks.includes(item.id)) ||
-    (data.subs || []).some((item) => SAMPLE_IDS.subs.includes(item.id)) ||
-    (data.employees || []).some((item) => SAMPLE_IDS.employees.includes(item.id))
-  );
 }
 
 function parseDateValue(iso) {
@@ -614,11 +746,14 @@ class AppErrorBoundary extends React.Component {
 function ProjectCard({ project, taskCount, onEdit, onOpen }) {
   const health = getProjectHealth(project);
   const remaining = getDaysRemaining(project.end);
-  const budget = formatCurrency(project.budget);
   const completion = project.progress ?? 0;
-  const metaParts = [project.manager, project.customerName, project.address].filter(Boolean);
+  const metaParts = [project.customerName, project.address].filter(Boolean);
   const customerLabel = project.customerName || 'No customer';
   const permitLabel = project.permitNumber || 'Not set';
+  const phaseCount = project.phases?.length || 0;
+  const stepCount = getProjectStepCount(project);
+  const inspectionCount = project.inspections?.length || 0;
+  const nextAction = getProjectDashboardNextAction(project, taskCount);
   const blockLotLabel =
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
@@ -642,6 +777,17 @@ function ProjectCard({ project, taskCount, onEdit, onOpen }) {
         </span>
       </div>
 
+      <div className="project-card-timeline">
+        <div className="project-timeline-item">
+          <span>Start</span>
+          <strong>{project.start ? formatShortDate(project.start) : 'Not set'}</strong>
+        </div>
+        <div className="project-timeline-item">
+          <span>Target end</span>
+          <strong>{project.end ? formatShortDate(project.end) : 'Not set'}</strong>
+        </div>
+      </div>
+
       <div className="progress-block">
         <div className="progress-row">
           <span>{completion}% complete</span>
@@ -658,11 +804,14 @@ function ProjectCard({ project, taskCount, onEdit, onOpen }) {
         </div>
       </div>
 
+      <div className="project-summary-chips">
+        <span className="project-summary-chip">Phases {phaseCount}</span>
+        <span className="project-summary-chip">Steps {stepCount}</span>
+        <span className="project-summary-chip">Tasks {taskCount}</span>
+        <span className="project-summary-chip">Inspections {inspectionCount}</span>
+      </div>
+
       <dl className="project-facts">
-        <div>
-          <dt>Budget</dt>
-          <dd>{budget}</dd>
-        </div>
         <div>
           <dt>Permit #</dt>
           <dd>{permitLabel}</dd>
@@ -679,29 +828,33 @@ function ProjectCard({ project, taskCount, onEdit, onOpen }) {
           <dt>Customer</dt>
           <dd>{customerLabel}</dd>
         </div>
-        <div>
-          <dt>Phases</dt>
-          <dd>{project.phases?.length || 0}</dd>
-        </div>
-        <div>
-          <dt>Tasks</dt>
-          <dd>{taskCount}</dd>
-        </div>
-        <div>
-          <dt>Target end</dt>
-          <dd>{project.end ? formatShortDate(project.end) : 'No date'}</dd>
-        </div>
       </dl>
-      <div className="project-card-actions">
-        <button className="button secondary" type="button" onClick={() => onEdit(project)}>
-          Edit project
-        </button>
+      <div className="project-next-action">
+        <span>Next action</span>
+        <p>{nextAction}</p>
       </div>
+      {onEdit ? (
+        <div className="project-card-actions">
+          <button className="button secondary" type="button" onClick={() => onEdit(project)}>
+            Edit project
+          </button>
+        </div>
+      ) : null}
     </article>
   );
 }
 
-function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEditing }) {
+function ProjectModal({ draft, users, onChange, onClose, onSave, onDelete, saving, isEditing }) {
+  const selectedUserIds = normalizeProjectAccessUserIds(draft.accessUserIds);
+  const assignableUsers = (users || []).filter((user) => user?.id);
+
+  function toggleProjectUserAccess(userId, checked) {
+    const nextUserIds = checked
+      ? [...selectedUserIds, userId]
+      : selectedUserIds.filter((value) => value !== userId);
+    onChange('accessUserIds', normalizeProjectAccessUserIds(nextUserIds));
+  }
+
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card" onClick={(event) => event.stopPropagation()}>
@@ -716,10 +869,6 @@ function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEd
           <label>
             <span>Name</span>
             <input value={draft.name} onChange={(event) => onChange('name', event.target.value)} />
-          </label>
-          <label>
-            <span>Manager</span>
-            <input value={draft.manager} onChange={(event) => onChange('manager', event.target.value)} />
           </label>
           <label>
             <span>Status</span>
@@ -747,10 +896,6 @@ function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEd
           <label>
             <span>End date</span>
             <input type="date" value={draft.end} onChange={(event) => onChange('end', event.target.value)} />
-          </label>
-          <label>
-            <span>Budget</span>
-            <input value={draft.budget} onChange={(event) => onChange('budget', event.target.value)} />
           </label>
           <label>
             <span>Address</span>
@@ -803,6 +948,34 @@ function ProjectModal({ draft, onChange, onClose, onSave, onDelete, saving, isEd
             <span>Description</span>
             <textarea value={draft.desc} onChange={(event) => onChange('desc', event.target.value)} />
           </label>
+          <div className="project-form-section full">Project access</div>
+          <div className="project-access-panel full">
+            <p className="project-access-copy">
+              Admin users always see every project. Edit users see unassigned projects by default. Other roles only see projects assigned to them.
+            </p>
+            {assignableUsers.length ? (
+              <div className="project-access-grid">
+                {assignableUsers.map((user) => (
+                  <label key={user.id} className="project-access-option">
+                    <input
+                      type="checkbox"
+                      checked={selectedUserIds.includes(user.id)}
+                      onChange={(event) => toggleProjectUserAccess(user.id, event.target.checked)}
+                    />
+                    <span>
+                      <strong>{user.name || 'Unnamed user'}</strong>
+                      <small>{user.role}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state compact">
+                <h3>No users yet</h3>
+                <p>Add users in Settings to assign project access here.</p>
+              </div>
+            )}
+          </div>
         </div>
         <div className="modal-actions">
           {isEditing ? (
@@ -1119,18 +1292,1589 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
   );
 }
 
+function ProjectFilesManager({
+  data,
+  project,
+  onStateChange,
+  readOnly = false,
+  forcedViewMode = '',
+  hideViewToggle = false,
+}) {
+  const [viewMode, setViewMode] = useState(forcedViewMode || 'cards');
+  const [saving, setSaving] = useState(false);
+  const [fileNameDrafts, setFileNameDrafts] = useState({});
+  const [editingFileNames, setEditingFileNames] = useState({});
+  const [storageNotice, setStorageNotice] = useState('');
+  const [moveFileDraft, setMoveFileDraft] = useState(null);
+  const [folderNameDraft, setFolderNameDraft] = useState(null);
+  const [dragItem, setDragItem] = useState(null);
+  const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState({});
+  const fileInputRefs = useRef({});
+  const replaceFileInputRefs = useRef({});
+
+  const folders = project?.files?.folders || [];
+  const flatFiles = useMemo(
+    () =>
+      folders.flatMap((folder) =>
+        (folder.files || []).map((file) => ({
+          ...file,
+          folderId: folder.id,
+          folderName: folder.name,
+        })),
+      ),
+    [folders],
+  );
+  const allFoldersExpanded = folders.length > 0 && folders.every((folder) => expandedFolders[folder.id] !== false);
+  const effectiveViewMode = forcedViewMode || viewMode;
+
+  useEffect(() => {
+    if (forcedViewMode && viewMode !== forcedViewMode) {
+      setViewMode(forcedViewMode);
+    }
+  }, [forcedViewMode, viewMode]);
+
+  async function runFilesMutation(buildNextProject) {
+    if (!project?.id) return;
+    setSaving(true);
+    try {
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = buildNextProject(currentProject);
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openCreateFolderModal() {
+    if (!project) return;
+    setFolderNameDraft({
+      mode: 'create',
+      folderId: '',
+      eyebrow: 'Folder',
+      title: 'Add folder',
+      description: 'Create a new project folder for organizing files.',
+      label: 'Folder name',
+      placeholder: 'Folder name',
+      value: '',
+      saveLabel: 'Add folder',
+    });
+  }
+
+  async function saveFolderNameDraft() {
+    if (!project || !folderNameDraft) return;
+    const trimmed = folderNameDraft.value.trim();
+    if (!trimmed) return;
+    const duplicate = folders.some((folder) => folder.name.toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) {
+      window.alert('A folder with that name already exists for this project.');
+      return;
+    }
+    if (folderNameDraft.mode === 'create') {
+      void runFilesMutation((currentProject) => ({
+        ...currentProject,
+        files: {
+          folders: [
+            ...(currentProject.files?.folders || []),
+            {
+              id: `folder-${Date.now()}`,
+              name: trimmed,
+              files: [],
+            },
+          ],
+        },
+      }));
+      setFolderNameDraft(null);
+      return;
+    }
+    const folderId = folderNameDraft.folderId;
+    const duplicateRename = folders.some(
+      (item) => item.id !== folderId && item.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (duplicateRename) {
+      window.alert('A folder with that name already exists for this project.');
+      return;
+    }
+    await runFilesMutation((currentProject) => ({
+      ...currentProject,
+      files: {
+        folders: (currentProject.files?.folders || []).map((item) =>
+          item.id === folderId
+            ? {
+                ...item,
+                name: trimmed,
+              }
+            : item,
+        ),
+      },
+    }));
+    setFolderNameDraft(null);
+  }
+
+  function openRenameFolderModal(folderId) {
+    if (!project) return;
+    const folder = folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    setFolderNameDraft({
+      mode: 'rename',
+      folderId,
+      eyebrow: 'Folder',
+      title: 'Rename folder',
+      description: `Update the folder name for ${folder.name}.`,
+      label: 'Folder name',
+      placeholder: 'Folder name',
+      value: folder.name,
+      saveLabel: 'Save name',
+    });
+  }
+
+  async function deleteFolder(folderId) {
+    if (!project) return;
+    const folder = folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    const fileCountInFolder = folder.files?.length || 0;
+    const confirmed = window.confirm(
+      fileCountInFolder
+        ? `Delete folder "${folder.name}" and its ${fileCountInFolder} file(s)? This cannot be undone.`
+        : `Delete folder "${folder.name}"?`,
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      for (const file of folder.files || []) {
+        if (file?.storagePath) {
+          await deleteProjectFileFromStorage(file);
+        }
+      }
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = {
+        ...currentProject,
+        files: {
+          folders: (currentProject.files?.folders || []).filter((item) => item.id !== folderId),
+        },
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to delete folder.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startFolderDrag(event, folderId) {
+    if (saving) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', folderId);
+    setDragItem({ type: 'folder', folderId });
+  }
+
+  function startFileDrag(event, folderId, fileId) {
+    if (saving) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', fileId);
+    setDragItem({ type: 'file', folderId, fileId });
+  }
+
+  function finishDrag() {
+    setDragItem(null);
+  }
+
+  function toggleFolderExpanded(folderId) {
+    setExpandedFolders((current) => ({
+      ...current,
+      [folderId]: !(current[folderId] !== false),
+    }));
+  }
+
+  function toggleAllFoldersExpanded() {
+    if (!folders.length) return;
+    if (allFoldersExpanded) {
+      setExpandedFolders(
+        Object.fromEntries(folders.map((folder) => [folder.id, false])),
+      );
+      return;
+    }
+    setExpandedFolders({});
+  }
+
+  function isExternalFileDrag(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+  }
+
+  function handleFolderUploadDragOver(event, folderId) {
+    if (readOnly) return;
+    if (dragItem?.type === 'folder') {
+      event.preventDefault();
+      return;
+    }
+    if (isExternalFileDrag(event)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setUploadTargetFolderId(folderId);
+    }
+  }
+
+  function handleFolderUploadDragLeave(event, folderId) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setUploadTargetFolderId((current) => (current === folderId ? '' : current));
+    }
+  }
+
+  function handleFolderUploadDrop(event, folderId) {
+    if (readOnly) return;
+    if (dragItem?.type === 'folder') {
+      event.preventDefault();
+      moveFolderByDrag(folderId);
+      return;
+    }
+    if (!project || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setUploadTargetFolderId('');
+    void handleFolderUpload(folderId, event.dataTransfer.files);
+  }
+
+  function moveFolderByDrag(targetFolderId) {
+    if (!project || !dragItem || dragItem.type !== 'folder' || dragItem.folderId === targetFolderId) return;
+    void runFilesMutation((currentProject) => {
+      const current = [...(currentProject.files?.folders || [])];
+      const sourceIndex = current.findIndex((folder) => folder.id === dragItem.folderId);
+      const targetIndex = current.findIndex((folder) => folder.id === targetFolderId);
+      if (sourceIndex < 0 || targetIndex < 0) return currentProject;
+      const [movedFolder] = current.splice(sourceIndex, 1);
+      current.splice(targetIndex, 0, movedFolder);
+      return {
+        ...currentProject,
+        files: {
+          folders: current,
+        },
+      };
+    });
+    finishDrag();
+  }
+
+  function moveFileByDrag(targetFolderId, targetFileId) {
+    if (
+      !project ||
+      !dragItem ||
+      dragItem.type !== 'file' ||
+      dragItem.folderId !== targetFolderId ||
+      dragItem.fileId === targetFileId
+    ) {
+      return;
+    }
+    void runFilesMutation((currentProject) => {
+      const foldersList = currentProject.files?.folders || [];
+      return {
+        ...currentProject,
+        files: {
+          folders: foldersList.map((folder) => {
+            if (folder.id !== targetFolderId) return folder;
+            const current = [...(folder.files || [])];
+            const sourceIndex = current.findIndex((file) => file.id === dragItem.fileId);
+            const targetIndex = current.findIndex((file) => file.id === targetFileId);
+            if (sourceIndex < 0 || targetIndex < 0) return folder;
+            const [movedFile] = current.splice(sourceIndex, 1);
+            current.splice(targetIndex, 0, movedFile);
+            return {
+              ...folder,
+              files: current,
+            };
+          }),
+        },
+      };
+    });
+    finishDrag();
+  }
+
+  function triggerFolderUpload(folderId) {
+    fileInputRefs.current[folderId]?.click();
+  }
+
+  function triggerReplaceFile(fileId) {
+    replaceFileInputRefs.current[fileId]?.click();
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          dataUrl: String(reader.result || ''),
+        });
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function createProjectFileRecord(folderId, file) {
+    if (!project?.id) throw new Error('Project not found.');
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (isSupabaseStorageConfigured()) {
+      try {
+        const storageMeta = await uploadProjectFileToStorage(project.id, folderId, fileId, file);
+        return {
+          fileRecord: {
+            id: fileId,
+            name: file.name,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            uploadedAt: new Date().toISOString(),
+            ...storageMeta,
+            dataUrl: '',
+          },
+          usedFallback: false,
+        };
+      } catch {
+        // Fall back to inline storage so uploads still work if the bucket/policies are not ready.
+      }
+    }
+
+    const inlineFile = await readFileAsDataUrl(file);
+    return {
+      fileRecord: {
+        ...inlineFile,
+        id: fileId,
+        storageProvider: 'inline',
+        storageBucket: '',
+        storagePath: '',
+      },
+      usedFallback: true,
+    };
+  }
+
+  async function handleFolderUpload(folderId, fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length || !project?.id) return;
+
+    setSaving(true);
+    try {
+      const uploadResults = await Promise.all(files.map((file) => createProjectFileRecord(folderId, file)));
+      const uploads = uploadResults.map((result) => result.fileRecord);
+      const usedFallback = uploadResults.some((result) => result.usedFallback);
+      if (usedFallback) {
+        setStorageNotice(
+          isSupabaseStorageConfigured()
+            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
+            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
+        );
+      } else {
+        setStorageNotice('');
+      }
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = {
+        ...currentProject,
+        files: {
+          folders: (currentProject.files?.folders || []).map((folder) =>
+            folder.id === folderId
+              ? {
+                  ...folder,
+                  files: [...(folder.files || []), ...uploads],
+                }
+              : folder,
+          ),
+        },
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to upload file.');
+    } finally {
+      const input = fileInputRefs.current[folderId];
+      if (input) input.value = '';
+      setSaving(false);
+    }
+  }
+
+  async function handleReplaceFile(folderId, existingFile, fileList) {
+    const replacement = Array.from(fileList || [])[0];
+    if (!replacement || !existingFile || !project?.id) return;
+
+    setSaving(true);
+    try {
+      const uploadResult = await createProjectFileRecord(folderId, replacement);
+      const nextFile = {
+        ...existingFile,
+        ...uploadResult.fileRecord,
+        id: existingFile.id,
+        name: existingFile.name || uploadResult.fileRecord.name,
+      };
+
+      if (existingFile?.storagePath) {
+        await deleteProjectFileFromStorage(existingFile);
+      }
+
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = {
+        ...currentProject,
+        files: {
+          folders: (currentProject.files?.folders || []).map((folder) =>
+            folder.id === folderId
+              ? {
+                  ...folder,
+                  files: (folder.files || []).map((file) => (file.id === existingFile.id ? nextFile : file)),
+                }
+              : folder,
+          ),
+        },
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+      if (uploadResult.usedFallback) {
+        setStorageNotice(
+          isSupabaseStorageConfigured()
+            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
+            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
+        );
+      } else {
+        setStorageNotice('');
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to replace file.');
+    } finally {
+      const input = replaceFileInputRefs.current[existingFile.id];
+      if (input) input.value = '';
+      setSaving(false);
+    }
+  }
+
+  function downloadProjectFile(file) {
+    void (async () => {
+      try {
+        let objectUrl = '';
+        if (file?.storagePath && file?.storageBucket) {
+          const blob = await downloadProjectFileFromStorage(file);
+          objectUrl = URL.createObjectURL(blob);
+        } else if (file?.dataUrl) {
+          objectUrl = file.dataUrl;
+        } else {
+          return;
+        }
+
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = file.originalName || file.name || 'download';
+        anchor.click();
+
+        if (file?.storagePath && objectUrl.startsWith('blob:')) {
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Failed to open file.');
+      }
+    })();
+  }
+
+  function updateFileNameDraft(fileId, value) {
+    setFileNameDrafts((current) => ({
+      ...current,
+      [fileId]: value,
+    }));
+  }
+
+  function getDisplayFileName(file) {
+    return String(file.name || file.originalName || 'Untitled file');
+  }
+
+  function getPendingFileName(file) {
+    return String(fileNameDrafts[file.id] ?? file.name ?? file.originalName ?? '');
+  }
+
+  function hasPendingFileName(file) {
+    return getPendingFileName(file).trim() !== getDisplayFileName(file).trim();
+  }
+
+  function isEditingFileName(fileId) {
+    return editingFileNames[fileId] === true;
+  }
+
+  function beginFileRename(file) {
+    setEditingFileNames((current) => ({
+      ...current,
+      [file.id]: true,
+    }));
+    setFileNameDrafts((current) => ({
+      ...current,
+      [file.id]: current[file.id] ?? getDisplayFileName(file),
+    }));
+  }
+
+  function cancelFileRename(fileId) {
+    setEditingFileNames((current) => {
+      const next = { ...current };
+      delete next[fileId];
+      return next;
+    });
+    setFileNameDrafts((current) => {
+      const next = { ...current };
+      delete next[fileId];
+      return next;
+    });
+  }
+
+  function persistFileName(folderId, fileId, fallbackValue = '') {
+    const nextName = String(fileNameDrafts[fileId] ?? fallbackValue ?? '').trim();
+    void runFilesMutation((currentProject) => ({
+      ...currentProject,
+      files: {
+        folders: (currentProject.files?.folders || []).map((folder) =>
+          folder.id === folderId
+            ? {
+                ...folder,
+                files: (folder.files || []).map((file) =>
+                  file.id === fileId
+                    ? {
+                        ...file,
+                        name: nextName,
+                      }
+                    : file,
+                ),
+              }
+            : folder,
+        ),
+      },
+    }));
+    setFileNameDrafts((current) => {
+      const next = { ...current };
+      delete next[fileId];
+      return next;
+    });
+    setEditingFileNames((current) => {
+      const next = { ...current };
+      delete next[fileId];
+      return next;
+    });
+  }
+
+  function deleteProjectFile(folderId, fileId) {
+    if (!project?.id) return;
+    const confirmed = window.confirm('Delete this file?');
+    if (!confirmed) return;
+    void (async () => {
+      setSaving(true);
+      try {
+        const currentProject = data.projects.find((item) => item.id === project.id);
+        if (!currentProject) return;
+        const targetFolder = (currentProject.files?.folders || []).find((folder) => folder.id === folderId);
+        const targetFile = targetFolder?.files?.find((file) => file.id === fileId);
+        if (targetFile?.storagePath) {
+          await deleteProjectFileFromStorage(targetFile);
+        }
+        const nextProject = {
+          ...currentProject,
+          files: {
+            folders: (currentProject.files?.folders || []).map((folder) =>
+              folder.id === folderId
+                ? {
+                    ...folder,
+                    files: (folder.files || []).filter((file) => file.id !== fileId),
+                  }
+                : folder,
+            ),
+          },
+        };
+        const nextState = await updateProject(data, project.id, nextProject);
+        onStateChange(nextState);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Failed to delete file.');
+      } finally {
+        setSaving(false);
+      }
+    })();
+  }
+
+  function openMoveFile(file, sourceFolderId) {
+    setMoveFileDraft({
+      projectId: project?.id || '',
+      sourceFolderId,
+      targetFolderId: sourceFolderId,
+      fileId: file.id,
+      fileName: getDisplayFileName(file),
+      originalName: file.originalName || '',
+      folders: folders.map((folder) => ({ id: folder.id, name: folder.name })),
+    });
+  }
+
+  function updateMoveFileDraft(targetFolderId) {
+    setMoveFileDraft((current) => (current ? { ...current, targetFolderId } : current));
+  }
+
+  function moveProjectFile(sourceFolderId, targetFolderId, fileId) {
+    if (!targetFolderId || targetFolderId === sourceFolderId) return;
+    void runFilesMutation((currentProject) => {
+      const sourceFolder = (currentProject.files?.folders || []).find((folder) => folder.id === sourceFolderId);
+      const targetFolder = (currentProject.files?.folders || []).find((folder) => folder.id === targetFolderId);
+      const fileToMove = sourceFolder?.files?.find((file) => file.id === fileId);
+      if (!sourceFolder || !targetFolder || !fileToMove) return currentProject;
+
+      return {
+        ...currentProject,
+        files: {
+          folders: (currentProject.files?.folders || []).map((folder) => {
+            if (folder.id === sourceFolderId) {
+              return {
+                ...folder,
+                files: (folder.files || []).filter((file) => file.id !== fileId),
+              };
+            }
+            if (folder.id === targetFolderId) {
+              return {
+                ...folder,
+                files: [...(folder.files || []), fileToMove],
+              };
+            }
+            return folder;
+          }),
+        },
+      };
+    });
+    setMoveFileDraft(null);
+  }
+
+  function saveMoveFile() {
+    if (!moveFileDraft) return;
+    moveProjectFile(moveFileDraft.sourceFolderId, moveFileDraft.targetFolderId, moveFileDraft.fileId);
+  }
+
+  function renderFolderDragHandle(folder) {
+    return (
+      <span
+        className="files-drag-handle"
+        draggable={!saving}
+        onDragStart={(event) => startFolderDrag(event, folder.id)}
+        onDragEnd={finishDrag}
+        title={`Drag to reorder folder ${folder.name}`}
+        aria-label={`Drag to reorder folder ${folder.name}`}
+      >
+        <FluentIcon name="drag" />
+      </span>
+    );
+  }
+
+  function renderFileDragHandle(file, folderId) {
+    return (
+      <span
+        className="files-drag-handle"
+        draggable={!saving}
+        onDragStart={(event) => startFileDrag(event, folderId, file.id)}
+        onDragEnd={finishDrag}
+        title={`Drag to reorder ${getDisplayFileName(file)}`}
+        aria-label={`Drag to reorder ${getDisplayFileName(file)}`}
+      >
+        <FluentIcon name="drag" />
+      </span>
+    );
+  }
+
+  function renderFolderActions(folder, includeUpload = false, includeDragHandle = true) {
+    return (
+      <div className="panel-actions">
+        {includeUpload ? (
+          <>
+            <input
+              ref={(node) => {
+                if (node) fileInputRefs.current[folder.id] = node;
+              }}
+              className="visually-hidden"
+              type="file"
+              multiple
+              onChange={(event) => handleFolderUpload(folder.id, event.target.files)}
+            />
+            <button
+              className="button secondary gantt-icon-button"
+              type="button"
+              onClick={() => triggerFolderUpload(folder.id)}
+              disabled={saving}
+              title="Upload files"
+              aria-label={`Upload files to folder ${folder.name}`}
+            >
+              <FluentIcon name="upload" />
+            </button>
+          </>
+        ) : null}
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => openRenameFolderModal(folder.id)}
+          disabled={saving}
+          title="Rename folder"
+          aria-label={`Rename folder ${folder.name}`}
+        >
+          <FluentIcon name="edit" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button gantt-trash-button"
+          type="button"
+          onClick={() => void deleteFolder(folder.id)}
+          disabled={saving}
+          title="Delete folder"
+          aria-label={`Delete folder ${folder.name}`}
+        >
+          <FluentIcon name="delete" />
+        </button>
+        {includeDragHandle ? renderFolderDragHandle(folder) : null}
+      </div>
+    );
+  }
+
+  function renderFileActions(file, folderId, includeDragHandle = true) {
+    return (
+      <div className="files-list-actions">
+        <input
+          ref={(node) => {
+            if (node) replaceFileInputRefs.current[file.id] = node;
+          }}
+          className="visually-hidden"
+          type="file"
+          onChange={(event) => handleReplaceFile(folderId, file, event.target.files)}
+        />
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => downloadProjectFile(file)}
+          title="Download file"
+          aria-label={`Download ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="download" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => triggerReplaceFile(file.id)}
+          disabled={saving}
+          title="Replace file"
+          aria-label={`Replace ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="replace" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => (isEditingFileName(file.id) ? cancelFileRename(file.id) : beginFileRename(file))}
+          disabled={saving}
+          title={isEditingFileName(file.id) ? 'Cancel rename' : 'Rename file'}
+          aria-label={`${isEditingFileName(file.id) ? 'Cancel rename for' : 'Rename'} ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="replace" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => openMoveFile(file, folderId)}
+          disabled={saving || folders.length < 2}
+          title={folders.length < 2 ? 'Add another folder to move files' : 'Move file'}
+          aria-label={`Move ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="move" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button gantt-trash-button"
+          type="button"
+          onClick={() => deleteProjectFile(folderId, file.id)}
+          disabled={saving}
+          title="Delete file"
+          aria-label={`Delete ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="delete" />
+        </button>
+        {includeDragHandle ? renderFileDragHandle(file, folderId) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-files-manager">
+      {storageNotice || !isSupabaseStorageConfigured() ? (
+        <section className="storage-banner">
+          <strong>Files storage notice.</strong>
+          <span>
+            {storageNotice ||
+              'Supabase Storage is not configured yet, so uploaded files are being stored locally in project data.'}
+          </span>
+        </section>
+      ) : null}
+
+      <div className="files-toolbar project-files-toolbar">
+        <div className="files-toolbar-actions">
+          {!hideViewToggle ? (
+            <div className="people-view-toggle" role="tablist" aria-label="Files view">
+              <button
+                className={`people-toggle-button${effectiveViewMode === 'cards' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setViewMode('cards')}
+              >
+                Cards
+              </button>
+              <button
+                className={`people-toggle-button${effectiveViewMode === 'list' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setViewMode('list')}
+              >
+                List
+              </button>
+            </div>
+          ) : null}
+          {effectiveViewMode === 'list' && folders.length ? (
+            <button className="button secondary" type="button" onClick={toggleAllFoldersExpanded} disabled={saving}>
+              {allFoldersExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
+          ) : null}
+        </div>
+        <button className="button primary" type="button" onClick={openCreateFolderModal} disabled={saving || readOnly}>
+          Add folder
+        </button>
+      </div>
+
+      {effectiveViewMode === 'cards' ? (
+        folders.length ? (
+          <div className="files-folder-grid">
+            {folders.map((folder) => {
+              const isDefault = DEFAULT_PROJECT_FILE_FOLDERS.includes(folder.name);
+              return (
+                <article
+                  key={folder.id}
+                  className={`files-folder-card${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
+                  onDragOver={(event) => handleFolderUploadDragOver(event, folder.id)}
+                  onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
+                  onDrop={(event) => handleFolderUploadDrop(event, folder.id)}
+                >
+                  <div className="files-folder-header">
+                    <div className="files-card-title">
+                      <div>
+                        <h3>{folder.name}</h3>
+                        <p>{folder.files?.length || 0} file(s){isDefault ? ' • Standard folder' : ''}</p>
+                      </div>
+                    </div>
+                    {readOnly ? null : (
+                      <div className="files-card-trailing">
+                        {renderFolderActions(folder, true, false)}
+                        {renderFolderDragHandle(folder)}
+                      </div>
+                    )}
+                  </div>
+
+                  {folder.files?.length ? (
+                    <div className="files-list">
+                      {folder.files.map((file) => (
+                        <div
+                          key={file.id}
+                          className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                          onDragOver={(event) => {
+                            if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            moveFileByDrag(folder.id, file.id);
+                          }}
+                        >
+                          <div className="files-list-copy">
+                            <div className="files-card-title">
+                              <div className="files-card-title-copy">
+                                {isEditingFileName(file.id) ? (
+                                  <form
+                                    className="inline-save-row"
+                                    onSubmit={(event) => {
+                                      event.preventDefault();
+                                      if (saving || !hasPendingFileName(file)) return;
+                                      persistFileName(folder.id, file.id, getDisplayFileName(file));
+                                    }}
+                                  >
+                                    <input
+                                      className="files-name-input"
+                                      type="text"
+                                      value={getPendingFileName(file)}
+                                      placeholder="Enter file name"
+                                      onChange={(event) => updateFileNameDraft(file.id, event.target.value)}
+                                    />
+                                  </form>
+                                ) : (
+                                  <strong>{getDisplayFileName(file)}</strong>
+                                )}
+                              </div>
+                            </div>
+                            <small>
+                              {file.size ? `${formatFileSize(file.size)}` : ''}
+                              {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                            </small>
+                          </div>
+                          {readOnly ? null : (
+                            <div className="files-card-trailing">
+                              {renderFileActions(file, folder.id, false)}
+                              {renderFileDragHandle(file, folder.id)}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state compact">
+                      <h3>No files yet</h3>
+                      <p>Upload project documents here for {folder.name.toLowerCase()}.</p>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-state compact">
+            <h3>No folders yet</h3>
+            <p>Add folders and upload project documents here.</p>
+          </div>
+        )
+      ) : flatFiles.length ? (
+        <div className="files-hierarchy" role="tree" aria-label="Project files hierarchy">
+          {folders.map((folder) => {
+            const isExpanded = expandedFolders[folder.id] !== false;
+            return (
+            <div
+              key={folder.id}
+              className={`files-hierarchy-folder${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
+              role="treeitem"
+              aria-expanded={isExpanded}
+              onDragOver={(event) => handleFolderUploadDragOver(event, folder.id)}
+              onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
+              onDrop={(event) => handleFolderUploadDrop(event, folder.id)}
+            >
+              <div className="files-hierarchy-folder-row">
+                <button
+                  className="files-tree-toggle"
+                  type="button"
+                  onClick={() => toggleFolderExpanded(folder.id)}
+                  aria-label={isExpanded ? `Collapse folder ${folder.name}` : `Expand folder ${folder.name}`}
+                >
+                  <FluentIcon name="chevronRight" className={`files-tree-caret${isExpanded ? ' expanded' : ''}`} />
+                </button>
+                <div className="files-hierarchy-folder-copy">
+                  <span className="files-tree-leading-icon" aria-hidden="true">
+                    <FluentIcon name="folder" />
+                  </span>
+                  <strong>{folder.name}</strong>
+                  <small>{folder.files?.length || 0} file(s)</small>
+                </div>
+                {readOnly ? null : renderFolderActions(folder, true)}
+              </div>
+
+              {isExpanded ? folder.files?.length ? (
+                <div className="files-hierarchy-children" role="group">
+                  {folder.files.map((file) => (
+                    <div
+                      key={file.id}
+                      className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                      role="treeitem"
+                      onDragOver={(event) => {
+                        if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        moveFileByDrag(folder.id, file.id);
+                      }}
+                    >
+                      <div className="files-hierarchy-file-copy">
+                        <span className="files-tree-leading-icon" aria-hidden="true">
+                          <FluentIcon name="document" />
+                        </span>
+                        <strong>{getDisplayFileName(file)}</strong>
+                        <small>
+                          {file.size ? `${formatFileSize(file.size)}` : ''}
+                          {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                        </small>
+                      </div>
+                      {readOnly ? null : renderFileActions(file, folder.id)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="files-tree-empty" role="group">
+                  <p>Empty folder</p>
+                </div>
+              ) : null}
+            </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty-state compact">
+          <h3>No files yet</h3>
+          <p>Upload your first project document to populate the list view.</p>
+        </div>
+      )}
+
+      {!readOnly ? (
+        <MoveFileModal
+          draft={moveFileDraft}
+          saving={saving}
+          onChange={updateMoveFileDraft}
+          onClose={() => setMoveFileDraft(null)}
+          onSave={saveMoveFile}
+        />
+      ) : null}
+      {!readOnly ? (
+        <TextEntryModal
+          draft={folderNameDraft}
+          saving={saving}
+          onChange={(value) => setFolderNameDraft((current) => (current ? { ...current, value } : current))}
+          onClose={() => setFolderNameDraft(null)}
+          onSave={saveFolderNameDraft}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }) {
+  const [saving, setSaving] = useState(false);
+  const [photoNameDrafts, setPhotoNameDrafts] = useState({});
+  const [editingPhotoNames, setEditingPhotoNames] = useState({});
+  const [storageNotice, setStorageNotice] = useState('');
+  const [previewUrls, setPreviewUrls] = useState({});
+  const uploadInputRef = useRef(null);
+  const replacePhotoInputRefs = useRef({});
+
+  const photos = project?.photos || [];
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previewUrls]);
+
+  useEffect(() => {
+    const keepIds = new Set();
+    photos.forEach((photo) => {
+      if (photo?.storagePath && isImageFile(photo)) {
+        keepIds.add(photo.id);
+      }
+    });
+    setPreviewUrls((current) => {
+      const next = {};
+      Object.entries(current).forEach(([photoId, url]) => {
+        if (keepIds.has(photoId)) {
+          next[photoId] = url;
+        } else {
+          URL.revokeObjectURL(url);
+        }
+      });
+      return next;
+    });
+  }, [photos]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreviews() {
+      for (const photo of photos) {
+        if (!photo?.storagePath || !isImageFile(photo) || previewUrls[photo.id]) continue;
+        try {
+          const blob = await downloadProjectFileFromStorage(photo);
+          const url = URL.createObjectURL(blob);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          setPreviewUrls((current) => {
+            if (current[photo.id]) {
+              URL.revokeObjectURL(url);
+              return current;
+            }
+            return { ...current, [photo.id]: url };
+          });
+        } catch {
+          // Leave the gallery usable even if one preview cannot be loaded.
+        }
+      }
+    }
+
+    void loadPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, previewUrls]);
+
+  async function runPhotosMutation(buildNextProject) {
+    if (!project?.id) return;
+    setSaving(true);
+    try {
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = buildNextProject(currentProject);
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function readPhotoAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: new Date().toISOString(),
+          dataUrl: String(reader.result || ''),
+          storageProvider: 'inline',
+          storageBucket: '',
+          storagePath: '',
+        });
+      reader.onerror = () => reject(reader.error || new Error('Failed to read image.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function createProjectPhotoRecord(file) {
+    if (!project?.id) throw new Error('Project not found.');
+    const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (isSupabaseStorageConfigured()) {
+      try {
+        const storageMeta = await uploadProjectFileToStorage(project.id, 'photos', photoId, file);
+        return {
+          photoRecord: {
+            id: photoId,
+            name: file.name,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            uploadedAt: new Date().toISOString(),
+            ...storageMeta,
+            dataUrl: '',
+          },
+          usedFallback: false,
+        };
+      } catch {
+        // Fall back to inline storage so photo uploads still work if storage is unavailable.
+      }
+    }
+
+    return {
+      photoRecord: await readPhotoAsDataUrl(file),
+      usedFallback: true,
+    };
+  }
+
+  function triggerPhotoUpload() {
+    uploadInputRef.current?.click();
+  }
+
+  function triggerReplacePhoto(photoId) {
+    replacePhotoInputRefs.current[photoId]?.click();
+  }
+
+  async function handleUploadPhotos(fileList) {
+    const files = Array.from(fileList || []).filter((file) => String(file.type || '').startsWith('image/'));
+    if (!files.length || !project?.id) return;
+
+    setSaving(true);
+    try {
+      const uploadResults = await Promise.all(files.map((file) => createProjectPhotoRecord(file)));
+      const uploads = uploadResults.map((result) => result.photoRecord);
+      const usedFallback = uploadResults.some((result) => result.usedFallback);
+      setStorageNotice(
+        usedFallback
+          ? isSupabaseStorageConfigured()
+            ? 'Supabase Storage is not fully ready, so one or more photos were saved locally in project data instead.'
+            : 'Supabase Storage is not configured, so photos are being saved locally in project data.'
+          : '',
+      );
+
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = {
+        ...currentProject,
+        photos: [...(currentProject.photos || []), ...uploads],
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to upload photo.');
+    } finally {
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+      setSaving(false);
+    }
+  }
+
+  async function handleReplacePhoto(existingPhoto, fileList) {
+    const replacement = Array.from(fileList || [])[0];
+    if (!replacement || !project?.id || !existingPhoto) return;
+
+    setSaving(true);
+    try {
+      const uploadResult = await createProjectPhotoRecord(replacement);
+      const nextPhoto = {
+        ...existingPhoto,
+        ...uploadResult.photoRecord,
+        id: existingPhoto.id,
+        name: existingPhoto.name || uploadResult.photoRecord.name,
+      };
+
+      if (existingPhoto?.storagePath) {
+        await deleteProjectFileFromStorage(existingPhoto);
+      }
+
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const nextProject = {
+        ...currentProject,
+        photos: (currentProject.photos || []).map((photo) => (photo.id === existingPhoto.id ? nextPhoto : photo)),
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+      setStorageNotice(
+        uploadResult.usedFallback
+          ? isSupabaseStorageConfigured()
+            ? 'Supabase Storage is not fully ready, so one or more photos were saved locally in project data instead.'
+            : 'Supabase Storage is not configured, so photos are being saved locally in project data.'
+          : '',
+      );
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to replace photo.');
+    } finally {
+      const input = replacePhotoInputRefs.current[existingPhoto.id];
+      if (input) input.value = '';
+      setSaving(false);
+    }
+  }
+
+  function getPhotoPreview(photo) {
+    if (!photo) return '';
+    return photo.dataUrl || previewUrls[photo.id] || '';
+  }
+
+  function updatePhotoNameDraft(photoId, value) {
+    setPhotoNameDrafts((current) => ({
+      ...current,
+      [photoId]: value,
+    }));
+  }
+
+  function getDisplayPhotoName(photo) {
+    return String(photo.name || photo.originalName || 'Untitled photo');
+  }
+
+  function getPendingPhotoName(photo) {
+    return String(photoNameDrafts[photo.id] ?? photo.name ?? photo.originalName ?? '');
+  }
+
+  function hasPendingPhotoName(photo) {
+    return getPendingPhotoName(photo).trim() !== getDisplayPhotoName(photo).trim();
+  }
+
+  function isEditingPhotoName(photoId) {
+    return editingPhotoNames[photoId] === true;
+  }
+
+  function beginPhotoRename(photo) {
+    setEditingPhotoNames((current) => ({
+      ...current,
+      [photo.id]: true,
+    }));
+    setPhotoNameDrafts((current) => ({
+      ...current,
+      [photo.id]: current[photo.id] ?? getDisplayPhotoName(photo),
+    }));
+  }
+
+  function cancelPhotoRename(photoId) {
+    setEditingPhotoNames((current) => {
+      const next = { ...current };
+      delete next[photoId];
+      return next;
+    });
+    setPhotoNameDrafts((current) => {
+      const next = { ...current };
+      delete next[photoId];
+      return next;
+    });
+  }
+
+  function persistPhotoName(photoId, fallbackValue = '') {
+    const nextName = String(photoNameDrafts[photoId] ?? fallbackValue ?? '').trim();
+    void runPhotosMutation((currentProject) => ({
+      ...currentProject,
+      photos: (currentProject.photos || []).map((photo) =>
+        photo.id === photoId
+          ? {
+              ...photo,
+              name: nextName,
+            }
+          : photo,
+      ),
+    }));
+    setPhotoNameDrafts((current) => {
+      const next = { ...current };
+      delete next[photoId];
+      return next;
+    });
+    setEditingPhotoNames((current) => {
+      const next = { ...current };
+      delete next[photoId];
+      return next;
+    });
+  }
+
+  function deletePhoto(photoId) {
+    if (!project?.id) return;
+    const confirmed = window.confirm('Delete this photo?');
+    if (!confirmed) return;
+    void (async () => {
+      setSaving(true);
+      try {
+        const currentProject = data.projects.find((item) => item.id === project.id);
+        if (!currentProject) return;
+        const existing = (currentProject.photos || []).find((photo) => photo.id === photoId);
+        if (existing?.storagePath) {
+          await deleteProjectFileFromStorage(existing);
+        }
+        const nextProject = {
+          ...currentProject,
+          photos: (currentProject.photos || []).filter((photo) => photo.id !== photoId),
+        };
+        const nextState = await updateProject(data, project.id, nextProject);
+        onStateChange(nextState);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Failed to delete photo.');
+      } finally {
+        setSaving(false);
+      }
+    })();
+  }
+
+  function downloadPhoto(photo) {
+    void (async () => {
+      try {
+        let objectUrl = '';
+        if (photo?.storagePath && photo?.storageBucket) {
+          const blob = await downloadProjectFileFromStorage(photo);
+          objectUrl = URL.createObjectURL(blob);
+        } else if (photo?.dataUrl) {
+          objectUrl = photo.dataUrl;
+        } else {
+          return;
+        }
+
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = photo.originalName || photo.name || 'photo';
+        anchor.click();
+
+        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Failed to download photo.');
+      }
+    })();
+  }
+
+  function openPhoto(photo) {
+    void (async () => {
+      try {
+        let objectUrl = '';
+        if (photo?.storagePath && photo?.storageBucket) {
+          const blob = await downloadProjectFileFromStorage(photo);
+          objectUrl = URL.createObjectURL(blob);
+        } else if (photo?.dataUrl) {
+          objectUrl = photo.dataUrl;
+        } else {
+          return;
+        }
+
+        window.open(objectUrl, '_blank', 'noopener');
+
+        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Failed to open photo.');
+      }
+    })();
+  }
+
+  return (
+    <div className="project-photos-manager">
+      {storageNotice || !isSupabaseStorageConfigured() ? (
+        <section className="storage-banner">
+          <strong>Photos storage notice.</strong>
+          <span>
+            {storageNotice ||
+              'Supabase Storage is not configured yet, so uploaded photos are being stored locally in project data.'}
+          </span>
+        </section>
+      ) : null}
+
+      <div className="files-toolbar project-files-toolbar">
+        <div className="files-toolbar-actions">
+          <span className="project-photos-count">{photos.length} photo(s)</span>
+        </div>
+        <div className="panel-actions">
+          <input
+            ref={uploadInputRef}
+            className="visually-hidden"
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => handleUploadPhotos(event.target.files)}
+          />
+          <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={saving || readOnly}>
+            Add photos
+          </button>
+        </div>
+      </div>
+
+      {photos.length ? (
+        <div className="photos-grid">
+          {photos.map((photo) => (
+            <article key={photo.id} className="photo-card">
+              <button className="photo-thumb-button" type="button" onClick={() => void openPhoto(photo)}>
+                {getPhotoPreview(photo) ? (
+                  <img className="photo-thumb" src={getPhotoPreview(photo)} alt={getDisplayPhotoName(photo)} />
+                ) : (
+                  <div className="photo-placeholder">
+                    <FluentIcon name="camera" size={28} />
+                    <small>Preview unavailable</small>
+                  </div>
+                )}
+              </button>
+              <div className="photo-card-body">
+                {isEditingPhotoName(photo.id) ? (
+                  <form
+                    className="inline-save-row"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (saving || !hasPendingPhotoName(photo)) return;
+                      persistPhotoName(photo.id, getDisplayPhotoName(photo));
+                    }}
+                  >
+                    <input
+                      className="files-name-input"
+                      type="text"
+                      value={getPendingPhotoName(photo)}
+                      placeholder="Photo name"
+                      onChange={(event) => updatePhotoNameDraft(photo.id, event.target.value)}
+                    />
+                  </form>
+                ) : (
+                  <strong>{getDisplayPhotoName(photo)}</strong>
+                )}
+                <small className="photo-meta">
+                  {photo.size ? `${formatFileSize(photo.size)}` : ''}
+                  {photo.uploadedAt ? ` • ${new Date(photo.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                </small>
+                {!readOnly ? <div className="files-list-actions photo-actions">
+                  <input
+                    ref={(node) => {
+                      if (node) replacePhotoInputRefs.current[photo.id] = node;
+                    }}
+                    className="visually-hidden"
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => handleReplacePhoto(photo, event.target.files)}
+                  />
+                  <button
+                    className="button secondary gantt-icon-button"
+                    type="button"
+                    onClick={() => void openPhoto(photo)}
+                    title="Open photo"
+                    aria-label={`Open ${photo.name || photo.originalName || 'photo'}`}
+                  >
+                      <FluentIcon name="eye" />
+                  </button>
+                  <button
+                    className="button secondary gantt-icon-button"
+                    type="button"
+                    onClick={() => downloadPhoto(photo)}
+                    title="Download photo"
+                    aria-label={`Download ${getDisplayPhotoName(photo)}`}
+                  >
+                    <FluentIcon name="download" />
+                  </button>
+                  <button
+                    className="button secondary gantt-icon-button"
+                    type="button"
+                    onClick={() => triggerReplacePhoto(photo.id)}
+                    disabled={saving}
+                    title="Replace photo"
+                    aria-label={`Replace ${getDisplayPhotoName(photo)}`}
+                  >
+                    <FluentIcon name="replace" />
+                  </button>
+                  <button
+                    className="button secondary gantt-icon-button"
+                    type="button"
+                    onClick={() => (isEditingPhotoName(photo.id) ? cancelPhotoRename(photo.id) : beginPhotoRename(photo))}
+                    disabled={saving}
+                    title={isEditingPhotoName(photo.id) ? 'Cancel rename' : 'Rename photo'}
+                    aria-label={`${isEditingPhotoName(photo.id) ? 'Cancel rename for' : 'Rename'} ${getDisplayPhotoName(photo)}`}
+                  >
+                    <FluentIcon name="edit" />
+                  </button>
+                  <button
+                    className="button secondary gantt-icon-button gantt-trash-button"
+                    type="button"
+                    onClick={() => deletePhoto(photo.id)}
+                    disabled={saving}
+                    title="Delete photo"
+                    aria-label={`Delete ${getDisplayPhotoName(photo)}`}
+                  >
+                    <FluentIcon name="delete" />
+                  </button>
+                </div> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state compact">
+          <h3>No photos yet</h3>
+          <p>Add progress photos, site photos, and finish photos for this project.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectDetailView({
+  data,
   project,
   tasks,
   settings,
+  canEdit = true,
   onBack,
   onEdit,
-  onDownloadFile,
   onDateClick,
   onCalendarItemClick,
+  onStateChange,
 }) {
   const health = getProjectHealth(project);
   const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
+  const photoCount = project.photos?.length || 0;
+  const stepCount = getProjectStepCount(project);
   const blockLotLabel =
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
@@ -1143,183 +2887,171 @@ function ProjectDetailView({
           <p className="project-status">{health.label}</p>
           <h2>{project.name}</h2>
           <p className="project-meta">
-            {[project.manager, project.address].filter(Boolean).join(' • ') || 'No project details yet'}
+            {[project.address].filter(Boolean).join(' • ') || 'No project details yet'}
           </p>
         </div>
-        <div className="panel-actions">
+        <div className="panel-actions project-detail-header-actions">
+          <span className={`status-pill status-${project.status || 'planning'}`}>
+            {project.status || 'planning'}
+          </span>
           <button className="button secondary" type="button" onClick={onBack}>
             Back to projects
           </button>
-          <button className="button primary" type="button" onClick={() => onEdit(project)}>
-            Edit project
-          </button>
+          {canEdit ? (
+            <button className="button primary" type="button" onClick={() => onEdit(project)}>
+              Edit project
+            </button>
+          ) : null}
         </div>
       </div>
 
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Phases {project.phases?.length || 0}</div>
+        <div className="project-summary-chip">Steps {stepCount}</div>
+        <div className="project-summary-chip">Tasks {tasks.length || 0}</div>
+        <div className="project-summary-chip">Inspections {project.inspections?.length || 0}</div>
+        <div className="project-summary-chip">Files {allFiles.length}</div>
+        <div className="project-summary-chip">Photos {photoCount}</div>
+      </div>
+
       <div className="project-detail-grid">
-        <section className="project-detail-section">
-          <div className="panel-header">
-            <div>
-              <h3>Project details</h3>
-            </div>
-          </div>
-          <dl className="project-facts project-detail-facts">
-            <div>
-              <dt>Project manager</dt>
-              <dd>{project.manager || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Address</dt>
-              <dd>{project.address || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Permit #</dt>
-              <dd>{project.permitNumber || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Block / Lot</dt>
-              <dd>{blockLotLabel}</dd>
-            </div>
-            <div>
-              <dt>DR #</dt>
-              <dd>{project.drNumber || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Budget</dt>
-              <dd>{formatCurrency(project.budget)}</dd>
-            </div>
-            <div>
-              <dt>Start date</dt>
-              <dd>{project.start ? formatShortDate(project.start) : 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>End date</dt>
-              <dd>{project.end ? formatShortDate(project.end) : 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Customer</dt>
-              <dd>{project.customerName || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Customer phone</dt>
-              <dd>{project.customerPhone || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Customer email</dt>
-              <dd>{project.customerEmail || 'Not set'}</dd>
-            </div>
-            <div>
-              <dt>Customer address</dt>
-              <dd>{project.customerAddress || 'Not set'}</dd>
-            </div>
-          </dl>
-          {project.desc ? (
-            <div className="project-detail-note">
-              <strong>Description</strong>
-              <p>{project.desc}</p>
-            </div>
-          ) : null}
-          {project.customerNotes ? (
-            <div className="project-detail-note">
-              <strong>Customer notes</strong>
-              <p>{project.customerNotes}</p>
-            </div>
-          ) : null}
-        </section>
+        <div className="project-detail-primary-grid">
+          <div className="project-detail-info-stack">
+            <section className="project-detail-section project-detail-overview">
+              <div className="panel-header">
+                <div>
+                  <h3>Project details</h3>
+                </div>
+              </div>
+              <dl className="project-facts project-detail-facts">
+                <div>
+                  <dt>Address</dt>
+                  <dd>{project.address || 'Not set'}</dd>
+                </div>
+                <div>
+                  <dt>Permit #</dt>
+                  <dd>{project.permitNumber || 'Not set'}</dd>
+                </div>
+                <div>
+                  <dt>Block / Lot</dt>
+                  <dd>{blockLotLabel}</dd>
+                </div>
+                <div>
+                  <dt>DR #</dt>
+                  <dd>{project.drNumber || 'Not set'}</dd>
+                </div>
+                <div>
+                  <dt>Start date</dt>
+                  <dd>{project.start ? formatShortDate(project.start) : 'Not set'}</dd>
+                </div>
+                <div>
+                  <dt>End date</dt>
+                  <dd>{project.end ? formatShortDate(project.end) : 'Not set'}</dd>
+                </div>
+                <div className="project-fact-compact">
+                  <dt>Customer</dt>
+                  <dd>{project.customerName || 'Not set'}</dd>
+                </div>
+                <div className="project-fact-compact">
+                  <dt>Customer phone</dt>
+                  <dd>{project.customerPhone || 'Not set'}</dd>
+                </div>
+                <div className="project-fact-compact">
+                  <dt>Customer email</dt>
+                  <dd>{project.customerEmail || 'Not set'}</dd>
+                </div>
+                <div className="project-fact-wide">
+                  <dt>Customer address</dt>
+                  <dd>{project.customerAddress || 'Not set'}</dd>
+                </div>
+              </dl>
+              {project.desc ? (
+                <div className="project-detail-note">
+                  <strong>Description</strong>
+                  <p>{project.desc}</p>
+                </div>
+              ) : null}
+              {project.customerNotes ? (
+                <div className="project-detail-note">
+                  <strong>Customer notes</strong>
+                  <p>{project.customerNotes}</p>
+                </div>
+              ) : null}
+            </section>
 
-        <ProjectDetailCalendar
-          project={project}
-          tasks={tasks}
-          settings={settings}
-          onDateClick={onDateClick}
-          onItemClick={onCalendarItemClick}
-        />
-
-        <section className="project-detail-section">
-          <div className="panel-header">
-            <div>
-              <h3>Inspections</h3>
-            </div>
-          </div>
-          {project.inspections?.length ? (
-            <div className="inspection-grid">
-              {project.inspections.map((inspection) => (
-                <article key={inspection.id} className={`inspection-card inspection-${inspection.status || 'requested'}`}>
-                  <div className="inspection-card-header">
-                    <div>
-                      <p className="project-status">{inspection.status || 'requested'}</p>
-                      <h3>{inspection.subcode || 'No subcode'}</h3>
-                      <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
-                    </div>
-                  </div>
-                  <div className="inspection-meta">
-                    <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
-                    <span>Agency: {inspection.agency || 'Not set'}</span>
-                    <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
-                    {['failed', 'follow-up'].includes(inspection.status) ? (
-                      <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
-                    ) : null}
-                  </div>
-                  {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state compact">
-              <h3>No inspections yet</h3>
-              <p>This project does not have any inspections saved yet.</p>
-            </div>
-          )}
-        </section>
-
-        <section className="project-detail-section">
-          <div className="panel-header">
-            <div>
-              <h3>Files</h3>
-            </div>
-          </div>
-          {project.files?.folders?.length ? (
-            <div className="project-files-grid">
-              {project.files.folders.map((folder) => (
-                <article key={folder.id} className="project-file-folder">
-                  <div className="project-file-folder-header">
-                    <strong>{folder.name}</strong>
-                    <small>{folder.files?.length || 0} file(s)</small>
-                  </div>
-                  {folder.files?.length ? (
-                    <div className="project-file-list">
-                      {folder.files.map((file) => (
-                        <div key={file.id} className="project-file-row">
-                          <div className="project-file-copy">
-                            <strong>{file.name || file.originalName || 'Untitled file'}</strong>
-                            <small>
-                              {file.originalName || 'No uploaded filename'}
-                              {file.size ? ` • ${formatFileSize(file.size)}` : ''}
-                              {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
-                            </small>
-                          </div>
-                          <button className="button secondary" type="button" onClick={() => void onDownloadFile(file)}>
-                            Download
-                          </button>
+            <section className="project-detail-section">
+              <div className="panel-header">
+                <div>
+                  <h3>Inspections</h3>
+                </div>
+              </div>
+              {project.inspections?.length ? (
+                <div className="inspection-grid">
+                  {project.inspections.map((inspection) => (
+                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status || 'requested'}`}>
+                      <div className="inspection-card-header">
+                        <div>
+                          <p className="project-status">{inspection.status || 'requested'}</p>
+                          <h3>{inspection.subcode || 'No subcode'}</h3>
+                          <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state compact">
-                      <h3>No files yet</h3>
-                      <p>This folder is ready for project documents.</p>
-                    </div>
-                  )}
-                </article>
-              ))}
+                      </div>
+                      <div className="inspection-meta">
+                        <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
+                        <span>Agency: {inspection.agency || 'Not set'}</span>
+                        <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
+                        {['failed', 'follow-up'].includes(inspection.status) ? (
+                          <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
+                        ) : null}
+                      </div>
+                      {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">
+                  <h3>No inspections yet</h3>
+                  <p>This project does not have any inspections saved yet.</p>
+                </div>
+              )}
+            </section>
+
+            <section className="project-detail-section">
+              <div className="panel-header">
+                <div>
+                  <h3>Photos</h3>
+                </div>
+              </div>
+              <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
+            </section>
+          </div>
+
+          <ProjectDetailCalendar
+            project={project}
+            tasks={tasks}
+            settings={settings}
+            onDateClick={onDateClick}
+            onItemClick={onCalendarItemClick}
+          />
+        </div>
+
+        <div className="project-detail-secondary-grid">
+          <section className="project-detail-section project-detail-files-section">
+            <div className="panel-header">
+              <div>
+                <h3>Files</h3>
+              </div>
             </div>
-          ) : (
-            <div className="empty-state compact">
-              <h3>No folders yet</h3>
-              <p>This project does not have any file folders yet.</p>
-            </div>
-          )}
-        </section>
+            <ProjectFilesManager
+              data={data}
+              project={project}
+              onStateChange={onStateChange}
+              readOnly={!canEdit}
+              forcedViewMode="list"
+              hideViewToggle
+            />
+          </section>
+        </div>
       </div>
 
       <PageStats settings={settings}>
@@ -1327,6 +3059,7 @@ function ProjectDetailView({
         <DashboardStat label="Phases" value={project.phases?.length || 0} />
         <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
         <DashboardStat label="Files" value={allFiles.length} />
+        <DashboardStat label="Photos" value={photoCount} />
       </PageStats>
     </div>
   );
@@ -1805,19 +3538,17 @@ function InspectionImageEditorModal({ draft, saving, onClose, onSave }) {
   );
 }
 
-function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
+function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [inspectionDraft, setInspectionDraft] = useState(null);
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
+  const [subcodeDraft, setSubcodeDraft] = useState(null);
   const [previewUrls, setPreviewUrls] = useState({});
   const [saving, setSaving] = useState(false);
 
   const visibleProjects = useMemo(
-    () =>
-      (data.projects || []).filter(
-        (project) => data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
-      ),
-    [data.projects, data.settings],
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
   );
 
   useEffect(() => {
@@ -2015,14 +3746,27 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
   }
 
   async function handleAddInspectionSubcode() {
-    const name = window.prompt('New inspection subcode');
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
+    setSubcodeDraft({
+      eyebrow: 'Inspection',
+      title: 'Add subcode',
+      description: 'Create a new inspection subcode for inspection entry.',
+      label: 'Subcode',
+      placeholder: 'Inspection subcode',
+      value: '',
+      saveLabel: 'Add subcode',
+    });
+  }
+
+  async function saveInspectionSubcodeDraft() {
+    if (!subcodeDraft) return;
+    const trimmed = subcodeDraft.value.trim();
+    if (!trimmed) return;
     const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
     const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
-    const nextState = await updateSettings(data, { ...data.settings, inspectionSubcodes: nextSubcodes });
+    const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
     onStateChange(nextState);
     setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+    setSubcodeDraft(null);
   }
 
   async function openInspectionImageEditor(inspection, field) {
@@ -2201,7 +3945,7 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>Inspections</h2>
@@ -2210,97 +3954,133 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
           <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
             {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
           </button>
-          <button className="button primary" type="button" onClick={startCreate} disabled={!selectedProject || saving}>
-            Add inspection
-          </button>
+          {!readOnly ? (
+            <button className="button primary" type="button" onClick={startCreate} disabled={!selectedProject || saving}>
+              Add inspection
+            </button>
+          ) : null}
         </div>
+      </div>
+
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
+        <div className="project-summary-chip">Shown {inspections.length}</div>
+        <div className="project-summary-chip">Requested {statusCounts.requested}</div>
+        <div className="project-summary-chip">Scheduled {statusCounts.scheduled}</div>
+        <div className="project-summary-chip">Passed {statusCounts.passed}</div>
+        <div className="project-summary-chip">Follow-up {statusCounts['follow-up'] + statusCounts.failed}</div>
       </div>
 
       {visibleProjects.length ? (
         <>
-          <div className="files-toolbar">
-            <label className="task-filter">
-              <span>Project</span>
-              <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
-                {visibleProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="workspace-control-grid">
+            <section className="workspace-section workspace-control-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Inspection scope</h3>
+                  <p className="panel-copy">Choose the project whose inspection activity you want to review.</p>
+                </div>
+              </div>
+              <div className="files-toolbar">
+                <label className="task-filter">
+                  <span>Project</span>
+                  <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                    {visibleProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
           </div>
 
           {selectedProject ? (
-            inspections.length ? (
-              <div className="inspection-grid">
-                {inspections.map((inspection) => (
-                  <article key={inspection.id} className={`inspection-card inspection-${inspection.status}`}>
-                    <div className="inspection-card-header">
-                      <div>
-                        <p className="project-status">{inspection.status}</p>
-                        <h3>{inspection.subcode || 'No subcode'}</h3>
-                        <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
+            <section className="workspace-section">
+              <div className="panel-header">
+                <div>
+                  <h3>{selectedProject.name}</h3>
+                  <p className="panel-copy">Review upcoming, passed, failed, and follow-up inspections for this job.</p>
+                </div>
+              </div>
+              {inspections.length ? (
+                <div className="inspection-grid">
+                  {inspections.map((inspection) => (
+                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status}`}>
+                      <div className="inspection-card-header">
+                        <div>
+                          <p className="project-status">{inspection.status}</p>
+                          <h3>{inspection.subcode || 'No subcode'}</h3>
+                          <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
+                        </div>
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => startEdit(inspection)}
+                          disabled={saving || readOnly}
+                          title="Edit inspection"
+                          aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'}`}
+                        >
+                          <FluentIcon name="edit" />
+                        </button>
                       </div>
-                      <button className="button secondary" type="button" onClick={() => startEdit(inspection)} disabled={saving}>
-                        Edit
-                      </button>
-                    </div>
-                    <div className="inspection-meta">
-                      <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
-                      <span>Agency: {inspection.agency || 'Not set'}</span>
-                      <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
-                      {['failed', 'follow-up'].includes(inspection.status) ? (
-                        <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
+                      <div className="inspection-meta">
+                        <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
+                        <span>Agency: {inspection.agency || 'Not set'}</span>
+                        <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
+                        {['failed', 'follow-up'].includes(inspection.status) ? (
+                          <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
+                        ) : null}
+                      </div>
+                      {(
+                        (inspection.stickerFile && isImageFile(inspection.stickerFile)) ||
+                        (inspection.reportFile && isImageFile(inspection.reportFile))
+                      ) ? (
+                        <div className="inspection-thumbnail-row">
+                          {inspection.stickerFile && isImageFile(inspection.stickerFile) ? (
+                            <button
+                              type="button"
+                              className="inspection-thumbnail-button"
+                              onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
+                              title="Open sticker image"
+                            >
+                              <img
+                                className="inspection-thumbnail-image"
+                                src={getInspectionAttachmentPreview(inspection.stickerFile)}
+                                alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
+                              />
+                              <span>Sticker</span>
+                            </button>
+                          ) : null}
+                          {inspection.reportFile && isImageFile(inspection.reportFile) ? (
+                            <button
+                              type="button"
+                              className="inspection-thumbnail-button"
+                              onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
+                              title="Open report image"
+                            >
+                              <img
+                                className="inspection-thumbnail-image"
+                                src={getInspectionAttachmentPreview(inspection.reportFile)}
+                                alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
+                              />
+                              <span>Report</span>
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
-                    </div>
-                    {(
-                      (inspection.stickerFile && isImageFile(inspection.stickerFile)) ||
-                      (inspection.reportFile && isImageFile(inspection.reportFile))
-                    ) ? (
-                      <div className="inspection-thumbnail-row">
-                        {inspection.stickerFile && isImageFile(inspection.stickerFile) ? (
-                          <button
-                            type="button"
-                            className="inspection-thumbnail-button"
-                            onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                            title="Open sticker image"
-                          >
-                            <img
-                              className="inspection-thumbnail-image"
-                              src={getInspectionAttachmentPreview(inspection.stickerFile)}
-                              alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
-                            />
-                            <span>Sticker</span>
-                          </button>
-                        ) : null}
-                        {inspection.reportFile && isImageFile(inspection.reportFile) ? (
-                          <button
-                            type="button"
-                            className="inspection-thumbnail-button"
-                            onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                            title="Open report image"
-                          >
-                            <img
-                              className="inspection-thumbnail-image"
-                              src={getInspectionAttachmentPreview(inspection.reportFile)}
-                              alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
-                            />
-                            <span>Report</span>
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state compact">
-                <h3>No inspections yet</h3>
-                <p>Add inspections for this project to track upcoming and completed approvals.</p>
-              </div>
-            )
+                      {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">
+                  <h3>No inspections yet</h3>
+                  <p>Add inspections for this project to track upcoming and completed approvals.</p>
+                </div>
+              )}
+            </section>
           ) : (
             <div className="empty-state compact">
               <h3>No project selected</h3>
@@ -2324,18 +4104,29 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange }) {
         <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
       </PageStats>
 
-      <InspectionModal
-        draft={inspectionDraft}
-        project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || selectedProject}
-        projects={visibleProjects}
-        subcodes={inspectionSubcodes}
-        saving={saving}
-        onChange={updateDraft}
-        onAddSubcode={handleAddInspectionSubcode}
-        onClose={() => setInspectionDraft(null)}
-        onSave={saveInspection}
-        onDelete={deleteInspection}
-      />
+      {!readOnly ? (
+        <InspectionModal
+          draft={inspectionDraft}
+          project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || selectedProject}
+          projects={visibleProjects}
+          subcodes={inspectionSubcodes}
+          saving={saving}
+          onChange={updateDraft}
+          onAddSubcode={handleAddInspectionSubcode}
+          onClose={() => setInspectionDraft(null)}
+          onSave={saveInspection}
+          onDelete={deleteInspection}
+        />
+      ) : null}
+      {!readOnly ? (
+        <TextEntryModal
+          draft={subcodeDraft}
+          saving={saving}
+          onChange={(value) => setSubcodeDraft((current) => (current ? { ...current, value } : current))}
+          onClose={() => setSubcodeDraft(null)}
+          onSave={saveInspectionSubcodeDraft}
+        />
+      ) : null}
       <InspectionImageEditorModal
         draft={imageEditorDraft}
         saving={saving}
@@ -2678,27 +4469,21 @@ function DependencyModal({ draft, saving, onTogglePred, onLagChange, onClose, on
   );
 }
 
-function NativeProjectsView({ data, refresh, loading, onStateChange }) {
+function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null, users = [] }) {
   const [projectDraft, setProjectDraft] = useState(null);
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [stepDraft, setStepDraft] = useState(null);
   const [stepPredecessorDraft, setStepPredecessorDraft] = useState(null);
+  const [phaseNameDraft, setPhaseNameDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const visibleProjects = useMemo(
-    () =>
-      (data.projects || []).filter(
-        (project) =>
-          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
-      ),
-    [data.projects, data.settings],
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
   );
 
   const visibleTasks = useMemo(
-    () =>
-      (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
-      ),
-    [data.tasks, data.settings],
+    () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
+    [data.tasks, data.settings, visibleProjects],
   );
 
   const taskCountByProject = useMemo(() => {
@@ -2749,9 +4534,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
       desc: '',
       start: '',
       end: '',
-      budget: '',
       status: 'planning',
-      manager: '',
       address: '',
       permitNumber: '',
       drNumber: '',
@@ -2763,6 +4546,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
       customerAddress: '',
       customerNotes: '',
       progress: 0,
+      accessUserIds: [],
       phases: [],
     });
   }
@@ -2774,9 +4558,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
       desc: project.desc || '',
       start: project.start || '',
       end: project.end || '',
-      budget: project.budget || 0,
       status: project.status || 'planning',
-      manager: project.manager || '',
       address: project.address || '',
       permitNumber: project.permitNumber || '',
       drNumber: project.drNumber || '',
@@ -2788,6 +4570,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
       customerAddress: project.customerAddress || '',
       customerNotes: project.customerNotes || '',
       progress: project.progress ?? 0,
+      accessUserIds: normalizeProjectAccessUserIds(project.accessUserIds),
       phases: project.phases || [],
     });
   }
@@ -2835,28 +4618,6 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
     const confirmed = window.confirm(`Delete "${projectDraft.name}" and its tasks?`);
     if (!confirmed) return;
     await runProjectMutation(() => deleteProject(data, projectDraft.id));
-  }
-
-  async function handleDownloadProjectFile(file) {
-    if (!file) return;
-    try {
-      let blob = null;
-      if (file.storagePath) {
-        blob = await downloadProjectFileFromStorage(file);
-      } else if (file.dataUrl) {
-        const response = await fetch(file.dataUrl);
-        blob = await response.blob();
-      }
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.originalName || file.name || 'project-file';
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to download this file.');
-    }
   }
 
   function buildProjectStepDependencyOptions(projectId, phaseId, selectedPreds = [], projectsSource = data.projects) {
@@ -3057,16 +4818,30 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
 
   async function handleQuickAddProjectDetailPhase(projectId) {
     if (!projectId) return;
-    const name = window.prompt('New phase name');
-    if (!name || !name.trim()) return;
+    setPhaseNameDraft({
+      projectId,
+      eyebrow: 'Phase',
+      title: 'Add phase',
+      description: 'Create a new phase without leaving the step flow.',
+      label: 'Phase name',
+      placeholder: 'Phase name',
+      value: '',
+      saveLabel: 'Add phase',
+    });
+  }
+
+  async function saveProjectDetailPhaseNameDraft() {
+    if (!phaseNameDraft?.projectId) return;
+    const trimmed = phaseNameDraft.value.trim();
+    if (!trimmed) return;
 
     setSaving(true);
     try {
-      const project = data.projects.find((item) => item.id === projectId);
+      const project = data.projects.find((item) => item.id === phaseNameDraft.projectId);
       if (!project) return;
       const newPhase = {
         id: `ph${Date.now()}`,
-        name: name.trim(),
+        name: trimmed,
         assign: '',
         status: 'planning',
         start: '',
@@ -3086,9 +4861,9 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
         if (!current) return current;
         const nextDraft = {
           ...current,
-          projectId,
+          projectId: phaseNameDraft.projectId,
           phaseId: newPhase.id,
-          predecessorOptions: buildProjectStepDependencyOptions(projectId, newPhase.id, [], nextState.projects),
+          predecessorOptions: buildProjectStepDependencyOptions(phaseNameDraft.projectId, newPhase.id, [], nextState.projects),
         };
         if (nextDraft.autoStart) {
           nextDraft.start = '';
@@ -3096,6 +4871,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
         }
         return nextDraft;
       });
+      setPhaseNameDraft(null);
     } finally {
       setSaving(false);
     }
@@ -3302,7 +5078,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>{selectedProject ? 'Project page' : 'Projects Dashboard'}</h2>
@@ -3311,7 +5087,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
           <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
             {loading ? 'Refreshing...' : 'Refresh data'}
           </button>
-          {!selectedProject ? (
+          {!selectedProject && !readOnly ? (
             <button className="button primary" type="button" onClick={startCreate}>
               New project
             </button>
@@ -3319,31 +5095,50 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
         </div>
       </div>
 
+      {!selectedProject ? (
+        <div className="project-detail-summary">
+          <div className="project-summary-chip">Projects {visibleProjects.length}</div>
+          <div className="project-summary-chip">Phases {totals.phases}</div>
+          <div className="project-summary-chip">Steps {totals.steps}</div>
+          <div className="project-summary-chip">Tasks {totals.tasks}</div>
+        </div>
+      ) : null}
+
       {selectedProject ? (
         <ProjectDetailView
+          data={data}
           project={selectedProject}
           tasks={selectedProjectTasks}
           settings={data.settings}
+          canEdit={!readOnly}
           onBack={() => setSelectedProjectId('')}
           onEdit={startEdit}
-          onDownloadFile={handleDownloadProjectFile}
-          onDateClick={handleProjectDetailCalendarDateClick}
-          onCalendarItemClick={handleProjectDetailCalendarItemClick}
+          onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
+          onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
+          onStateChange={onStateChange}
         />
       ) : (
         <>
           {visibleProjects.length ? (
-            <div className="project-grid">
-              {visibleProjects.map((project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  taskCount={taskCountByProject.get(project.id) || 0}
-                  onEdit={startEdit}
-                  onOpen={() => setSelectedProjectId(project.id)}
-                />
-              ))}
-            </div>
+            <section className="workspace-section">
+              <div className="panel-header">
+                <div>
+                  <h3>Projects overview</h3>
+                  <p className="panel-copy">Review active jobs, scan next actions, and open any project into its full workspace.</p>
+                </div>
+              </div>
+              <div className="project-grid">
+                {visibleProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    taskCount={taskCountByProject.get(project.id) || 0}
+                    onEdit={readOnly ? undefined : startEdit}
+                    onOpen={() => setSelectedProjectId(project.id)}
+                  />
+                ))}
+              </div>
+            </section>
           ) : (
             <div className="empty-state">
               <h3>No projects loaded</h3>
@@ -3363,15 +5158,16 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
       {projectDraft ? (
         <ProjectModal
           draft={projectDraft}
+          users={users}
           onChange={(field, value) => setProjectDraft((current) => ({ ...current, [field]: value }))}
           onClose={() => setProjectDraft(null)}
-          onSave={handleSaveProject}
-          onDelete={handleDeleteProject}
+          onSave={readOnly ? () => {} : handleSaveProject}
+          onDelete={readOnly ? () => {} : handleDeleteProject}
           saving={saving}
           isEditing={!!projectDraft.id}
         />
       ) : null}
-      {stepDraft ? (
+      {!readOnly && stepDraft ? (
         <ScheduleItemModal
           draft={stepDraft}
           type="step"
@@ -3397,6 +5193,15 @@ function NativeProjectsView({ data, refresh, loading, onStateChange }) {
         onClose={() => setStepPredecessorDraft(null)}
         onSave={saveProjectStepPredecessors}
       />
+      {!readOnly ? (
+        <TextEntryModal
+          draft={phaseNameDraft}
+          saving={saving}
+          onChange={(value) => setPhaseNameDraft((current) => (current ? { ...current, value } : current))}
+          onClose={() => setPhaseNameDraft(null)}
+          onSave={saveProjectDetailPhaseNameDraft}
+        />
+      ) : null}
     </section>
   );
 }
@@ -3473,35 +5278,134 @@ function TaskRow({
       </div>
 
       <div className="task-row-actions">
-        <button className="button secondary" type="button" onClick={() => onEditStart(task)} disabled={saving}>
-          Edit
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => onEditStart(task)}
+          disabled={saving}
+          title="Edit task"
+          aria-label={`Edit ${task.label}`}
+        >
+          <FluentIcon name="edit" />
         </button>
-        <button className="button secondary danger" type="button" onClick={() => onDelete(task)} disabled={saving}>
-          Delete
+        <button
+          className="button secondary gantt-icon-button gantt-trash-button"
+          type="button"
+          onClick={() => onDelete(task)}
+          disabled={saving}
+          title="Delete task"
+          aria-label={`Delete ${task.label}`}
+        >
+          <FluentIcon name="delete" />
         </button>
       </div>
     </article>
   );
 }
 
-function NativeFilesView({ data, refresh, loading, onStateChange }) {
+function NativePhotosView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
   const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [viewMode, setViewMode] = useState('cards');
-  const [saving, setSaving] = useState(false);
-  const [fileNameDrafts, setFileNameDrafts] = useState({});
-  const [storageNotice, setStorageNotice] = useState('');
-  const [moveFileDraft, setMoveFileDraft] = useState(null);
-  const [dragItem, setDragItem] = useState(null);
-  const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
-  const fileInputRefs = useRef({});
-  const replaceFileInputRefs = useRef({});
 
   const visibleProjects = useMemo(
-    () =>
-      (data.projects || []).filter(
-        (project) => data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
-      ),
-    [data.projects, data.settings],
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
+  );
+
+  useEffect(() => {
+    if (!visibleProjects.length) {
+      setSelectedProjectId('');
+      return;
+    }
+    if (!visibleProjects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId(visibleProjects[0].id);
+    }
+  }, [selectedProjectId, visibleProjects]);
+
+  const selectedProject = visibleProjects.find((project) => project.id === selectedProjectId) || null;
+  const photoCount = selectedProject?.photos?.length || 0;
+
+  return (
+    <section className="panel native-panel workspace-page">
+      <div className="panel-header">
+        <div>
+          <h2>Photos</h2>
+        </div>
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
+        </button>
+      </div>
+
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
+        <div className="project-summary-chip">Photos {photoCount}</div>
+        <div className="project-summary-chip">
+          Current {selectedProject?.name || 'No project selected'}
+        </div>
+      </div>
+
+      {visibleProjects.length ? (
+        <>
+          <div className="workspace-control-grid">
+            <section className="workspace-section workspace-control-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Photo scope</h3>
+                  <p className="panel-copy">Choose the project whose photo gallery you want to review.</p>
+                </div>
+              </div>
+              <div className="files-toolbar">
+                <label className="task-filter">
+                  <span>Project</span>
+                  <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                    {visibleProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
+          </div>
+
+          {selectedProject ? (
+            <section className="workspace-section">
+              <div className="panel-header">
+                <div>
+                  <h3>{selectedProject.name}</h3>
+                  <p className="panel-copy">Manage progress, site, and finish photos for this job.</p>
+                </div>
+              </div>
+              <ProjectPhotosManager data={data} project={selectedProject} onStateChange={onStateChange} readOnly={readOnly} />
+            </section>
+          ) : (
+            <div className="empty-state compact">
+              <h3>No project selected</h3>
+              <p>Choose a project to manage its photos.</p>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="empty-state">
+          <h3>No projects loaded</h3>
+          <p>Create a project first, then add progress photos, site photos, and finish photos here.</p>
+        </div>
+      )}
+
+      <PageStats settings={data.settings}>
+        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+        <DashboardStat label="Photos" value={photoCount} />
+      </PageStats>
+    </section>
+  );
+}
+
+function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+
+  const visibleProjects = useMemo(
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
   );
 
   useEffect(() => {
@@ -3517,906 +5421,67 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   const selectedProject = visibleProjects.find((project) => project.id === selectedProjectId) || null;
   const folders = selectedProject?.files?.folders || [];
   const fileCount = folders.reduce((sum, folder) => sum + (folder.files?.length || 0), 0);
-  const flatFiles = useMemo(
-    () =>
-      folders.flatMap((folder) =>
-        (folder.files || []).map((file) => ({
-          ...file,
-          folderId: folder.id,
-          folderName: folder.name,
-        })),
-      ),
-    [folders],
-  );
-
-  async function runFilesMutation(projectId, buildNextProject) {
-    setSaving(true);
-    try {
-      const project = data.projects.find((item) => item.id === projectId);
-      if (!project) return;
-      const nextProject = buildNextProject(project);
-      const nextState = await updateProject(data, projectId, nextProject);
-      onStateChange(nextState);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function promptForFolder() {
-    if (!selectedProject) return;
-    const name = window.prompt('Folder name');
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
-    const duplicate = folders.some((folder) => folder.name.toLowerCase() === trimmed.toLowerCase());
-    if (duplicate) {
-      window.alert('A folder with that name already exists for this project.');
-      return;
-    }
-    void runFilesMutation(selectedProject.id, (project) => ({
-      ...project,
-      files: {
-        folders: [
-          ...(project.files?.folders || []),
-          {
-            id: `folder-${Date.now()}`,
-            name: trimmed,
-            files: [],
-          },
-        ],
-      },
-    }));
-  }
-
-  async function renameFolder(folderId) {
-    if (!selectedProject) return;
-    const folder = folders.find((item) => item.id === folderId);
-    if (!folder) return;
-    const name = window.prompt('Folder name', folder.name);
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
-    const duplicate = folders.some(
-      (item) => item.id !== folderId && item.name.toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (duplicate) {
-      window.alert('A folder with that name already exists for this project.');
-      return;
-    }
-    await runFilesMutation(selectedProject.id, (project) => ({
-      ...project,
-      files: {
-        folders: (project.files?.folders || []).map((item) =>
-          item.id === folderId
-            ? {
-                ...item,
-                name: trimmed,
-              }
-            : item,
-        ),
-      },
-    }));
-  }
-
-  async function deleteFolder(folderId) {
-    if (!selectedProject) return;
-    const folder = folders.find((item) => item.id === folderId);
-    if (!folder) return;
-    const fileCountInFolder = folder.files?.length || 0;
-    const confirmed = window.confirm(
-      fileCountInFolder
-        ? `Delete folder "${folder.name}" and its ${fileCountInFolder} file(s)? This cannot be undone.`
-        : `Delete folder "${folder.name}"?`,
-    );
-    if (!confirmed) return;
-
-    setSaving(true);
-    try {
-      for (const file of folder.files || []) {
-        if (file?.storagePath) {
-          await deleteProjectFileFromStorage(file);
-        }
-      }
-      const project = data.projects.find((item) => item.id === selectedProject.id);
-      if (!project) return;
-      const nextProject = {
-        ...project,
-        files: {
-          folders: (project.files?.folders || []).filter((item) => item.id !== folderId),
-        },
-      };
-      const nextState = await updateProject(data, selectedProject.id, nextProject);
-      onStateChange(nextState);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to delete folder.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function startFolderDrag(event, folderId) {
-    if (saving) return;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', folderId);
-    setDragItem({ type: 'folder', folderId });
-  }
-
-  function startFileDrag(event, folderId, fileId) {
-    if (saving) return;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', fileId);
-    setDragItem({ type: 'file', folderId, fileId });
-  }
-
-  function finishDrag() {
-    setDragItem(null);
-  }
-
-  function isExternalFileDrag(event) {
-    return Array.from(event.dataTransfer?.types || []).includes('Files');
-  }
-
-  function handleFolderUploadDragOver(event, folderId) {
-    if (dragItem?.type === 'folder') {
-      event.preventDefault();
-      return;
-    }
-    if (isExternalFileDrag(event)) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      setUploadTargetFolderId(folderId);
-    }
-  }
-
-  function handleFolderUploadDragLeave(event, folderId) {
-    if (!event.currentTarget.contains(event.relatedTarget)) {
-      setUploadTargetFolderId((current) => (current === folderId ? '' : current));
-    }
-  }
-
-  function handleFolderUploadDrop(event, folderId) {
-    if (dragItem?.type === 'folder') {
-      event.preventDefault();
-      moveFolderByDrag(folderId);
-      return;
-    }
-    if (!selectedProject || !isExternalFileDrag(event)) return;
-    event.preventDefault();
-    setUploadTargetFolderId('');
-    void handleFolderUpload(selectedProject.id, folderId, event.dataTransfer.files);
-  }
-
-  function moveFolderByDrag(targetFolderId) {
-    if (!selectedProject || !dragItem || dragItem.type !== 'folder' || dragItem.folderId === targetFolderId) return;
-    void runFilesMutation(selectedProject.id, (project) => {
-      const current = [...(project.files?.folders || [])];
-      const sourceIndex = current.findIndex((folder) => folder.id === dragItem.folderId);
-      const targetIndex = current.findIndex((folder) => folder.id === targetFolderId);
-      if (sourceIndex < 0 || targetIndex < 0) return project;
-      const [movedFolder] = current.splice(sourceIndex, 1);
-      current.splice(targetIndex, 0, movedFolder);
-      return {
-        ...project,
-        files: {
-          folders: current,
-        },
-      };
-    });
-    finishDrag();
-  }
-
-  function moveFileByDrag(targetFolderId, targetFileId) {
-    if (
-      !selectedProject ||
-      !dragItem ||
-      dragItem.type !== 'file' ||
-      dragItem.folderId !== targetFolderId ||
-      dragItem.fileId === targetFileId
-    ) {
-      return;
-    }
-    void runFilesMutation(selectedProject.id, (project) => {
-      const foldersList = project.files?.folders || [];
-      return {
-        ...project,
-        files: {
-          folders: foldersList.map((folder) => {
-            if (folder.id !== targetFolderId) return folder;
-            const current = [...(folder.files || [])];
-            const sourceIndex = current.findIndex((file) => file.id === dragItem.fileId);
-            const targetIndex = current.findIndex((file) => file.id === targetFileId);
-            if (sourceIndex < 0 || targetIndex < 0) return folder;
-            const [movedFile] = current.splice(sourceIndex, 1);
-            current.splice(targetIndex, 0, movedFile);
-            return {
-              ...folder,
-              files: current,
-            };
-          }),
-        },
-      };
-    });
-    finishDrag();
-  }
-
-  function triggerFolderUpload(folderId) {
-    fileInputRefs.current[folderId]?.click();
-  }
-
-  function triggerReplaceFile(fileId) {
-    replaceFileInputRefs.current[fileId]?.click();
-  }
-
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({
-          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: '',
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          dataUrl: String(reader.result || ''),
-        });
-      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function createProjectFileRecord(projectId, folderId, file) {
-    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    if (isSupabaseStorageConfigured()) {
-      try {
-        const storageMeta = await uploadProjectFileToStorage(projectId, folderId, fileId, file);
-        return {
-          fileRecord: {
-            id: fileId,
-            name: '',
-            originalName: file.name,
-            size: file.size,
-            type: file.type,
-            uploadedAt: new Date().toISOString(),
-            ...storageMeta,
-            dataUrl: '',
-          },
-          usedFallback: false,
-        };
-      } catch {
-        // Fall back to inline storage so uploads still work if the bucket/policies are not ready.
-      }
-    }
-
-    const inlineFile = await readFileAsDataUrl(file);
-    return {
-      fileRecord: {
-        ...inlineFile,
-        id: fileId,
-        storageProvider: 'inline',
-        storageBucket: '',
-        storagePath: '',
-      },
-      usedFallback: true,
-    };
-  }
-
-  async function handleFolderUpload(projectId, folderId, fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-
-    setSaving(true);
-    try {
-      const uploadResults = await Promise.all(files.map((file) => createProjectFileRecord(projectId, folderId, file)));
-      const uploads = uploadResults.map((result) => result.fileRecord);
-      const usedFallback = uploadResults.some((result) => result.usedFallback);
-      if (usedFallback) {
-        setStorageNotice(
-          isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
-        );
-      } else {
-        setStorageNotice('');
-      }
-      const project = data.projects.find((item) => item.id === projectId);
-      if (!project) return;
-      const nextProject = {
-        ...project,
-        files: {
-          folders: (project.files?.folders || []).map((folder) =>
-            folder.id === folderId
-              ? {
-                  ...folder,
-                  files: [...(folder.files || []), ...uploads],
-                }
-              : folder,
-          ),
-        },
-      };
-      const nextState = await updateProject(data, projectId, nextProject);
-      onStateChange(nextState);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to upload file.');
-    } finally {
-      const input = fileInputRefs.current[folderId];
-      if (input) input.value = '';
-      setSaving(false);
-    }
-  }
-
-  async function handleReplaceFile(projectId, folderId, existingFile, fileList) {
-    const replacement = Array.from(fileList || [])[0];
-    if (!replacement || !existingFile) return;
-
-    setSaving(true);
-    try {
-      const uploadResult = await createProjectFileRecord(projectId, folderId, replacement);
-      const nextFile = {
-        ...existingFile,
-        ...uploadResult.fileRecord,
-        id: existingFile.id,
-        name: existingFile.name || uploadResult.fileRecord.name,
-      };
-
-      if (existingFile?.storagePath) {
-        await deleteProjectFileFromStorage(existingFile);
-      }
-
-      const project = data.projects.find((item) => item.id === projectId);
-      if (!project) return;
-      const nextProject = {
-        ...project,
-        files: {
-          folders: (project.files?.folders || []).map((folder) =>
-            folder.id === folderId
-              ? {
-                  ...folder,
-                  files: (folder.files || []).map((file) => (file.id === existingFile.id ? nextFile : file)),
-                }
-              : folder,
-          ),
-        },
-      };
-      const nextState = await updateProject(data, projectId, nextProject);
-      onStateChange(nextState);
-      if (uploadResult.usedFallback) {
-        setStorageNotice(
-          isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
-        );
-      } else {
-        setStorageNotice('');
-      }
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to replace file.');
-    } finally {
-      const input = replaceFileInputRefs.current[existingFile.id];
-      if (input) input.value = '';
-      setSaving(false);
-    }
-  }
-
-  function downloadProjectFile(file) {
-    void (async () => {
-      try {
-        let objectUrl = '';
-        if (file?.storagePath && file?.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(file);
-          objectUrl = URL.createObjectURL(blob);
-        } else if (file?.dataUrl) {
-          objectUrl = file.dataUrl;
-        } else {
-          return;
-        }
-
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = file.originalName || file.name || 'download';
-        anchor.click();
-
-        if (file?.storagePath && objectUrl.startsWith('blob:')) {
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        }
-      } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Failed to open file.');
-      }
-    })();
-  }
-
-  function updateFileNameDraft(fileId, value) {
-    setFileNameDrafts((current) => ({
-      ...current,
-      [fileId]: value,
-    }));
-  }
-
-  function persistFileName(projectId, folderId, fileId, fallbackValue = '') {
-    const nextName = String(fileNameDrafts[fileId] ?? fallbackValue ?? '').trim();
-    void runFilesMutation(projectId, (project) => ({
-      ...project,
-      files: {
-        folders: (project.files?.folders || []).map((folder) =>
-          folder.id === folderId
-            ? {
-                ...folder,
-                files: (folder.files || []).map((file) =>
-                  file.id === fileId
-                    ? {
-                        ...file,
-                        name: nextName,
-                      }
-                    : file,
-                ),
-              }
-            : folder,
-        ),
-      },
-    }));
-    setFileNameDrafts((current) => {
-      const next = { ...current };
-      delete next[fileId];
-      return next;
-    });
-  }
-
-  function deleteProjectFile(projectId, folderId, fileId) {
-    const confirmed = window.confirm('Delete this file?');
-    if (!confirmed) return;
-    void (async () => {
-      setSaving(true);
-      try {
-        const project = data.projects.find((item) => item.id === projectId);
-        if (!project) return;
-        const targetFolder = (project.files?.folders || []).find((folder) => folder.id === folderId);
-        const targetFile = targetFolder?.files?.find((file) => file.id === fileId);
-        if (targetFile?.storagePath) {
-          await deleteProjectFileFromStorage(targetFile);
-        }
-        const nextProject = {
-          ...project,
-          files: {
-            folders: (project.files?.folders || []).map((folder) =>
-              folder.id === folderId
-                ? {
-                    ...folder,
-                    files: (folder.files || []).filter((file) => file.id !== fileId),
-                  }
-                : folder,
-            ),
-          },
-        };
-        const nextState = await updateProject(data, projectId, nextProject);
-        onStateChange(nextState);
-      } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Failed to delete file.');
-      } finally {
-        setSaving(false);
-      }
-    })();
-  }
-
-  function openMoveFile(file, sourceFolderId) {
-    setMoveFileDraft({
-      projectId: selectedProject?.id || '',
-      sourceFolderId,
-      targetFolderId: sourceFolderId,
-      fileId: file.id,
-      fileName: file.name || '',
-      originalName: file.originalName || '',
-      folders: folders.map((folder) => ({ id: folder.id, name: folder.name })),
-    });
-  }
-
-  function updateMoveFileDraft(targetFolderId) {
-    setMoveFileDraft((current) => (current ? { ...current, targetFolderId } : current));
-  }
-
-  function moveProjectFile(projectId, sourceFolderId, targetFolderId, fileId) {
-    if (!targetFolderId || targetFolderId === sourceFolderId) return;
-    void runFilesMutation(projectId, (project) => {
-      const sourceFolder = (project.files?.folders || []).find((folder) => folder.id === sourceFolderId);
-      const targetFolder = (project.files?.folders || []).find((folder) => folder.id === targetFolderId);
-      const fileToMove = sourceFolder?.files?.find((file) => file.id === fileId);
-      if (!sourceFolder || !targetFolder || !fileToMove) return project;
-
-      return {
-        ...project,
-        files: {
-          folders: (project.files?.folders || []).map((folder) => {
-            if (folder.id === sourceFolderId) {
-              return {
-                ...folder,
-                files: (folder.files || []).filter((file) => file.id !== fileId),
-              };
-            }
-            if (folder.id === targetFolderId) {
-              return {
-                ...folder,
-                files: [...(folder.files || []), fileToMove],
-              };
-            }
-            return folder;
-          }),
-        },
-      };
-    });
-    setMoveFileDraft(null);
-  }
-
-  function saveMoveFile() {
-    if (!moveFileDraft) return;
-    moveProjectFile(
-      moveFileDraft.projectId,
-      moveFileDraft.sourceFolderId,
-      moveFileDraft.targetFolderId,
-      moveFileDraft.fileId,
-    );
-  }
-
-  function renderFolderDragHandle(folder) {
-    return (
-      <span
-        className="files-drag-handle"
-        draggable={!saving}
-        onDragStart={(event) => startFolderDrag(event, folder.id)}
-        onDragEnd={finishDrag}
-        title={`Drag to reorder folder ${folder.name}`}
-        aria-label={`Drag to reorder folder ${folder.name}`}
-      >
-        <span aria-hidden="true">&#8942;&#8942;</span>
-      </span>
-    );
-  }
-
-  function renderFileDragHandle(file, folderId) {
-    return (
-      <span
-        className="files-drag-handle"
-        draggable={!saving}
-        onDragStart={(event) => startFileDrag(event, folderId, file.id)}
-        onDragEnd={finishDrag}
-        title={`Drag to reorder ${file.name || file.originalName || 'file'}`}
-        aria-label={`Drag to reorder ${file.name || file.originalName || 'file'}`}
-      >
-        <span aria-hidden="true">&#8942;&#8942;</span>
-      </span>
-    );
-  }
-
-  function renderFolderActions(folder, includeUpload = false) {
-    return (
-      <div className="panel-actions">
-        {renderFolderDragHandle(folder)}
-        {includeUpload ? (
-          <>
-            <input
-              ref={(node) => {
-                if (node) fileInputRefs.current[folder.id] = node;
-              }}
-              className="visually-hidden"
-              type="file"
-              multiple
-              onChange={(event) => handleFolderUpload(selectedProject.id, folder.id, event.target.files)}
-            />
-            <button
-              className="button secondary gantt-icon-button"
-              type="button"
-              onClick={() => triggerFolderUpload(folder.id)}
-              disabled={saving}
-              title="Upload files"
-              aria-label={`Upload files to folder ${folder.name}`}
-            >
-              <img
-                className="icon-image"
-                src="/file-upload-icon.png"
-                alt=""
-                aria-hidden="true"
-              />
-            </button>
-          </>
-        ) : null}
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => void renameFolder(folder.id)}
-          disabled={saving}
-          title="Rename folder"
-          aria-label={`Rename folder ${folder.name}`}
-        >
-          <span aria-hidden="true">&#9998;</span>
-        </button>
-        <button
-          className="button secondary gantt-icon-button gantt-trash-button"
-          type="button"
-          onClick={() => void deleteFolder(folder.id)}
-          disabled={saving}
-          title="Delete folder"
-          aria-label={`Delete folder ${folder.name}`}
-        >
-          <span aria-hidden="true">&#128465;</span>
-        </button>
-      </div>
-    );
-  }
-
-  function renderFileActions(file, folderId) {
-    return (
-      <div className="files-list-actions">
-        {renderFileDragHandle(file, folderId)}
-        <input
-          ref={(node) => {
-            if (node) replaceFileInputRefs.current[file.id] = node;
-          }}
-          className="visually-hidden"
-          type="file"
-          onChange={(event) =>
-            handleReplaceFile(selectedProject.id, folderId, file, event.target.files)
-          }
-        />
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => downloadProjectFile(file)}
-          title="Download file"
-          aria-label={`Download ${file.name || file.originalName || 'file'}`}
-        >
-          <img
-            className="icon-image"
-            src="/file-download-icon.png"
-            alt=""
-            aria-hidden="true"
-          />
-        </button>
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => triggerReplaceFile(file.id)}
-          disabled={saving}
-          title="Replace file"
-          aria-label={`Replace ${file.name || file.originalName || 'file'}`}
-        >
-          <span aria-hidden="true">&#9998;</span>
-        </button>
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => openMoveFile(file, folderId)}
-          disabled={saving || folders.length < 2}
-          title={folders.length < 2 ? 'Add another folder to move files' : 'Move file'}
-          aria-label={`Move ${file.name || file.originalName || 'file'}`}
-        >
-          <img
-            className="icon-image"
-            src="/file-move-icon.png"
-            alt=""
-            aria-hidden="true"
-          />
-        </button>
-        <button
-          className="button secondary gantt-icon-button gantt-trash-button"
-          type="button"
-          onClick={() => deleteProjectFile(selectedProject.id, folderId, file.id)}
-          disabled={saving}
-          title="Delete file"
-          aria-label={`Delete ${file.name || file.originalName || 'file'}`}
-        >
-          <span aria-hidden="true">&#128465;</span>
-        </button>
-      </div>
-    );
-  }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>Files</h2>
         </div>
-        <div className="panel-actions">
-          <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-            {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
-          </button>
-          <button
-            className="button primary"
-            type="button"
-            onClick={promptForFolder}
-            disabled={saving || !selectedProject}
-          >
-            Add folder
-          </button>
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
+        </button>
+      </div>
+
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
+        <div className="project-summary-chip">Folders {folders.length}</div>
+        <div className="project-summary-chip">Files {fileCount}</div>
+        <div className="project-summary-chip">
+          Current {selectedProject?.name || 'No project selected'}
         </div>
       </div>
 
-      {storageNotice || !isSupabaseStorageConfigured() ? (
-        <section className="storage-banner">
-          <strong>Files storage notice.</strong>
-          <span>
-            {storageNotice ||
-              'Supabase Storage is not configured yet, so uploaded files are being stored locally in project data.'}
-          </span>
-        </section>
-      ) : null}
-
       {visibleProjects.length ? (
         <>
-          <div className="files-toolbar">
-            <label className="task-filter">
-              <span>Project</span>
-              <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
-                {visibleProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="people-view-toggle" role="tablist" aria-label="Files view">
-              <button
-                className={`people-toggle-button${viewMode === 'cards' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setViewMode('cards')}
-              >
-                Cards
-              </button>
-              <button
-                className={`people-toggle-button${viewMode === 'list' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setViewMode('list')}
-              >
-                List
-              </button>
-            </div>
+          <div className="workspace-control-grid">
+            <section className="workspace-section workspace-control-card">
+              <div className="panel-header">
+                <div>
+                  <h3>File scope</h3>
+                  <p className="panel-copy">Choose the project whose folders and files you want to manage.</p>
+                </div>
+              </div>
+              <div className="files-toolbar">
+                <label className="task-filter">
+                  <span>Project</span>
+                  <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                    {visibleProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
           </div>
 
           {selectedProject ? (
-            viewMode === 'cards' ? (
-            <div className="files-folder-grid">
-              {folders.map((folder) => {
-                const isDefault = DEFAULT_PROJECT_FILE_FOLDERS.includes(folder.name);
-                return (
-                  <article
-                    key={folder.id}
-                    className={`files-folder-card${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
-                    onDragOver={(event) => {
-                      handleFolderUploadDragOver(event, folder.id);
-                    }}
-                    onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
-                    onDrop={(event) => {
-                      handleFolderUploadDrop(event, folder.id);
-                    }}
-                  >
-                    <div className="files-folder-header">
-                      <div>
-                        <h3>{folder.name}</h3>
-                        <p>{folder.files?.length || 0} file(s){isDefault ? ' • Standard folder' : ''}</p>
-                      </div>
-                      {renderFolderActions(folder, true)}
-                    </div>
-
-                    {folder.files?.length ? (
-                      <div className="files-list">
-                        {folder.files.map((file) => (
-                          <div
-                            key={file.id}
-                            className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
-                            onDragOver={(event) => {
-                              if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              moveFileByDrag(folder.id, file.id);
-                            }}
-                          >
-                            <div className="files-list-copy">
-                              <input
-                                className="files-name-input"
-                                type="text"
-                                value={fileNameDrafts[file.id] ?? file.name ?? ''}
-                                placeholder="Enter file name"
-                                onChange={(event) => updateFileNameDraft(file.id, event.target.value)}
-                                onBlur={() => persistFileName(selectedProject.id, folder.id, file.id, file.name)}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter') {
-                                    event.preventDefault();
-                                    event.currentTarget.blur();
-                                  }
-                                }}
-                              />
-                              <small>
-                                {file.originalName || 'No uploaded filename'}
-                                {file.size ? ` • ${formatFileSize(file.size)}` : ''}
-                                {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
-                              </small>
-                            </div>
-                            {renderFileActions(file, folder.id)}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="empty-state compact">
-                        <h3>No files yet</h3>
-                        <p>Upload project documents here for {folder.name.toLowerCase()}.</p>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-            ) : flatFiles.length ? (
-              <div className="files-hierarchy" role="tree" aria-label="Project files hierarchy">
-                {folders.map((folder) => (
-                  <div
-                    key={folder.id}
-                    className={`files-hierarchy-folder${dragItem?.type === 'folder' && dragItem.folderId === folder.id ? ' is-dragging' : ''}${uploadTargetFolderId === folder.id ? ' is-upload-target' : ''}`}
-                    role="treeitem"
-                    aria-expanded="true"
-                    onDragOver={(event) => {
-                      handleFolderUploadDragOver(event, folder.id);
-                    }}
-                    onDragLeave={(event) => handleFolderUploadDragLeave(event, folder.id)}
-                    onDrop={(event) => {
-                      handleFolderUploadDrop(event, folder.id);
-                    }}
-                  >
-                    <div className="files-hierarchy-folder-row">
-                      <div className="files-hierarchy-folder-copy">
-                        <strong>{folder.name}</strong>
-                        <small>{folder.files?.length || 0} file(s)</small>
-                      </div>
-                      {renderFolderActions(folder, true)}
-                    </div>
-
-                    {folder.files?.length ? (
-                      <div className="files-hierarchy-children" role="group">
-                        {folder.files.map((file) => (
-                          <div
-                            key={file.id}
-                            className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
-                            role="treeitem"
-                            onDragOver={(event) => {
-                              if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              moveFileByDrag(folder.id, file.id);
-                            }}
-                          >
-                            <div className="files-hierarchy-file-copy">
-                              <strong>{file.name || 'Untitled file'}</strong>
-                              <small>
-                                {file.originalName || 'No uploaded filename'}
-                                {file.size ? ` • ${formatFileSize(file.size)}` : ''}
-                                {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
-                              </small>
-                            </div>
-                            {renderFileActions(file, folder.id)}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="empty-state compact">
-                        <h3>No files in this folder</h3>
-                        <p>Upload a file to populate this folder.</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
+            <section className="workspace-section">
+              <div className="panel-header">
+                <div>
+                  <h3>{selectedProject.name}</h3>
+                  <p className="panel-copy">Manage plans, permits, surveys, selections, and custom folders.</p>
+                </div>
               </div>
-            ) : (
-              <div className="empty-state compact">
-                <h3>No files yet</h3>
-                <p>Upload your first project document to populate the list view.</p>
-              </div>
-            )
+              <ProjectFilesManager
+                data={data}
+                project={selectedProject}
+                onStateChange={onStateChange}
+                readOnly={readOnly}
+              />
+            </section>
           ) : (
             <div className="empty-state compact">
               <h3>No project selected</h3>
@@ -4430,13 +5495,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
           <p>Create a project first, then upload files into Plans, Permits, Surveys, Selections, or your own folders.</p>
         </div>
       )}
-      <MoveFileModal
-        draft={moveFileDraft}
-        saving={saving}
-        onChange={updateMoveFileDraft}
-        onClose={() => setMoveFileDraft(null)}
-        onSave={saveMoveFile}
-      />
+
       <PageStats settings={data.settings}>
         <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
         <DashboardStat label="Folders" value={folders.length} />
@@ -4446,28 +5505,22 @@ function NativeFilesView({ data, refresh, loading, onStateChange }) {
   );
 }
 
-function NativeTasksView({ data, onStateChange, refresh, loading }) {
+function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = null }) {
   const [filter, setFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [newTask, setNewTask] = useState({ label: '', projectId: '', due: '' });
   const [editingTaskId, setEditingTaskId] = useState('');
   const [editDraft, setEditDraft] = useState({ label: '', due: '' });
   const [saving, setSaving] = useState(false);
 
   const visibleProjects = useMemo(
-    () =>
-      (data.projects || []).filter(
-        (project) =>
-          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
-      ),
-    [data.projects, data.settings],
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
   );
 
   const visibleTasks = useMemo(
-    () =>
-      (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
-      ),
-    [data.tasks, data.settings],
+    () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
+    [data.tasks, data.settings, visibleProjects],
   );
 
   const projectMap = useMemo(
@@ -4477,14 +5530,20 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
 
   const filteredTasks = useMemo(() => {
     const tasks = filter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === filter);
-    return [...tasks].sort((a, b) => {
+    const scopedTasks =
+      statusFilter === 'open'
+        ? tasks.filter((task) => !task.done)
+        : statusFilter === 'completed'
+          ? tasks.filter((task) => !!task.done)
+          : tasks;
+    return [...scopedTasks].sort((a, b) => {
       if (!!a.done !== !!b.done) return a.done ? 1 : -1;
       const aKey = a.due || '9999-12-31';
       const bKey = b.due || '9999-12-31';
       if (aKey !== bKey) return aKey < bKey ? -1 : 1;
       return a.label.localeCompare(b.label);
     });
-  }, [filter, visibleTasks]);
+  }, [filter, statusFilter, visibleTasks]);
 
   const totals = useMemo(
     () => ({
@@ -4546,7 +5605,7 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>Tasks</h2>
@@ -4556,79 +5615,135 @@ function NativeTasksView({ data, onStateChange, refresh, loading }) {
         </button>
       </div>
 
-      <form className="task-create-panel" onSubmit={handleCreateTask}>
-        <div className="task-create-grid">
-          <input
-            className="task-input"
-            placeholder="Task name"
-            value={newTask.label}
-            onChange={(event) => setNewTask((current) => ({ ...current, label: event.target.value }))}
-          />
-          <select
-            className="task-input"
-            value={newTask.projectId}
-            onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
-          >
-            <option value="">Project...</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="task-input"
-            type="date"
-            value={newTask.due}
-            onChange={(event) => setNewTask((current) => ({ ...current, due: event.target.value }))}
-          />
-          <button className="button primary" type="submit" disabled={saving}>
-            Add task
-          </button>
-        </div>
-      </form>
-
-      <div className="task-toolbar">
-        <label className="task-filter">
-          <span>Filter by project</span>
-          <select value={filter} onChange={(event) => setFilter(event.target.value)}>
-            <option value="all">All projects</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">All tasks {totals.total}</div>
+        <div className="project-summary-chip">Open {totals.open}</div>
+        <div className="project-summary-chip">Overdue {totals.overdue}</div>
+        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
       </div>
 
-      <div className="task-list">
-        {filteredTasks.length ? (
-          filteredTasks.map((task) => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              projectName={projectMap.get(task.projectId)?.name}
-              editingTaskId={editingTaskId}
-              editDraft={editDraft}
-              onEditStart={handleEditStart}
-              onEditCancel={handleEditCancel}
-              onEditDraftChange={(field, value) =>
-                setEditDraft((current) => ({ ...current, [field]: value }))
-              }
-              onEditSave={handleEditSave}
-              onToggle={handleToggle}
-              onDelete={handleDelete}
-              saving={saving}
-            />
-          ))
-        ) : (
-          <div className="empty-state">
-            <h3>No tasks yet</h3>
-            <p>Create a task above or switch the project filter to see more items.</p>
+      <div className="workspace-control-grid">
+        <section className="workspace-section workspace-control-card">
+          <div className="panel-header">
+            <div>
+              <h3>Add task</h3>
+              <p className="panel-copy">Capture a new open item and optionally assign a project and due date.</p>
+            </div>
           </div>
-        )}
+          <form className="task-create-panel workspace-plain-card" onSubmit={handleCreateTask}>
+            <div className="task-create-grid">
+              <input
+                className="task-input"
+                placeholder="Task name"
+                value={newTask.label}
+                onChange={(event) => setNewTask((current) => ({ ...current, label: event.target.value }))}
+              />
+              <select
+                className="task-input"
+                value={newTask.projectId}
+                onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
+              >
+                <option value="">Project...</option>
+                {visibleProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="task-input"
+                type="date"
+                value={newTask.due}
+                onChange={(event) => setNewTask((current) => ({ ...current, due: event.target.value }))}
+              />
+              <button className="button primary" type="submit" disabled={saving}>
+                Add task
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="workspace-section workspace-control-card">
+          <div className="panel-header">
+            <div>
+              <h3>Task scope</h3>
+              <p className="panel-copy">Filter to one project or keep the full task queue in view.</p>
+            </div>
+          </div>
+          <div className="task-toolbar">
+            <label className="task-filter">
+              <span>Filter by project</span>
+              <select value={filter} onChange={(event) => setFilter(event.target.value)}>
+                <option value="all">All projects</option>
+                {visibleProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="people-view-toggle" role="tablist" aria-label="Task status filter">
+              <button
+                className={`people-toggle-button${statusFilter === 'all' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setStatusFilter('all')}
+              >
+                All
+              </button>
+              <button
+                className={`people-toggle-button${statusFilter === 'open' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setStatusFilter('open')}
+              >
+                Open
+              </button>
+              <button
+                className={`people-toggle-button${statusFilter === 'completed' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setStatusFilter('completed')}
+              >
+                Completed
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
+
+      <section className="workspace-section">
+        <div className="panel-header">
+          <div>
+            <h3>Task list</h3>
+            <p className="panel-copy">Track what is open, overdue, and already complete.</p>
+          </div>
+        </div>
+        <div className="task-list">
+          {filteredTasks.length ? (
+            filteredTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                projectName={projectMap.get(task.projectId)?.name}
+                editingTaskId={editingTaskId}
+                editDraft={editDraft}
+                onEditStart={handleEditStart}
+                onEditCancel={handleEditCancel}
+                onEditDraftChange={(field, value) =>
+                  setEditDraft((current) => ({ ...current, [field]: value }))
+                }
+                onEditSave={handleEditSave}
+                onToggle={handleToggle}
+                onDelete={handleDelete}
+                saving={saving}
+              />
+            ))
+          ) : (
+            <div className="empty-state">
+              <h3>No tasks yet</h3>
+              <p>Create a task above or switch the project filter to see more items.</p>
+            </div>
+          )}
+        </div>
+      </section>
       <PageStats settings={data.settings}>
         <DashboardStat label="All tasks" value={totals.total} tone="brand" />
         <DashboardStat label="Open" value={totals.open} />
@@ -4666,7 +5781,7 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
             aria-label={`Edit ${personDisplayName(person)}`}
             title="Edit"
           >
-            <span aria-hidden="true">&#9998;</span>
+            <FluentIcon name="edit" />
           </button>
           <button
             className="button secondary gantt-icon-button person-delete-button"
@@ -4676,7 +5791,7 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
             aria-label={`Delete ${personDisplayName(person)}`}
             title="Delete"
           >
-            <span aria-hidden="true">&#128465;</span>
+            <FluentIcon name="delete" />
           </button>
         </div>
       </div>
@@ -4931,7 +6046,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
               aria-label={`Edit ${personDisplayName(person)}`}
               title="Edit"
             >
-              <span aria-hidden="true">&#9998;</span>
+              <FluentIcon name="edit" />
             </button>
             <button
               className="button secondary gantt-icon-button person-delete-button"
@@ -4941,7 +6056,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
               aria-label={`Delete ${personDisplayName(person)}`}
               title="Delete"
             >
-              <span aria-hidden="true">&#128465;</span>
+              <FluentIcon name="delete" />
             </button>
           </span>
         </div>
@@ -4959,20 +6074,13 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   const importInputRef = useRef(null);
 
   const visibleSubs = useMemo(
-    () =>
-      (data.subs || []).filter(
-        (person) => data.settings?.showSampleData === true || !SAMPLE_IDS.subs.includes(person.id),
-      ),
-    [data.subs, data.settings],
+    () => data.subs || [],
+    [data.subs],
   );
 
   const visibleEmployees = useMemo(
-    () =>
-      (data.employees || []).filter(
-        (person) =>
-          data.settings?.showSampleData === true || !SAMPLE_IDS.employees.includes(person.id),
-      ),
-    [data.employees, data.settings],
+    () => data.employees || [],
+    [data.employees],
   );
 
   const visiblePeople = personType === 'sub' ? visibleSubs : visibleEmployees;
@@ -5155,7 +6263,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>People</h2>
@@ -5183,91 +6291,116 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
         onChange={handleImportPeople}
       />
 
-      <div className="people-toolbar">
-        <div className="people-toggle" role="tablist" aria-label="People types">
-          <button
-            className={`people-toggle-button${personType === 'sub' ? ' active' : ''}`}
-            type="button"
-            onClick={() => setPersonType('sub')}
-          >
-            Subcontractors
-          </button>
-          <button
-            className={`people-toggle-button${personType === 'emp' ? ' active' : ''}`}
-            type="button"
-            onClick={() => setPersonType('emp')}
-          >
-            Employees
-          </button>
-        </div>
-
-        <label className="task-filter people-search">
-          <span>Search {personType === 'sub' ? 'subcontractors' : 'employees'}</span>
-          <input
-            className="task-input"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={
-              personType === 'sub'
-                ? 'Name, company, role, or tag'
-                : 'Name, role, company, or tag'
-            }
-          />
-        </label>
-
-        <div className="people-view-toggle" role="tablist" aria-label="People view">
-          <button
-            className={`people-toggle-button${viewMode === 'cards' ? ' active' : ''}`}
-            type="button"
-            onClick={() => setViewMode('cards')}
-          >
-            Cards
-          </button>
-          <button
-            className={`people-toggle-button${viewMode === 'list' ? ' active' : ''}`}
-            type="button"
-            onClick={() => setViewMode('list')}
-          >
-            List
-          </button>
-        </div>
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Subcontractors {totals.subs}</div>
+        <div className="project-summary-chip">Employees {totals.employees}</div>
+        <div className="project-summary-chip">With email {totals.withEmail}</div>
+        <div className="project-summary-chip">Tagged {totals.tagged}</div>
       </div>
 
-      {filteredPeople.length ? (
-        viewMode === 'cards' ? (
-          <div className="people-grid">
-            {filteredPeople.map((person) => (
-              <PersonCard
-                key={person.id}
-                person={person}
-                type={personType}
-                onEdit={startEdit}
-                onDelete={handleDeletePerson}
-                saving={saving}
-              />
-            ))}
+      <div className="workspace-control-grid">
+        <section className="workspace-section workspace-control-card workspace-control-card-wide">
+          <div className="panel-header">
+            <div>
+              <h3>People workspace</h3>
+              <p className="panel-copy">Switch between subcontractors and employees, search quickly, and choose the best view.</p>
+            </div>
           </div>
-        ) : (
-          <PeopleListTable
-            people={filteredPeople}
-            type={personType}
-            columns={peopleListColumns}
-            boldColumns={peopleListBoldColumns}
-            onEdit={startEdit}
-            onDelete={handleDeletePerson}
-            saving={saving}
-          />
-        )
-      ) : (
-        <div className="empty-state">
-          <h3>No {personType === 'sub' ? 'subcontractors' : 'employees'} found</h3>
-          <p>
-            {query
-              ? 'Try a different search term or clear the search field.'
-              : `Add your first ${personType === 'sub' ? 'subcontractor' : 'employee'} to get started.`}
-          </p>
+          <div className="people-toolbar">
+            <div className="people-toggle" role="tablist" aria-label="People types">
+              <button
+                className={`people-toggle-button${personType === 'sub' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setPersonType('sub')}
+              >
+                Subcontractors
+              </button>
+              <button
+                className={`people-toggle-button${personType === 'emp' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setPersonType('emp')}
+              >
+                Employees
+              </button>
+            </div>
+
+            <label className="task-filter people-search">
+              <span>Search {personType === 'sub' ? 'subcontractors' : 'employees'}</span>
+              <input
+                className="task-input"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={
+                  personType === 'sub'
+                    ? 'Name, company, role, or tag'
+                    : 'Name, role, company, or tag'
+                }
+              />
+            </label>
+
+            <div className="people-view-toggle" role="tablist" aria-label="People view">
+              <button
+                className={`people-toggle-button${viewMode === 'cards' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setViewMode('cards')}
+              >
+                Cards
+              </button>
+              <button
+                className={`people-toggle-button${viewMode === 'list' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setViewMode('list')}
+              >
+                List
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="workspace-section">
+        <div className="panel-header">
+          <div>
+            <h3>{personType === 'sub' ? 'Subcontractors' : 'Employees'}</h3>
+            <p className="panel-copy">Review contact details, responsibilities, and tags in the view that fits best.</p>
+          </div>
         </div>
-      )}
+        {filteredPeople.length ? (
+          viewMode === 'cards' ? (
+            <div className="people-grid">
+              {filteredPeople.map((person) => (
+                <PersonCard
+                  key={person.id}
+                  person={person}
+                  type={personType}
+                  onEdit={startEdit}
+                  onDelete={handleDeletePerson}
+                  saving={saving}
+                />
+              ))}
+            </div>
+          ) : (
+            <PeopleListTable
+              people={filteredPeople}
+              type={personType}
+              columns={peopleListColumns}
+              boldColumns={peopleListBoldColumns}
+              onEdit={startEdit}
+              onDelete={handleDeletePerson}
+              saving={saving}
+            />
+          )
+        ) : (
+          <div className="empty-state">
+            <h3>No {personType === 'sub' ? 'subcontractors' : 'employees'} found</h3>
+            <p>
+              {query
+                ? 'Try a different search term or clear the search field.'
+                : `Add your first ${personType === 'sub' ? 'subcontractor' : 'employee'} to get started.`}
+            </p>
+          </div>
+        )}
+      </section>
 
       {personDraft ? (
         <PersonModal
@@ -5291,11 +6424,14 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   );
 }
 
-function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'schedule' }) {
+function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'schedule', activeUser = null }) {
   const ganttGridRef = useRef(null);
+  const ganttTimelineWrapRef = useRef(null);
   const ganttLabelRowRefs = useRef([]);
   const ganttTimelineRowRefs = useRef([]);
+  const lastAutoScrollKeyRef = useRef('');
   const [filter, setFilter] = useState('all');
+  const [showCurrentAndFutureOnly, setShowCurrentAndFutureOnly] = useState(false);
   const [ganttZoomValue, setGanttZoomValue] = useState(28);
   const [expandedProjects, setExpandedProjects] = useState({});
   const [expandedPhases, setExpandedPhases] = useState({});
@@ -5307,6 +6443,8 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   const [delayDraft, setDelayDraft] = useState(null);
   const [dependencyDraft, setDependencyDraft] = useState(null);
   const [inspectionDraft, setInspectionDraft] = useState(null);
+  const [phaseNameDraft, setPhaseNameDraft] = useState(null);
+  const [subcodeDraft, setSubcodeDraft] = useState(null);
   const [editorPredecessorDraft, setEditorPredecessorDraft] = useState(null);
   const [taskDraft, setTaskDraft] = useState(null);
   const [dragDependency, setDragDependency] = useState(null);
@@ -5317,20 +6455,13 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   const isScheduleView = view === 'schedule';
 
   const visibleProjects = useMemo(
-    () =>
-      (data.projects || []).filter(
-        (project) =>
-          data.settings?.showSampleData === true || !SAMPLE_IDS.projects.includes(project.id),
-      ),
-    [data.projects, data.settings],
+    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
+    [activeUser, data.projects, data.settings],
   );
 
   const visibleTasks = useMemo(
-    () =>
-      (data.tasks || []).filter(
-        (task) => data.settings?.showSampleData === true || !SAMPLE_IDS.tasks.includes(task.id),
-      ),
-    [data.tasks, data.settings],
+    () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
+    [data.tasks, data.settings, visibleProjects],
   );
 
   const filteredProjects = useMemo(
@@ -5376,8 +6507,9 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         showGanttTasks,
         expandedProjects,
         expandedPhases,
+        { showCurrentAndFutureOnly },
       ),
-    [expandedPhases, expandedProjects, filteredProjects, showGanttTasks, tasksByProject],
+    [expandedPhases, expandedProjects, filteredProjects, showCurrentAndFutureOnly, showGanttTasks, tasksByProject],
   );
 
   const datedRows = useMemo(
@@ -5633,6 +6765,49 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     return () => window.removeEventListener('resize', measureRowHeights);
   }, [rows, filter, showGanttTasks, expandedProjects, expandedPhases, dragDependency]);
 
+  useEffect(() => {
+    if (!isScheduleView) return;
+    const wrap = ganttTimelineWrapRef.current;
+    if (!wrap) return;
+
+    const today = new Date();
+    const todayKey = toIsoDate(today);
+    if (todayKey < toIsoDate(timeline.minDate) || todayKey > toIsoDate(timeline.maxDate)) return;
+
+    const scrollKey = [
+      view,
+      filter,
+      showCurrentAndFutureOnly ? 'current-future' : 'all',
+      timeline.minDate.toISOString(),
+      timeline.maxDate.toISOString(),
+      timelineCanvasWidth,
+    ].join('|');
+
+    if (lastAutoScrollKeyRef.current === scrollKey) return;
+    lastAutoScrollKeyRef.current = scrollKey;
+
+    const offsetDays = diffInDays(timeline.minDate, today);
+    const todayCenterX = (offsetDays + 0.5) * ganttPixelsPerDay;
+    const targetScrollLeft = Math.max(
+      0,
+      Math.min(
+        todayCenterX - wrap.clientWidth / 2,
+        Math.max(0, wrap.scrollWidth - wrap.clientWidth),
+      ),
+    );
+
+    wrap.scrollLeft = targetScrollLeft;
+  }, [
+    filter,
+    ganttPixelsPerDay,
+    isScheduleView,
+    showCurrentAndFutureOnly,
+    timeline.maxDate,
+    timeline.minDate,
+    timelineCanvasWidth,
+    view,
+  ]);
+
   function toggleProject(projectId) {
     setExpandedProjects((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
   }
@@ -5820,17 +6995,31 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
 
   async function handleQuickAddPhase(projectId) {
     if (!projectId) return;
-    const name = window.prompt('New phase name');
-    if (!name || !name.trim()) return;
+    setPhaseNameDraft({
+      projectId,
+      eyebrow: 'Phase',
+      title: 'Add phase',
+      description: 'Create a new phase without leaving the scheduling workspace.',
+      label: 'Phase name',
+      placeholder: 'Phase name',
+      value: '',
+      saveLabel: 'Add phase',
+    });
+  }
+
+  async function savePhaseNameDraft() {
+    if (!phaseNameDraft?.projectId) return;
+    const trimmed = phaseNameDraft.value.trim();
+    if (!trimmed) return;
 
     setSaving(true);
     try {
-      const project = data.projects.find((item) => item.id === projectId);
+      const project = data.projects.find((item) => item.id === phaseNameDraft.projectId);
       if (!project) return;
 
       const newPhase = {
         id: `ph${Date.now()}`,
-        name: name.trim(),
+        name: trimmed,
         assign: '',
         status: 'planning',
         start: '',
@@ -5848,15 +7037,15 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       const nextTasks = syncProjectTasks(project.id, syncedProject, data.tasks);
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
-      setExpandedProjects((current) => ({ ...current, [projectId]: true }));
+      setExpandedProjects((current) => ({ ...current, [phaseNameDraft.projectId]: true }));
       setExpandedPhases((current) => ({ ...current, [newPhase.id]: true }));
       setEditorDraft((current) => {
         if (!current || current.type !== 'step') return current;
         const nextDraft = {
           ...current,
-          projectId,
+          projectId: phaseNameDraft.projectId,
           phaseId: newPhase.id,
-          predecessorOptions: buildStepDependencyOptions(projectId, newPhase.id),
+          predecessorOptions: buildStepDependencyOptions(phaseNameDraft.projectId, newPhase.id),
         };
         if (nextDraft.mode === 'create' && nextDraft.autoStart) {
           nextDraft.start = '';
@@ -5865,6 +7054,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         return nextDraft;
       });
       setEditorPredecessorDraft(null);
+      setPhaseNameDraft(null);
     } finally {
       setSaving(false);
     }
@@ -6026,14 +7216,27 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   }
 
   async function handleAddInspectionSubcodeFromSchedule() {
-    const name = window.prompt('New inspection subcode');
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
+    setSubcodeDraft({
+      eyebrow: 'Inspection',
+      title: 'Add subcode',
+      description: 'Create a new inspection subcode without leaving the scheduling workspace.',
+      label: 'Subcode',
+      placeholder: 'Inspection subcode',
+      value: '',
+      saveLabel: 'Add subcode',
+    });
+  }
+
+  async function saveScheduleInspectionSubcodeDraft() {
+    if (!subcodeDraft) return;
+    const trimmed = subcodeDraft.value.trim();
+    if (!trimmed) return;
     const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
     const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
-    const nextState = await updateSettings(data, { ...data.settings, inspectionSubcodes: nextSubcodes });
+    const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
     onStateChange(nextState);
     setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+    setSubcodeDraft(null);
   }
 
   function readInspectionFileAsDataUrl(file) {
@@ -6991,7 +8194,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel workspace-page">
       <div className="panel-header">
         <div>
           <h2>{isCalendarView ? 'Month Calendar' : 'Schedule and Gantt'}</h2>
@@ -7003,37 +8206,78 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         </div>
       </div>
 
-      <div className="schedule-toolbar">
-        <label className="task-filter">
-          <span>Project filter</span>
-          <select value={filter} onChange={(event) => setFilter(event.target.value)}>
-            <option value="all">All projects</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {isScheduleView ? (
-          <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
-            <span>Zoom</span>
-            <input
-              className="gantt-zoom-slider"
-              type="range"
-              min={GANTT_ZOOM_MIN}
-              max={GANTT_ZOOM_MAX}
-              step="1"
-              value={ganttZoomValue}
-              onChange={(event) => setGanttZoomValue(Number(event.target.value))}
-            />
-            <strong>{ganttZoomLabel}</strong>
+      <div className="project-detail-summary">
+        <div className="project-summary-chip">Projects {filteredProjects.length}</div>
+        <div className="project-summary-chip">Phases {stats.phases}</div>
+        <div className="project-summary-chip">Steps {stats.steps}</div>
+        <div className="project-summary-chip">
+          {isCalendarView ? 'Calendar tasks' : 'Visible tasks'} {(isCalendarView ? showCalendarTasks : showGanttTasks) ? stats.visibleTaskCount : 0}
+        </div>
+        {isScheduleView ? <div className="project-summary-chip">Scheduled rows {stats.scheduledRows}</div> : null}
+      </div>
+
+      <div className="workspace-control-grid">
+        <section className="workspace-section workspace-control-card workspace-control-card-wide">
+          <div className="panel-header">
+            <div>
+              <h3>{isCalendarView ? 'Calendar controls' : 'Schedule controls'}</h3>
+              <p className="panel-copy">
+                {isCalendarView
+                  ? 'Filter the shared month view and move between months without leaving this workspace.'
+                  : 'Filter the schedule, focus on current work, and control the Gantt zoom level.'}
+              </p>
+            </div>
           </div>
-        ) : null}
+          <div className="schedule-toolbar">
+            <label className="task-filter">
+              <span>Project filter</span>
+              <select value={filter} onChange={(event) => setFilter(event.target.value)}>
+                <option value="all">All projects</option>
+                {visibleProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isScheduleView ? (
+              <label className="schedule-toggle">
+                <input
+                  type="checkbox"
+                  checked={showCurrentAndFutureOnly}
+                  onChange={(event) => setShowCurrentAndFutureOnly(event.target.checked)}
+                />
+                <span>Current and future phases/steps only</span>
+              </label>
+            ) : null}
+            {isScheduleView ? (
+              <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
+                <span>Zoom</span>
+                <input
+                  className="gantt-zoom-slider"
+                  type="range"
+                  min={GANTT_ZOOM_MIN}
+                  max={GANTT_ZOOM_MAX}
+                  step="1"
+                  value={ganttZoomValue}
+                  onChange={(event) => setGanttZoomValue(Number(event.target.value))}
+                />
+                <strong>{ganttZoomLabel}</strong>
+              </div>
+            ) : null}
+          </div>
+        </section>
       </div>
 
       {isScheduleView ? (
-        rows.length ? (
+        <section className="workspace-section">
+          <div className="panel-header">
+            <div>
+              <h3>Gantt workspace</h3>
+              <p className="panel-copy">Review phases, step timing, dependencies, delays, and task markers in one timeline.</p>
+            </div>
+          </div>
+        {rows.length ? (
         <div className="gantt-shell">
           <div className="gantt-table">
             <div className="gantt-header gantt-label-header">
@@ -7104,7 +8348,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Add delay to ${row.label}`}
                         title="Add delay"
                       >
-                        !
+                        <FluentIcon name="warning" />
                       </button>
                       <button
                         className="button secondary gantt-edit-button gantt-icon-button"
@@ -7113,7 +8357,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Add step to ${row.label}`}
                         title="Add step"
                       >
-                        +
+                        <FluentIcon name="add" />
                       </button>
                       <button
                         className="button secondary gantt-edit-button gantt-icon-button"
@@ -7122,7 +8366,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Edit ${row.label}`}
                         title="Edit phase"
                       >
-                        <span aria-hidden="true">&#9998;</span>
+                        <FluentIcon name="edit" />
                       </button>
                     </>
                   ) : null}
@@ -7135,7 +8379,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Edit dependencies for ${row.label}`}
                         title="Dependencies"
                       >
-                        <span aria-hidden="true">&#8645;</span>
+                        <FluentIcon name="dependency" />
                       </button>
                       <button
                         className="button secondary gantt-edit-button gantt-icon-button gantt-trash-button"
@@ -7144,7 +8388,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Delete ${row.label}`}
                         title="Delete step"
                       >
-                        <span aria-hidden="true">&#128465;</span>
+                        <FluentIcon name="delete" />
                       </button>
                       <button
                         className="button secondary gantt-edit-button gantt-icon-button"
@@ -7153,7 +8397,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Edit ${row.label}`}
                         title="Edit step"
                       >
-                        <span aria-hidden="true">&#9998;</span>
+                        <FluentIcon name="edit" />
                       </button>
                     </>
                   ) : null}
@@ -7166,7 +8410,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Delete ${row.label}`}
                         title="Delete delay"
                       >
-                        <span aria-hidden="true">&#128465;</span>
+                        <FluentIcon name="delete" />
                       </button>
                       <button
                         className="button secondary gantt-edit-button gantt-icon-button"
@@ -7175,7 +8419,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                         aria-label={`Edit ${row.label}`}
                         title="Edit delay"
                       >
-                        <span aria-hidden="true">&#9998;</span>
+                        <FluentIcon name="edit" />
                       </button>
                     </>
                   ) : null}
@@ -7187,7 +8431,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
                       aria-label={`Edit ${row.label}`}
                       title="Edit task"
                     >
-                      <span aria-hidden="true">&#9998;</span>
+                      <FluentIcon name="edit" />
                     </button>
                   ) : null}
                 </div>
@@ -7195,7 +8439,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
             ))}
           </div>
 
-          <div className="gantt-timeline-wrap">
+          <div ref={ganttTimelineWrapRef} className="gantt-timeline-wrap">
             <div className="gantt-months" style={{ width: `${timelineCanvasWidth}px` }}>
               {timeline.months.map((month) => {
                 const monthStart = month > timeline.minDate ? month : timeline.minDate;
@@ -7352,7 +8596,8 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
             Add step
           </button>
         </div>
-      )
+      )}
+        </section>
       ) : null}
 
       {isScheduleView ? (
@@ -7362,9 +8607,10 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
       ) : null}
 
       {isCalendarView ? (
-      <section className="schedule-calendar-card">
+      <section className="schedule-calendar-card workspace-section">
         <div className="panel-header schedule-calendar-header">
           <div>
+            <h3>Month workspace</h3>
             <p className="panel-copy">
               Daily visibility for phases, steps, tasks, holidays, and weekends using the same project filter as the Gantt.
             </p>
@@ -7678,6 +8924,20 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
         onSave={handleSaveInspectionDraft}
         onDelete={handleDeleteInspectionDraft}
       />
+      <TextEntryModal
+        draft={phaseNameDraft}
+        saving={saving}
+        onChange={(value) => setPhaseNameDraft((current) => (current ? { ...current, value } : current))}
+        onClose={() => setPhaseNameDraft(null)}
+        onSave={savePhaseNameDraft}
+      />
+      <TextEntryModal
+        draft={subcodeDraft}
+        saving={saving}
+        onChange={(value) => setSubcodeDraft((current) => (current ? { ...current, value } : current))}
+        onClose={() => setSubcodeDraft(null)}
+        onSave={saveScheduleInspectionSubcodeDraft}
+      />
       <PageStats settings={data.settings}>
         <DashboardStat label="Projects" value={filteredProjects.length} tone="brand" />
         <DashboardStat label="Phases" value={stats.phases} />
@@ -7804,6 +9064,53 @@ function MoveFileModal({ draft, saving, onChange, onClose, onSave }) {
   );
 }
 
+function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
+  if (!draft) return null;
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card compact-modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">{draft.eyebrow || 'Entry'}</p>
+            <h2>{draft.title || 'Update value'}</h2>
+            {draft.description ? <p className="panel-copy">{draft.description}</p> : null}
+          </div>
+        </div>
+
+        <form
+          className="project-form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (saving || !String(draft.value || '').trim()) return;
+            onSave();
+          }}
+        >
+          <label className="full">
+            <span>{draft.label || 'Name'}</span>
+            <input
+              autoFocus
+              type="text"
+              value={draft.value}
+              placeholder={draft.placeholder || ''}
+              onChange={(event) => onChange(event.target.value)}
+              disabled={saving}
+            />
+          </label>
+        </form>
+
+        <div className="modal-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="button primary" type="button" onClick={onSave} disabled={saving || !String(draft.value || '').trim()}>
+            {saving ? 'Saving...' : draft.saveLabel || 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
 function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [saving, setSaving] = useState(false);
 
@@ -7812,7 +9119,6 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       const legacyShowTaskDueDates = data.settings?.showTaskDueDates;
       return {
         weekdaysOnly: !!data.settings?.weekdaysOnly,
-        showSampleData: data.settings?.showSampleData === true,
         showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarTaskDueDates: data.settings?.showCalendarTaskDueDates ?? (legacyShowTaskDueDates !== false),
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
@@ -7827,6 +9133,18 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         peopleListBoldColumns: Array.isArray(data.settings?.peopleListBoldColumns)
           ? data.settings.peopleListBoldColumns
           : ['name'],
+        users: Array.isArray(data.settings?.users) && data.settings.users.length
+          ? data.settings.users.map((user, index) => ({
+              id: user?.id || `user-${Date.now()}-${index}`,
+              name: String(user?.name || '').trim() || 'Unnamed user',
+              email: String(user?.email || '').trim(),
+              role: normalizeAppUserRole(String(user?.role || 'View Only')),
+            }))
+          : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
+        currentUserId:
+          Array.isArray(data.settings?.users) && data.settings.users.some((user) => user.id === data.settings?.currentUserId)
+            ? data.settings.currentUserId
+            : 'user-admin',
         holidays: Array.isArray(data.settings?.holidays) ? data.settings.holidays : [],
       };
     },
@@ -7835,12 +9153,65 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [holidayDrafts, setHolidayDrafts] = useState(() =>
     (Array.isArray(data.settings?.holidays) ? data.settings.holidays : []).map(normalizeHolidayEntry),
   );
+  const [inspectionSubcodeDrafts, setInspectionSubcodeDrafts] = useState(() =>
+    (Array.isArray(data.settings?.inspectionSubcodes) ? data.settings.inspectionSubcodes : []).map((subcode, index) => ({
+      id: `saved-subcode-${index}`,
+      value: subcode,
+      savedValue: subcode,
+      persisted: true,
+    })),
+  );
+  const [userDrafts, setUserDrafts] = useState(() =>
+    (Array.isArray(data.settings?.users) ? data.settings.users : []).map((user, index) => ({
+      id: user?.id || `user-${Date.now()}-${index}`,
+      name: String(user?.name || '').trim() || 'Unnamed user',
+      email: String(user?.email || '').trim(),
+      role: normalizeAppUserRole(String(user?.role || 'View Only')),
+      savedName: String(user?.name || '').trim() || 'Unnamed user',
+      savedEmail: String(user?.email || '').trim(),
+      savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
+      persisted: true,
+    })),
+  );
 
   useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
   }, [settings.holidays]);
 
-  const sampleDataPresent = hasVisibleSampleData(data);
+  useEffect(() => {
+    setInspectionSubcodeDrafts((current) => {
+      const unsaved = current.filter((item) => !item.persisted);
+      return [
+        ...settings.inspectionSubcodes.map((subcode, index) => ({
+          id: `saved-subcode-${index}`,
+          value: subcode,
+          savedValue: subcode,
+          persisted: true,
+        })),
+        ...unsaved,
+      ];
+    });
+  }, [settings.inspectionSubcodes]);
+
+  useEffect(() => {
+    setUserDrafts((current) => {
+      const unsaved = current.filter((item) => !item.persisted);
+      return [
+        ...settings.users.map((user, index) => ({
+          id: user?.id || `user-${Date.now()}-${index}`,
+          name: String(user?.name || '').trim() || 'Unnamed user',
+          email: String(user?.email || '').trim(),
+          role: normalizeAppUserRole(String(user?.role || 'View Only')),
+          savedName: String(user?.name || '').trim() || 'Unnamed user',
+          savedEmail: String(user?.email || '').trim(),
+          savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
+          persisted: true,
+        })),
+        ...unsaved,
+      ];
+    });
+  }, [settings.users]);
+
   const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
 
   async function runSettingsMutation(nextSettings) {
@@ -7988,23 +9359,158 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     runSettingsMutation({ ...settings, peopleListBoldColumns: next });
   }
 
-  function handleInspectionSubcodeChange(index, value) {
-    const inspectionSubcodes = settings.inspectionSubcodes.map((item, itemIndex) =>
-      itemIndex === index ? value : item,
+  function handleInspectionSubcodeChange(draftId, value) {
+    setInspectionSubcodeDrafts((current) =>
+      current.map((item) => (item.id === draftId ? { ...item, value } : item)),
     );
-    runSettingsMutation({ ...settings, inspectionSubcodes });
+  }
+
+  function hasPendingInspectionSubcode(draft) {
+    return !draft.persisted || String(draft.value || '').trim() !== String(draft.savedValue || '').trim();
+  }
+
+  async function saveInspectionSubcode(draftId) {
+    const draft = inspectionSubcodeDrafts.find((item) => item.id === draftId);
+    const nextValue = String(draft?.value || '').trim();
+    if (!draft || !nextValue) {
+      window.alert('Enter an inspection subcode before saving.');
+      return;
+    }
+    const inspectionSubcodes = inspectionSubcodeDrafts
+      .filter((item) => item.persisted || item.id === draftId)
+      .map((item) => (item.id === draftId ? nextValue : String(item.savedValue || '').trim()))
+      .filter(Boolean);
+    await runSettingsMutation({ ...settings, inspectionSubcodes });
+    setInspectionSubcodeDrafts((current) =>
+      current.map((item) =>
+        item.id === draftId
+          ? {
+              ...item,
+              value: nextValue,
+              savedValue: nextValue,
+              persisted: true,
+            }
+          : item,
+      ),
+    );
   }
 
   function handleAddInspectionSubcode() {
-    runSettingsMutation({
-      ...settings,
-      inspectionSubcodes: [...settings.inspectionSubcodes, ''],
-    });
+    setInspectionSubcodeDrafts((current) => [
+      ...current,
+      {
+        id: `draft-subcode-${Date.now()}`,
+        value: '',
+        savedValue: '',
+        persisted: false,
+      },
+    ]);
   }
 
-  function handleRemoveInspectionSubcode(index) {
-    const inspectionSubcodes = settings.inspectionSubcodes.filter((_, itemIndex) => itemIndex !== index);
+  function handleRemoveInspectionSubcode(draftId) {
+    const draft = inspectionSubcodeDrafts.find((item) => item.id === draftId);
+    if (!draft) return;
+    if (!draft.persisted) {
+      setInspectionSubcodeDrafts((current) => current.filter((item) => item.id !== draftId));
+      return;
+    }
+    const inspectionSubcodes = inspectionSubcodeDrafts
+      .filter((item) => item.persisted && item.id !== draftId)
+      .map((item) => String(item.savedValue || '').trim())
+      .filter(Boolean);
     runSettingsMutation({ ...settings, inspectionSubcodes });
+  }
+
+  function handleUserFieldChange(userId, field, value) {
+    setUserDrafts((current) =>
+      current.map((user) =>
+        user.id === userId
+          ? { ...user, [field]: field === 'role' ? normalizeAppUserRole(value) : value }
+          : user,
+      ),
+    );
+  }
+
+  function hasPendingUserDraft(user) {
+    return (
+      !user.persisted ||
+      user.name !== user.savedName ||
+      user.email !== user.savedEmail ||
+      user.role !== user.savedRole
+    );
+  }
+
+  async function saveUserDraft(userId) {
+    const targetUser = userDrafts.find((user) => user.id === userId);
+    if (!targetUser) return;
+    const users = userDrafts
+      .filter((user) => user.persisted || user.id === userId)
+      .map((user) =>
+        user.id === userId
+          ? {
+              id: user.id,
+              name: String(user.name || '').trim() || 'Unnamed user',
+              email: String(user.email || '').trim(),
+              role: normalizeAppUserRole(user.role),
+            }
+          : {
+              id: user.id,
+              name: String(user.savedName || '').trim() || 'Unnamed user',
+              email: String(user.savedEmail || '').trim(),
+              role: normalizeAppUserRole(user.savedRole),
+            },
+      );
+    await runSettingsMutation({ ...settings, users });
+    setUserDrafts((current) =>
+      current.map((user) =>
+        user.id === userId
+          ? {
+              ...user,
+              name: String(user.name || '').trim() || 'Unnamed user',
+              email: String(user.email || '').trim(),
+              role: normalizeAppUserRole(user.role),
+              savedName: String(user.name || '').trim() || 'Unnamed user',
+              savedEmail: String(user.email || '').trim(),
+              savedRole: normalizeAppUserRole(user.role),
+              persisted: true,
+            }
+          : user,
+      ),
+    );
+  }
+
+  function handleAddUser() {
+    setUserDrafts((current) => [
+      ...current,
+      {
+        id: `user-${Date.now()}`,
+        name: '',
+        email: '',
+        role: 'View Only',
+        savedName: '',
+        savedEmail: '',
+        savedRole: 'View Only',
+        persisted: false,
+      },
+    ]);
+  }
+
+  function handleRemoveUser(userId) {
+    const draftUser = userDrafts.find((item) => item.id === userId);
+    if (!draftUser) return;
+    if (!draftUser.persisted) {
+      setUserDrafts((current) => current.filter((item) => item.id !== userId));
+      return;
+    }
+    if (settings.users.length <= 1) {
+      window.alert('Keep at least one user in the app.');
+      return;
+    }
+    const confirmed = window.confirm(`Remove ${draftUser?.savedName || draftUser?.name || 'this user'}?`);
+    if (!confirmed) return;
+    const users = settings.users.filter((item) => item.id !== userId);
+    const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
+    runSettingsMutation({ ...settings, users, currentUserId });
   }
 
   return (
@@ -8018,355 +9524,436 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         </button>
       </div>
 
-      <div className="settings-grid">
-        <section className="settings-card">
-          <div className="settings-card-header">
+      <div className="settings-sections">
+        <section className="settings-section">
+          <div className="settings-section-header">
             <div>
-              <h3>Scheduling defaults</h3>
-              <p>Control the default work-calendar behavior for schedule calculations.</p>
+              <h3>Scheduling and Calendar</h3>
+              <p>Controls that shape date calculations, calendar visibility, and page-level display helpers.</p>
             </div>
           </div>
+          <div className="settings-grid">
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Scheduling defaults</h3>
+                  <p>Control the default work-calendar behavior for schedule calculations.</p>
+                </div>
+              </div>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.weekdaysOnly}
-              onChange={(event) => handleToggle('weekdaysOnly', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Use weekdays only</strong>
-              <small>Skip weekends when the scheduling logic calculates dates.</small>
-            </span>
-          </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.weekdaysOnly}
+                  onChange={(event) => handleToggle('weekdaysOnly', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Use weekdays only</strong>
+                  <small>Skip weekends when the scheduling logic calculates dates.</small>
+                </span>
+              </label>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.showGanttTaskDueDates}
-              onChange={(event) => handleToggle('showGanttTaskDueDates', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Show task due dates in Gantt</strong>
-              <small>Display task due-date markers in the Gantt view.</small>
-            </span>
-          </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.showGanttTaskDueDates}
+                  onChange={(event) => handleToggle('showGanttTaskDueDates', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Show task due dates in Gantt</strong>
+                  <small>Display task due-date markers in the Gantt view.</small>
+                </span>
+              </label>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.showCalendarTaskDueDates}
-              onChange={(event) => handleToggle('showCalendarTaskDueDates', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Show task due dates in Calendar</strong>
-              <small>Display task due-date markers in the Calendar tab.</small>
-            </span>
-          </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.showCalendarTaskDueDates}
+                  onChange={(event) => handleToggle('showCalendarTaskDueDates', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Show task due dates in Calendar</strong>
+                  <small>Display task due-date markers in the Calendar tab.</small>
+                </span>
+              </label>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.showCalendarPhases}
-              onChange={(event) => handleToggle('showCalendarPhases', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Show phases in calendar</strong>
-              <small>Display phase bars in the Calendar tab.</small>
-            </span>
-          </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.showCalendarPhases}
+                  onChange={(event) => handleToggle('showCalendarPhases', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Show phases in calendar</strong>
+                  <small>Display phase bars in the Calendar tab.</small>
+                </span>
+              </label>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.showCalendarHebrewDates}
-              onChange={(event) => handleToggle('showCalendarHebrewDates', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Show Jewish lunar dates in Calendar</strong>
-              <small>Display Hebrew calendar dates under each day number in month calendars.</small>
-            </span>
-          </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.showCalendarHebrewDates}
+                  onChange={(event) => handleToggle('showCalendarHebrewDates', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Show Jewish lunar dates in Calendar</strong>
+                  <small>Display Hebrew calendar dates under each day number in month calendars.</small>
+                </span>
+              </label>
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={settings.showPageStats}
-              onChange={(event) => handleToggle('showPageStats', event.target.checked)}
-              disabled={saving}
-            />
-            <span>
-              <strong>Show page stats</strong>
-              <small>Display summary stat cards at the bottom of each main page.</small>
-            </span>
-          </label>
-        </section>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.showPageStats}
+                  onChange={(event) => handleToggle('showPageStats', event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  <strong>Show page stats</strong>
+                  <small>Display summary stat cards at the bottom of each main page.</small>
+                </span>
+              </label>
+            </section>
 
-        <section className="settings-card">
-          <div className="settings-card-header">
-            <div>
-              <h3>Sample data</h3>
-              <p>Show or hide the starter records that came with the tracker.</p>
-            </div>
-          </div>
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Inspection subcodes</h3>
+                  <p>Manage the dropdown list used in the inspection editor.</p>
+                </div>
+                <button className="button primary" type="button" onClick={handleAddInspectionSubcode} disabled={saving}>
+                  Add subcode
+                </button>
+              </div>
 
-          {sampleDataPresent ? (
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={settings.showSampleData}
-                onChange={(event) => handleToggle('showSampleData', event.target.checked)}
-                disabled={saving}
-              />
-              <span>
-                <strong>Show sample data</strong>
-                <small>Hide starter projects, tasks, subcontractors, and employees from the UI.</small>
-              </span>
-            </label>
-          ) : (
-            <div className="empty-state compact">
-              <h3>No sample data found</h3>
-              <p>This workspace does not currently include any starter records to toggle.</p>
-            </div>
-          )}
-        </section>
+              {inspectionSubcodeDrafts.length ? (
+                <div className="inspection-subcode-list">
+                  {inspectionSubcodeDrafts.map((draft) => (
+                    <div key={draft.id} className="inspection-subcode-row">
+                      <input
+                        type="text"
+                        value={draft.value}
+                        placeholder="Inspection subcode"
+                        onChange={(event) => handleInspectionSubcodeChange(draft.id, event.target.value)}
+                        disabled={saving}
+                      />
+                      <button
+                        className="button secondary gantt-icon-button inline-save-button"
+                        type="button"
+                        onClick={() => void saveInspectionSubcode(draft.id)}
+                        disabled={saving || !hasPendingInspectionSubcode(draft)}
+                        title="Save subcode"
+                        aria-label="Save subcode"
+                      >
+                        <FluentIcon name="check" />
+                      </button>
+                      <button
+                        className="button secondary danger gantt-icon-button"
+                        type="button"
+                        onClick={() => handleRemoveInspectionSubcode(draft.id)}
+                        disabled={saving}
+                        title="Remove subcode"
+                        aria-label="Remove subcode"
+                      >
+                        <FluentIcon name="delete" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">
+                  <h3>No subcodes yet</h3>
+                  <p>Add subcodes here to make them available in the inspection modal dropdown.</p>
+                </div>
+              )}
+            </section>
 
-        <section className="settings-card">
-          <div className="settings-card-header">
-            <div>
-              <h3>Inspection subcodes</h3>
-              <p>Manage the dropdown list used in the inspection editor.</p>
-            </div>
-            <button className="button primary" type="button" onClick={handleAddInspectionSubcode} disabled={saving}>
-              Add subcode
-            </button>
-          </div>
-
-          {settings.inspectionSubcodes.length ? (
-            <div className="inspection-subcode-list">
-              {settings.inspectionSubcodes.map((subcode, index) => (
-                <div key={`inspection-subcode-${index}`} className="inspection-subcode-row">
-                  <input
-                    type="text"
-                    value={subcode}
-                    placeholder="Inspection subcode"
-                    onChange={(event) => handleInspectionSubcodeChange(index, event.target.value)}
-                    disabled={saving}
-                  />
+            <section className="settings-card settings-card-full">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Holiday calendar</h3>
+                  <p>Add single dates or inclusive date ranges for holidays and other blocked time.</p>
+                </div>
+                <div className="settings-card-actions">
                   <button
-                    className="button secondary danger"
+                    className="button secondary"
                     type="button"
-                    onClick={() => handleRemoveInspectionSubcode(index)}
+                    onClick={handleAddStandardLegalHolidays}
                     disabled={saving}
                   >
-                    Remove
+                    Add legal holidays
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={handleAddJewishHolidays}
+                    disabled={saving}
+                  >
+                    Add Jewish holidays
+                  </button>
+                  <button className="button primary" type="button" onClick={handleAddHoliday} disabled={saving}>
+                    Add holiday
                   </button>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state compact">
-              <h3>No subcodes yet</h3>
-              <p>Add subcodes here to make them available in the inspection modal dropdown.</p>
-            </div>
-          )}
+              </div>
+
+              {holidayDrafts.length ? (
+                <div className="holiday-list">
+                  {holidayDrafts.map((holiday, index) => {
+                    const isRange = !!(holiday.endDate && holiday.endDate >= holiday.date && holiday.date);
+                    const savedHoliday = settings.holidays.find((item) => item.id === holiday.id) || null;
+                    const isDirty = !savedHoliday || !holidaysMatch(savedHoliday, holiday);
+                    return (
+                      <article key={holiday.id || index} className="holiday-row">
+                        <label>
+                          <span>Start</span>
+                          <input
+                            type="date"
+                            value={holiday.date || ''}
+                            onChange={(event) => handleHolidayDraftChange(index, 'date', event.target.value)}
+                            disabled={saving}
+                          />
+                        </label>
+
+                        <label className="holiday-inline-toggle">
+                          <input
+                            type="checkbox"
+                            checked={isRange}
+                            onChange={(event) => handleToggleHolidayRange(index, event.target.checked)}
+                            disabled={saving}
+                          />
+                          <span>Range</span>
+                        </label>
+
+                        <label>
+                          <span>End</span>
+                          <input
+                            type="date"
+                            value={holiday.endDate || ''}
+                            min={holiday.date || ''}
+                            onChange={(event) => handleHolidayDraftChange(index, 'endDate', event.target.value)}
+                            disabled={saving || !isRange}
+                          />
+                        </label>
+
+                        <label className="holiday-name">
+                          <span>Name</span>
+                          <input
+                            type="text"
+                            value={holiday.name || ''}
+                            placeholder="Name (optional)"
+                            onChange={(event) => handleHolidayDraftChange(index, 'name', event.target.value)}
+                            disabled={saving}
+                          />
+                        </label>
+
+                        <label className="holiday-inline-toggle">
+                          <input
+                            type="checkbox"
+                            checked={holiday.nonWorkday !== false}
+                            onChange={(event) => handleHolidayDraftChange(index, 'nonWorkday', event.target.checked)}
+                            disabled={saving}
+                          />
+                          <span>Non-workday</span>
+                        </label>
+
+                        <div className="holiday-row-actions">
+                          <button
+                            className="button secondary gantt-icon-button"
+                            type="button"
+                            onClick={() => handleSaveHoliday(index)}
+                            disabled={saving || !isDirty}
+                            title="Save holiday"
+                            aria-label={`Save ${holiday.name || 'holiday'}`}
+                          >
+                            <FluentIcon name="check" />
+                          </button>
+                          <button
+                            className="button secondary danger gantt-icon-button"
+                            type="button"
+                            onClick={() => handleRemoveHoliday(index)}
+                            disabled={saving}
+                            title="Remove holiday"
+                            aria-label={`Remove ${holiday.name || 'holiday'}`}
+                          >
+                            <FluentIcon name="delete" />
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state compact">
+                  <h3>No holidays yet</h3>
+                  <p>Add your first holiday or closure period to start shaping the scheduling calendar.</p>
+                </div>
+              )}
+            </section>
+          </div>
         </section>
 
-        <section className="settings-card">
-          <div className="settings-card-header">
+        <section className="settings-section">
+          <div className="settings-section-header">
             <div>
-              <h3>People list columns</h3>
-              <p>Choose which columns appear in People list view and arrange their order.</p>
+              <h3>Users and Access</h3>
+              <p>Manage who can use the app and which role each person has.</p>
             </div>
           </div>
+          <div className="settings-grid settings-grid-single">
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Users and roles</h3>
+                  <p>Manage who can use the app and which role each person has.</p>
+                </div>
+                <button className="button primary" type="button" onClick={handleAddUser} disabled={saving}>
+                  Add user
+                </button>
+              </div>
 
-          <div className="settings-order-list">
-            {[
-              ...settings.peopleListColumns.filter((columnId) =>
-                PEOPLE_LIST_COLUMN_DEFS.some((column) => column.id === columnId),
-              ),
-              ...PEOPLE_LIST_COLUMN_DEFS.map((column) => column.id).filter(
-                (columnId) => !settings.peopleListColumns.includes(columnId),
-              ),
-            ].map((columnId) => {
-              const column = PEOPLE_LIST_COLUMN_DEFS.find((item) => item.id === columnId);
-              if (!column) return null;
-              const visible = settings.peopleListColumns.includes(column.id);
-              const orderIndex = settings.peopleListColumns.indexOf(column.id);
-              return (
-                <div key={column.id} className="settings-order-row">
-                  <label className="settings-toggle compact">
+              <div className="inspection-subcode-list">
+                {userDrafts.map((user) => (
+                  <div key={user.id} className="user-role-row">
                     <input
-                      type="checkbox"
-                      checked={visible}
-                      onChange={(event) => handleTogglePeopleColumn(column.id, event.target.checked)}
+                      type="text"
+                      value={user.name}
+                      placeholder="User name"
+                      onChange={(event) => handleUserFieldChange(user.id, 'name', event.target.value)}
                       disabled={saving}
                     />
-                    <span>
-                      <strong>{column.label}</strong>
-                      <small>{visible ? `Position ${orderIndex + 1}` : 'Hidden'}</small>
-                    </span>
-                  </label>
-                  <label className="settings-toggle compact settings-inline-checkbox">
                     <input
-                      type="checkbox"
-                      checked={settings.peopleListBoldColumns.includes(column.id)}
-                      onChange={(event) => handleTogglePeopleBold(column.id, event.target.checked)}
+                      type="email"
+                      value={user.email}
+                      placeholder="Email (optional)"
+                      onChange={(event) => handleUserFieldChange(user.id, 'email', event.target.value)}
                       disabled={saving}
                     />
-                    <span>
-                      <strong>Bold</strong>
-                    </span>
-                  </label>
-                  <div className="settings-order-actions">
-                    <button
-                      className="button secondary gantt-icon-button"
-                      type="button"
-                      onClick={() => movePeopleColumn(column.id, 'up')}
-                      disabled={saving || !visible || orderIndex <= 0}
-                      title="Move up"
+                    <select
+                      value={user.role}
+                      onChange={(event) => handleUserFieldChange(user.id, 'role', event.target.value)}
+                      disabled={saving}
                     >
-                      <span aria-hidden="true">&#8593;</span>
+                      {USER_ROLE_OPTIONS.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="button secondary gantt-icon-button inline-save-button"
+                      type="button"
+                      onClick={() => void saveUserDraft(user.id)}
+                      disabled={saving || !hasPendingUserDraft(user)}
+                      title="Save user"
+                      aria-label={`Save ${user.name || 'user'}`}
+                    >
+                      <FluentIcon name="check" />
                     </button>
                     <button
-                      className="button secondary gantt-icon-button"
+                      className="button secondary danger gantt-icon-button"
                       type="button"
-                      onClick={() => movePeopleColumn(column.id, 'down')}
-                      disabled={saving || !visible || orderIndex < 0 || orderIndex >= settings.peopleListColumns.length - 1}
-                      title="Move down"
+                      onClick={() => handleRemoveUser(user.id)}
+                      disabled={saving || settings.users.length <= 1}
+                      title="Remove user"
+                      aria-label={`Remove ${user.name || 'user'}`}
                     >
-                      <span aria-hidden="true">&#8595;</span>
+                      <FluentIcon name="delete" />
                     </button>
                   </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-section-header">
+            <div>
+              <h3>People List Display</h3>
+              <p>Choose which columns appear in People list view, how they are ordered, and which are emphasized.</p>
+            </div>
+          </div>
+          <div className="settings-grid settings-grid-single">
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>People list columns</h3>
+                  <p>Choose which columns appear in People list view and arrange their order.</p>
                 </div>
-              );
-            })}
+              </div>
+
+              <div className="settings-order-list">
+                {[
+                  ...settings.peopleListColumns.filter((columnId) =>
+                    PEOPLE_LIST_COLUMN_DEFS.some((column) => column.id === columnId),
+                  ),
+                  ...PEOPLE_LIST_COLUMN_DEFS.map((column) => column.id).filter(
+                    (columnId) => !settings.peopleListColumns.includes(columnId),
+                  ),
+                ].map((columnId) => {
+                  const column = PEOPLE_LIST_COLUMN_DEFS.find((item) => item.id === columnId);
+                  if (!column) return null;
+                  const visible = settings.peopleListColumns.includes(column.id);
+                  const orderIndex = settings.peopleListColumns.indexOf(column.id);
+                  return (
+                    <div key={column.id} className="settings-order-row">
+                      <label className="settings-toggle compact">
+                        <input
+                          type="checkbox"
+                          checked={visible}
+                          onChange={(event) => handleTogglePeopleColumn(column.id, event.target.checked)}
+                          disabled={saving}
+                        />
+                        <span>
+                          <strong>{column.label}</strong>
+                          <small>{visible ? `Position ${orderIndex + 1}` : 'Hidden'}</small>
+                        </span>
+                      </label>
+                      <label className="settings-toggle compact settings-inline-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={settings.peopleListBoldColumns.includes(column.id)}
+                          onChange={(event) => handleTogglePeopleBold(column.id, event.target.checked)}
+                          disabled={saving}
+                        />
+                        <span>
+                          <strong>Bold</strong>
+                        </span>
+                      </label>
+                      <div className="settings-order-actions">
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => movePeopleColumn(column.id, 'up')}
+                          disabled={saving || !visible || orderIndex <= 0}
+                          title="Move up"
+                        >
+                          <FluentIcon name="arrowUp" />
+                        </button>
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => movePeopleColumn(column.id, 'down')}
+                          disabled={saving || !visible || orderIndex < 0 || orderIndex >= settings.peopleListColumns.length - 1}
+                          title="Move down"
+                        >
+                          <FluentIcon name="arrowDown" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           </div>
         </section>
       </div>
-
-      <section className="settings-card">
-        <div className="settings-card-header">
-          <div>
-            <h3>Holiday calendar</h3>
-            <p>Add single dates or inclusive date ranges for holidays and other blocked time.</p>
-          </div>
-          <div className="settings-card-actions">
-            <button
-              className="button secondary"
-              type="button"
-              onClick={handleAddStandardLegalHolidays}
-              disabled={saving}
-            >
-              Add legal holidays
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={handleAddJewishHolidays}
-              disabled={saving}
-            >
-              Add Jewish holidays
-            </button>
-            <button className="button primary" type="button" onClick={handleAddHoliday} disabled={saving}>
-              Add holiday
-            </button>
-          </div>
-        </div>
-
-        {holidayDrafts.length ? (
-          <div className="holiday-list">
-            {holidayDrafts.map((holiday, index) => {
-              const isRange = !!(holiday.endDate && holiday.endDate >= holiday.date && holiday.date);
-              const savedHoliday = settings.holidays.find((item) => item.id === holiday.id) || null;
-              const isDirty = !savedHoliday || !holidaysMatch(savedHoliday, holiday);
-              return (
-                <article key={holiday.id || index} className="holiday-row">
-                  <label>
-                    <span>Start</span>
-                    <input
-                      type="date"
-                      value={holiday.date || ''}
-                      onChange={(event) => handleHolidayDraftChange(index, 'date', event.target.value)}
-                      disabled={saving}
-                    />
-                  </label>
-
-                  <label className="holiday-inline-toggle">
-                    <input
-                      type="checkbox"
-                      checked={isRange}
-                      onChange={(event) => handleToggleHolidayRange(index, event.target.checked)}
-                      disabled={saving}
-                    />
-                    <span>Range</span>
-                  </label>
-
-                  <label>
-                    <span>End</span>
-                    <input
-                      type="date"
-                      value={holiday.endDate || ''}
-                      min={holiday.date || ''}
-                      onChange={(event) => handleHolidayDraftChange(index, 'endDate', event.target.value)}
-                      disabled={saving || !isRange}
-                    />
-                  </label>
-
-                  <label className="holiday-name">
-                    <span>Name</span>
-                    <input
-                      type="text"
-                      value={holiday.name || ''}
-                      placeholder="Name (optional)"
-                      onChange={(event) => handleHolidayDraftChange(index, 'name', event.target.value)}
-                      disabled={saving}
-                    />
-                  </label>
-
-                  <label className="holiday-inline-toggle">
-                    <input
-                      type="checkbox"
-                      checked={holiday.nonWorkday !== false}
-                      onChange={(event) => handleHolidayDraftChange(index, 'nonWorkday', event.target.checked)}
-                      disabled={saving}
-                    />
-                    <span>Non-workday</span>
-                  </label>
-
-                  <div className="holiday-row-actions">
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={() => handleSaveHoliday(index)}
-                      disabled={saving || !isDirty}
-                    >
-                      Save
-                    </button>
-                    <button
-                      className="button secondary danger"
-                      type="button"
-                      onClick={() => handleRemoveHoliday(index)}
-                      disabled={saving}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="empty-state compact">
-            <h3>No holidays yet</h3>
-            <p>Add your first holiday or closure period to start shaping the scheduling calendar.</p>
-          </div>
-        )}
-      </section>
 
       <PageStats settings={settings}>
         <DashboardStat label="Holidays" value={settings.holidays.length} tone="brand" />
@@ -8379,7 +9966,6 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         <DashboardStat label="Page stats" value={settings.showPageStats ? 'Shown' : 'Hidden'} />
         <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
         <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
-        <DashboardStat label="Sample data" value={settings.showSampleData ? 'Shown' : 'Hidden'} />
       </PageStats>
     </section>
   );
@@ -8393,13 +9979,14 @@ export default function App() {
     subs: [],
     employees: [],
     settings: {
-      showSampleData: false,
       showGanttTaskDueDates: true,
       showCalendarTaskDueDates: true,
       showCalendarPhases: true,
       showCalendarHebrewDates: false,
       showPageStats: true,
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
+      users: [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
+      currentUserId: 'user-admin',
     },
     storageMode: 'loading',
     storageIssue: '',
@@ -8444,6 +10031,25 @@ export default function App() {
     trackerState.storageIssue,
   );
   const supabaseDiagnostics = getSupabaseDiagnosticsInfo();
+  const users = Array.isArray(trackerState.settings?.users) && trackerState.settings.users.length
+    ? trackerState.settings.users
+    : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }];
+  const activeUser =
+    users.find((user) => user.id === trackerState.settings?.currentUserId) ||
+    users[0];
+  const capabilities = getUserCapabilities(activeUser?.role);
+  const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
+
+  useEffect(() => {
+    if (!capabilities.allowedTabs.includes(activeTab)) {
+      setActiveTab(capabilities.allowedTabs[0] || 'projects');
+    }
+  }, [activeTab, capabilities.allowedTabs]);
+
+  async function handleSwitchUser(userId) {
+    const nextState = await updateSettings(trackerState, { currentUserId: userId });
+    setTrackerState(nextState);
+  }
 
   async function handleTestSupabaseConnection() {
     setConnectionTest({ status: 'testing', message: '' });
@@ -8470,6 +10076,9 @@ export default function App() {
           refresh={refreshData}
           loading={loading}
           onStateChange={setTrackerState}
+          readOnly={!capabilities.canEdit}
+          activeUser={activeUser}
+          users={users}
         />
       );
     }
@@ -8481,6 +10090,7 @@ export default function App() {
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
+          activeUser={activeUser}
         />
       );
     }
@@ -8492,6 +10102,21 @@ export default function App() {
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
+          readOnly={!capabilities.canEdit}
+          activeUser={activeUser}
+        />
+      );
+    }
+
+    if (activeTab === 'photos') {
+      return (
+        <NativePhotosView
+          data={trackerState}
+          onStateChange={setTrackerState}
+          refresh={refreshData}
+          loading={loading}
+          readOnly={!capabilities.canEdit}
+          activeUser={activeUser}
         />
       );
     }
@@ -8503,6 +10128,8 @@ export default function App() {
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
+          readOnly={!capabilities.canEdit}
+          activeUser={activeUser}
         />
       );
     }
@@ -8515,6 +10142,7 @@ export default function App() {
           loading={loading}
           onStateChange={setTrackerState}
           view="schedule"
+          activeUser={activeUser}
         />
       );
     }
@@ -8527,6 +10155,7 @@ export default function App() {
           loading={loading}
           onStateChange={setTrackerState}
           view="calendar"
+          activeUser={activeUser}
         />
       );
     }
@@ -8565,6 +10194,18 @@ export default function App() {
               <img src="/destiny-logo.png" alt="Destiny Homes logo" />
             </div>
             <h1>Destiny Project Hub</h1>
+          </div>
+          <div className="hero-user-controls">
+            <label className="task-filter hero-user-select">
+              <span>Current user</span>
+              <select value={activeUser?.id || ''} onChange={(event) => void handleSwitchUser(event.target.value)}>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name} ({user.role})
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
       </section>
@@ -8620,23 +10261,32 @@ export default function App() {
         </section>
       ) : null}
 
-      <nav className="react-tabs" aria-label="Destiny Project Hub sections">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {capabilities.showTabs ? (
+        <nav className="react-tabs" aria-label="Destiny Project Hub sections">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
       <AppErrorBoundary resetKey={activeTab}>
         {activeView}
       </AppErrorBoundary>
     </main>
   );
 }
+
+
+
+
+
+
+
 
 

@@ -35,13 +35,22 @@ export function collectProjectScheduleBounds(project) {
   return dates.filter(Boolean);
 }
 
-export function buildScheduleRows(projects, tasksByProject, showTasks, expandedProjects, expandedPhases) {
+function isCurrentOrFutureRange(start, end, todayIso) {
+  const effectiveStart = start || end || '';
+  const effectiveEnd = end || start || '';
+  if (!effectiveStart && !effectiveEnd) return false;
+  return effectiveEnd >= todayIso;
+}
+
+export function buildScheduleRows(projects, tasksByProject, showTasks, expandedProjects, expandedPhases, options = {}) {
+  const showCurrentAndFutureOnly = options.showCurrentAndFutureOnly === true;
+  const todayIso = options.todayIso || new Date().toISOString().slice(0, 10);
   const rows = [];
   projects.forEach((project) => {
     const projectDates = collectProjectScheduleBounds(project);
     const sortedProjectDates = [...projectDates].sort((a, b) => a - b);
     const projectExpanded = expandedProjects[project.id] ?? true;
-    rows.push({
+    const projectRow = {
       id: `project-${project.id}`,
       type: 'project',
       depth: 0,
@@ -56,9 +65,8 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
           : ''),
       status: project.status || 'planning',
       expanded: projectExpanded,
-    });
-
-    if (!projectExpanded) return;
+    };
+    const childRows = [];
 
     (project.phases || []).forEach((phase) => {
       const phaseExpanded = expandedPhases[phase.id] ?? true;
@@ -71,44 +79,33 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
         if (aEnd !== bEnd) return aEnd < bEnd ? -1 : 1;
         return (a.name || '').localeCompare(b.name || '');
       });
-      rows.push({
-        id: `phase-${phase.id}`,
-        type: 'phase',
-        depth: 1,
-        entityId: phase.id,
-        parentProjectId: project.id,
-        label: phase.name,
-        subtitle: `${phase.steps?.length || 0} step${phase.steps?.length === 1 ? '' : 's'}`,
-        start: phase.start || '',
-        end: phase.end || '',
-        status: phase.status || project.status || 'planning',
-        assign: phase.assign || '',
-        expanded: phaseExpanded,
-      });
-
-      if (!phaseExpanded) return;
-
-      sortedSteps.forEach((step) => {
-        rows.push({
-          id: `step-${step.id}`,
-          type: 'step',
-          depth: 2,
-          entityId: step.id,
-          parentProjectId: project.id,
-          parentPhaseId: phase.id,
-          label: step.name,
-          subtitle: '',
-          start: step.start || '',
-          end: step.end || '',
-          duration: step.duration || 1,
-          assign: step.assign || '',
-          predecessors: normalizePreds(step.predecessors),
-          status: step.done ? 'done' : phase.status || project.status || 'planning',
-        });
+      const visibleStepRows = sortedSteps.flatMap((step) => {
+        const includeStep =
+          !showCurrentAndFutureOnly ||
+          isCurrentOrFutureRange(step.start || '', step.end || '', todayIso);
+        if (!includeStep) return [];
+        const nextRows = [
+          {
+            id: `step-${step.id}`,
+            type: 'step',
+            depth: 2,
+            entityId: step.id,
+            parentProjectId: project.id,
+            parentPhaseId: phase.id,
+            label: step.name,
+            subtitle: '',
+            start: step.start || '',
+            end: step.end || '',
+            duration: step.duration || 1,
+            assign: step.assign || '',
+            predecessors: normalizePreds(step.predecessors),
+            status: step.done ? 'done' : phase.status || project.status || 'planning',
+          },
+        ];
 
         ((phase.delays || []).filter((delay) => delay.stepId === step.id)).forEach((delay) => {
           const delayEnd = step.start ? toIsoDate(addDays(parseDateValue(step.start), Number(delay.days) || 0)) : '';
-          rows.push({
+          nextRows.push({
             id: `delay-${delay.id}`,
             type: 'delay',
             depth: 3,
@@ -127,27 +124,59 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
             stepName: step.name,
           });
         });
+        return nextRows;
       });
 
-      if (showTasks) {
-        (tasksByProject.get(project.id) || []).forEach((task) => {
-          rows.push({
-            id: `task-${task.id}`,
-            type: 'task',
-            depth: 1,
-            entityId: task.id,
-            parentProjectId: project.id,
-            label: task.label,
-            subtitle: task.done ? 'Completed task' : 'Task due date',
-            start: task.due || '',
-            end: task.due || '',
-            done: !!task.done,
-            status: task.done ? 'done' : isOverdue(task.due, task.done) ? 'delayed' : 'active',
-            isMilestone: true,
-          });
-        });
-      }
+      const includePhase =
+        !showCurrentAndFutureOnly ||
+        isCurrentOrFutureRange(phase.start || '', phase.end || '', todayIso) ||
+        visibleStepRows.length > 0;
+      if (!includePhase) return;
+
+      childRows.push({
+        id: `phase-${phase.id}`,
+        type: 'phase',
+        depth: 1,
+        entityId: phase.id,
+        parentProjectId: project.id,
+        label: phase.name,
+        subtitle: `${phase.steps?.length || 0} step${phase.steps?.length === 1 ? '' : 's'}`,
+        start: phase.start || '',
+        end: phase.end || '',
+        status: phase.status || project.status || 'planning',
+        assign: phase.assign || '',
+        expanded: phaseExpanded,
+      });
+
+      if (!phaseExpanded) return;
+      childRows.push(...visibleStepRows);
     });
+
+    if (showTasks) {
+      (tasksByProject.get(project.id) || []).forEach((task) => {
+        childRows.push({
+          id: `task-${task.id}`,
+          type: 'task',
+          depth: 1,
+          entityId: task.id,
+          parentProjectId: project.id,
+          label: task.label,
+          subtitle: task.done ? 'Completed task' : 'Task due date',
+          start: task.due || '',
+          end: task.due || '',
+          done: !!task.done,
+          status: task.done ? 'done' : isOverdue(task.due, task.done) ? 'delayed' : 'active',
+          isMilestone: true,
+        });
+      });
+    }
+
+    const includeProject = !showCurrentAndFutureOnly || childRows.length > 0;
+    if (!includeProject) return;
+
+    rows.push(projectRow);
+    if (!projectExpanded) return;
+    rows.push(...childRows);
   });
   return rows;
 }
