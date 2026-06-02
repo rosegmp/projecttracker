@@ -347,8 +347,8 @@ const tests = [
         [
           'project-1',
           [
-            { id: 'task-1', label: 'Inspection', due: '2026-05-21', done: false },
-            { id: 'task-2', label: 'Cleanup', due: '2026-05-21', done: true },
+            { id: 'task-1', label: 'Inspection', due: '2026-05-21', done: false, assignee: 'Crew A' },
+            { id: 'task-2', label: 'Cleanup', due: '2026-05-21', done: true, assignee: '' },
           ],
         ],
       ]);
@@ -375,6 +375,7 @@ const tests = [
       );
       assert.equal(calendar.itemsByDate.get('2026-05-21')[0].taskId, 'task-2');
       assert.equal(calendar.itemsByDate.get('2026-05-21')[0].projectId, 'project-1');
+      assert.equal(calendar.itemsByDate.get('2026-05-21')[1].assignee, 'Crew A');
       assert.equal(calendar.holidayMap.get('2026-05-25').length, 1);
       assert.equal(calendar.holidayMap.get('2026-05-26').length, 1);
     },

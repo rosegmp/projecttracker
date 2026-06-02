@@ -31,6 +31,7 @@ const EMPTY_SETTINGS = {
 };
 
 export const USER_ROLE_OPTIONS = ['Admin', 'Edit', 'Customer', 'Subcontractor', 'View Only'];
+export const PEOPLE_TYPE_OPTIONS = ['sub', 'emp', 'supplier', 'consultant', 'customer'];
 
 const LEGACY_SAMPLE_IDS = {
   projects: ['react-sample-1', 'react-sample-2', 'p1', 'p2', 'p3'],
@@ -92,6 +93,26 @@ function normalizeSettings(settings) {
     peopleListBoldColumns: Array.isArray(settings?.peopleListBoldColumns) ? settings.peopleListBoldColumns : EMPTY_SETTINGS.peopleListBoldColumns,
     users,
     currentUserId,
+  };
+}
+
+function normalizePeopleType(type) {
+  return PEOPLE_TYPE_OPTIONS.includes(String(type || '').trim()) ? String(type).trim() : 'emp';
+}
+
+function normalizePerson(type, person = {}) {
+  return {
+    ...person,
+    first: String(person.first || '').trim(),
+    last: String(person.last || '').trim(),
+    company: String(person.company || '').trim(),
+    role: String(person.role || '').trim(),
+    phone: String(person.phone || '').trim(),
+    email: String(person.email || '').trim(),
+    license: String(person.license || '').trim(),
+    notes: String(person.notes || '').trim(),
+    tags: normalizeTags(person.tags),
+    peopleType: type === 'sub' ? 'sub' : normalizePeopleType(person.peopleType || type),
   };
 }
 
@@ -210,6 +231,17 @@ function normalizeProject(project) {
   };
 }
 
+function normalizeTask(task = {}) {
+  return {
+    ...task,
+    label: String(task?.label || '').trim(),
+    projectId: String(task?.projectId || '').trim(),
+    due: String(task?.due || '').trim(),
+    assignee: String(task?.assignee || '').trim(),
+    done: !!task?.done,
+  };
+}
+
 function fromStorage(key, fallback) {
   const raw = window.localStorage.getItem(key);
   if (!raw) return fallback;
@@ -227,9 +259,9 @@ function writeStorage(key, value) {
 function getFallbackData(overrides = {}) {
   const nextData = stripLegacySampleData({
     projects: fromStorage('cx_p', []).map(normalizeProject),
-    tasks: fromStorage('cx_t', []),
-    subs: fromStorage('cx_s', []),
-    employees: fromStorage('cx_e', []),
+    tasks: fromStorage('cx_t', []).map(normalizeTask),
+    subs: fromStorage('cx_s', []).map((person) => normalizePerson('sub', person)),
+    employees: fromStorage('cx_e', []).map((person) => normalizePerson('emp', person)),
     settings: normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS)),
     storageMode: 'local',
     storageIssue: '',
@@ -463,12 +495,12 @@ export async function loadTrackerData() {
     }
 
     const projects = projectsResponse.map((row) => normalizeProject(row.data || row));
-    const tasks = tasksResponse.map((row) => row.data || row);
+    const tasks = tasksResponse.map((row) => normalizeTask(row.data || row));
     const subs = Array.isArray(subsResponse)
-      ? subsResponse.map((row) => row.data || row)
+      ? subsResponse.map((row) => normalizePerson('sub', row.data || row))
       : [];
     const employees = Array.isArray(employeesResponse)
-      ? employeesResponse.map((row) => row.data || row)
+      ? employeesResponse.map((row) => normalizePerson('emp', row.data || row))
       : [];
     const settings =
       Array.isArray(settingsResponse) && settingsResponse.length
@@ -493,13 +525,14 @@ export async function loadTrackerData() {
 }
 
 export async function createTask(currentState, payload) {
-  const task = {
+  const task = normalizeTask({
     id: `t${Date.now()}`,
     label: payload.label.trim(),
     projectId: payload.projectId || '',
     done: false,
     due: payload.due || '',
-  };
+    assignee: payload.assignee || '',
+  });
   const tasks = [...currentState.tasks, task];
   const storageMode = await persistTasks(tasks, currentState.storageMode);
   return { ...currentState, tasks, storageMode };
@@ -507,7 +540,7 @@ export async function createTask(currentState, payload) {
 
 export async function updateTask(currentState, taskId, updates) {
   const tasks = currentState.tasks.map((task) =>
-    task.id === taskId ? { ...task, ...updates } : task,
+    task.id === taskId ? normalizeTask({ ...task, ...updates }) : normalizeTask(task),
   );
   const storageMode = await persistTasks(tasks, currentState.storageMode);
   return { ...currentState, tasks, storageMode };
@@ -623,8 +656,8 @@ function normalizeTags(tags) {
 }
 
 function buildPerson(type, payload) {
-  return {
-    id: `${type === 'sub' ? 'sub' : 'emp'}${Date.now()}`,
+  return normalizePerson(type, {
+    id: `${type === 'sub' ? 'sub' : normalizePeopleType(type)}${Date.now()}`,
     first: payload.first?.trim() || '',
     last: payload.last?.trim() || '',
     company: payload.company?.trim() || '',
@@ -634,7 +667,8 @@ function buildPerson(type, payload) {
     license: payload.license?.trim() || '',
     notes: payload.notes?.trim() || '',
     tags: normalizeTags(payload.tags),
-  };
+    peopleType: type,
+  });
 }
 
 function getPeopleConfig(type) {
@@ -693,7 +727,7 @@ export async function importPeople(currentState, type, payloads) {
   const config = getPeopleConfig(type);
   const imported = (payloads || []).map((payload, index) => ({
     ...buildPerson(type, payload),
-    id: `${type === 'sub' ? 'sub' : 'emp'}${Date.now()}${index}`,
+    id: `${type === 'sub' ? 'sub' : normalizePeopleType(type)}${Date.now()}${index}`,
   }));
   const people = [...currentState[config.key], ...imported];
   const storageMode = await persistCollection(

@@ -162,6 +162,7 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
           parentProjectId: project.id,
           label: task.label,
           subtitle: task.done ? 'Completed task' : 'Task due date',
+          assignee: task.assignee || '',
           start: task.due || '',
           end: task.due || '',
           done: !!task.done,
@@ -290,6 +291,7 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
         projectName: project.name,
         projectId: project.id,
         due: task.due,
+        assignee: task.assignee || '',
         done: !!task.done,
         status: task.done ? 'done' : isOverdue(task.due, task.done) ? 'delayed' : 'active',
       });

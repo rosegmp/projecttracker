@@ -152,6 +152,12 @@ a {
   line-height: 1.6;
 }
 
+.panel-header .panel-copy,
+.workspace-section .panel-copy,
+.workspace-control-card .panel-copy {
+  max-width: none;
+}
+
 .hero-actions,
 .panel-header {
   display: flex;
@@ -165,6 +171,12 @@ a {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.page-refresh-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 .button {
@@ -389,7 +401,7 @@ a {
 .task-create-grid,
 .task-edit-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
   gap: 12px;
   align-items: center;
 }
@@ -399,10 +411,44 @@ a {
   min-width: 0;
 }
 
+.inline-action-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .task-toolbar {
   display: flex;
   justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.task-header-actions {
+  align-items: end;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+.task-toolbar.task-toolbar-header {
+  margin-bottom: 0;
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.header-scope-actions {
+  align-items: end;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+.header-scope-toolbar {
+  margin-bottom: 0;
+  justify-content: flex-end;
+  align-items: end;
+  flex-wrap: wrap;
 }
 
 .people-toolbar {
@@ -2421,7 +2467,22 @@ button.calendar-chip {
 }
 
 .task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-self: start;
+}
+
+.task-assignee-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(61, 66, 120, 0.08);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .task-due-chip {
@@ -2445,6 +2506,40 @@ button.calendar-chip {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.task-group {
+  display: grid;
+  gap: 10px;
+}
+
+.task-group + .task-group {
+  margin-top: 6px;
+}
+
+.task-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 2px 0;
+}
+
+.task-group-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-group-header h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.task-group-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .button.secondary.danger {
@@ -3325,6 +3420,10 @@ button.calendar-chip {
   .project-form-grid,
   .person-details,
   .holiday-row {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-action-field {
     grid-template-columns: 1fr;
   }
 
