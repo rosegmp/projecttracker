@@ -348,6 +348,24 @@ function getDaysRemaining(endDate) {
   return Math.ceil((end - today) / 86400000);
 }
 
+function getProjectTimelineCompletion(project) {
+  if (!project?.start || !project?.end) return 0;
+  const start = new Date(`${project.start}T00:00:00`);
+  const end = new Date(`${project.end}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+
+  const today = new Date();
+  const todayAtMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (todayAtMidnight <= start) return 0;
+  if (todayAtMidnight >= end) return 100;
+
+  const totalDays = diffInDays(start, end);
+  if (totalDays <= 0) return todayAtMidnight >= end ? 100 : 0;
+
+  const elapsedDays = diffInDays(start, todayAtMidnight);
+  return Math.max(0, Math.min(100, Math.round((elapsedDays / totalDays) * 100)));
+}
+
 function getProjectStepCount(project) {
   return (project?.phases || []).reduce((sum, phase) => sum + (phase.steps?.length || 0), 0);
 }
@@ -822,7 +840,7 @@ class AppErrorBoundary extends React.Component {
 function ProjectCard({ project, taskCount, onEdit, onOpen }) {
   const health = getProjectHealth(project);
   const remaining = getDaysRemaining(project.end);
-  const completion = project.progress ?? 0;
+  const completion = getProjectTimelineCompletion(project);
   const metaParts = [project.customerName, project.address].filter(Boolean);
   const customerLabel = project.customerName || 'No customer';
   const permitLabel = project.permitNumber || 'Not set';
@@ -954,16 +972,6 @@ function ProjectModal({ draft, users, onChange, onClose, onSave, onDelete, savin
               <option value="delayed">Delayed</option>
               <option value="done">Done</option>
             </select>
-          </label>
-          <label>
-            <span>Progress</span>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={draft.progress}
-              onChange={(event) => onChange('progress', event.target.value)}
-            />
           </label>
           <label>
             <span>Start date</span>
@@ -9572,6 +9580,9 @@ function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
 
 function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [saving, setSaving] = useState(false);
+  const settingsStateRef = useRef(data);
+  const settingsSaveChainRef = useRef(Promise.resolve());
+  const pendingSettingsSavesRef = useRef(0);
 
   const settings = useMemo(
     () => {
@@ -9634,6 +9645,10 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   );
 
   useEffect(() => {
+    settingsStateRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
   }, [settings.holidays]);
 
@@ -9673,18 +9688,29 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 
   const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
 
-  async function runSettingsMutation(nextSettings) {
+  function runSettingsMutation(nextSettings) {
+    pendingSettingsSavesRef.current += 1;
     setSaving(true);
-    try {
-      const nextState = await updateSettings(data, nextSettings);
+
+    const queuedSave = settingsSaveChainRef.current.then(async () => {
+      const nextState = await updateSettings(settingsStateRef.current, nextSettings);
+      settingsStateRef.current = nextState;
       onStateChange(nextState);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
+
+    settingsSaveChainRef.current = queuedSave.catch(() => {});
+
+    return queuedSave.finally(() => {
+      pendingSettingsSavesRef.current = Math.max(0, pendingSettingsSavesRef.current - 1);
+      if (pendingSettingsSavesRef.current === 0) {
+        setSaving(false);
+      }
+    });
   }
 
   function handleToggle(field, value) {
-    runSettingsMutation({ ...settings, [field]: value });
+    runSettingsMutation({ [field]: value });
   }
 
   function handleHolidayDraftChange(index, field, value) {
@@ -9717,7 +9743,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
             holidayIndex === existingIndex ? draft : holiday,
           )
         : [...settings.holidays, draft];
-    runSettingsMutation({ ...settings, holidays: sortHolidays(holidays) });
+    runSettingsMutation({ holidays: sortHolidays(holidays) });
   }
 
   function handleAddHoliday() {
@@ -9738,7 +9764,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       return;
     }
     const holidays = settings.holidays.filter((_, holidayIndex) => holidayIndex !== existingIndex);
-    runSettingsMutation({ ...settings, holidays });
+    runSettingsMutation({ holidays });
   }
 
   function handleAddStandardLegalHolidays() {
@@ -9759,7 +9785,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         return !existingKeys.has(key);
       }),
     ]);
-    runSettingsMutation({ ...settings, holidays });
+    runSettingsMutation({ holidays });
   }
 
   function handleAddJewishHolidays() {
@@ -9780,7 +9806,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         return !existingKeys.has(key);
       }),
     ]);
-    runSettingsMutation({ ...settings, holidays });
+    runSettingsMutation({ holidays });
   }
 
   function handleTogglePeopleColumn(columnId, enabled) {
@@ -9792,7 +9818,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         ? current
         : [...current, columnId]
       : current.filter((item) => item !== columnId);
-    runSettingsMutation({ ...settings, peopleListColumns: next });
+    runSettingsMutation({ peopleListColumns: next });
   }
 
   function movePeopleColumn(columnId, direction) {
@@ -9803,7 +9829,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     if (targetIndex < 0 || targetIndex >= current.length) return;
     const next = [...current];
     [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
-    runSettingsMutation({ ...settings, peopleListColumns: next });
+    runSettingsMutation({ peopleListColumns: next });
   }
 
   function handleTogglePeopleBold(columnId, enabled) {
@@ -9815,7 +9841,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         ? current
         : [...current, columnId]
       : current.filter((item) => item !== columnId);
-    runSettingsMutation({ ...settings, peopleListBoldColumns: next });
+    runSettingsMutation({ peopleListBoldColumns: next });
   }
 
   function handleInspectionSubcodeChange(draftId, value) {
@@ -9839,7 +9865,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       .filter((item) => item.persisted || item.id === draftId)
       .map((item) => (item.id === draftId ? nextValue : String(item.savedValue || '').trim()))
       .filter(Boolean);
-    await runSettingsMutation({ ...settings, inspectionSubcodes });
+    await runSettingsMutation({ inspectionSubcodes });
     setInspectionSubcodeDrafts((current) =>
       current.map((item) =>
         item.id === draftId
@@ -9877,7 +9903,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       .filter((item) => item.persisted && item.id !== draftId)
       .map((item) => String(item.savedValue || '').trim())
       .filter(Boolean);
-    runSettingsMutation({ ...settings, inspectionSubcodes });
+    runSettingsMutation({ inspectionSubcodes });
   }
 
   function handleUserFieldChange(userId, field, value) {
@@ -9919,7 +9945,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               role: normalizeAppUserRole(user.savedRole),
             },
       );
-    await runSettingsMutation({ ...settings, users });
+    await runSettingsMutation({ users });
     setUserDrafts((current) =>
       current.map((user) =>
         user.id === userId
@@ -9969,7 +9995,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     if (!confirmed) return;
     const users = settings.users.filter((item) => item.id !== userId);
     const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
-    runSettingsMutation({ ...settings, users, currentUserId });
+    runSettingsMutation({ users, currentUserId });
   }
 
   return (
@@ -10459,6 +10485,11 @@ export default function App() {
   const [error, setError] = useState('');
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
+  const trackerStateRef = useRef(trackerState);
+
+  useEffect(() => {
+    trackerStateRef.current = trackerState;
+  }, [trackerState]);
 
   async function refreshData() {
     setLoading(true);
@@ -10511,7 +10542,8 @@ export default function App() {
   }, [activeTab, capabilities.allowedTabs]);
 
   async function handleSwitchUser(userId) {
-    const nextState = await updateSettings(trackerState, { currentUserId: userId });
+    const nextState = await updateSettings(trackerStateRef.current, { currentUserId: userId });
+    trackerStateRef.current = nextState;
     setTrackerState(nextState);
   }
 
