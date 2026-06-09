@@ -1,12 +1,47 @@
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env.VITE_SUPABASE_KEY || '').trim();
 const SUPABASE_FILES_BUCKET = (import.meta.env.VITE_SUPABASE_FILES_BUCKET || 'project-files').trim();
-const HEADERS = {
-  apikey: SUPABASE_KEY,
-  Authorization: `Bearer ${SUPABASE_KEY}`,
-  'Content-Type': 'application/json',
-  Prefer: 'return=representation',
-};
+const AUTH_STORAGE_KEY = 'cx_auth_session';
+
+let authSession = readAuthSessionFromStorage();
+
+function readAuthSessionFromStorage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function writeAuthSession(session) {
+  authSession = session || null;
+  if (typeof window === 'undefined') return;
+  if (authSession) {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authSession));
+  } else {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  }
+}
+
+function getAuthAccessToken() {
+  return authSession?.accessToken || '';
+}
+
+function buildHeaders(extraHeaders = {}) {
+  const accessToken = getAuthAccessToken();
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${accessToken || SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation',
+    ...extraHeaders,
+  };
+}
+
+function getAuthEndpoint(path) {
+  return `${SUPABASE_URL}/auth/v1${path}`;
+}
 
 const EMPTY_SETTINGS = {
   weekdaysOnly: false,
@@ -32,6 +67,98 @@ const EMPTY_SETTINGS = {
 
 export const USER_ROLE_OPTIONS = ['Admin', 'Edit', 'Customer', 'Subcontractor', 'View Only'];
 export const PEOPLE_TYPE_OPTIONS = ['sub', 'emp', 'supplier', 'consultant', 'customer'];
+
+function normalizeAuthSession(payload) {
+  if (!payload?.access_token || !payload?.user) return null;
+  const expiresAt =
+    payload.expires_at
+      ? Number(payload.expires_at) * 1000
+      : Date.now() + Math.max(0, Number(payload.expires_in) || 0) * 1000;
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token || '',
+    expiresAt,
+    user: {
+      id: payload.user.id || '',
+      email: String(payload.user.email || '').trim(),
+    },
+  };
+}
+
+async function refreshAuthSession(session) {
+  if (!isSupabaseConfigured() || !session?.refreshToken) return null;
+  const response = await fetch(getAuthEndpoint('/token?grant_type=refresh_token'), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ refresh_token: session.refreshToken }),
+  });
+  if (!response.ok) return null;
+  const nextSession = normalizeAuthSession(await response.json());
+  writeAuthSession(nextSession);
+  return nextSession;
+}
+
+export function getStoredAuthSession() {
+  return authSession;
+}
+
+export async function initializeAuthSession() {
+  const session = readAuthSessionFromStorage();
+  if (!session?.accessToken) {
+    writeAuthSession(null);
+    return null;
+  }
+  if (session.expiresAt && session.expiresAt - Date.now() < 60_000) {
+    return refreshAuthSession(session);
+  }
+  writeAuthSession(session);
+  return session;
+}
+
+export async function signInWithPassword(email, password) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured for sign-in.');
+  }
+  const response = await fetch(getAuthEndpoint('/token?grant_type=password'), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({
+      email: String(email || '').trim(),
+      password,
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = text || 'Sign-in failed.';
+    try {
+      const errorPayload = JSON.parse(text);
+      message = errorPayload.error_description || errorPayload.msg || errorPayload.message || message;
+    } catch {
+      // Keep the raw response text.
+    }
+    throw new Error(message);
+  }
+  const session = normalizeAuthSession(text ? JSON.parse(text) : null);
+  if (!session) throw new Error('Supabase returned an invalid sign-in session.');
+  writeAuthSession(session);
+  return session;
+}
+
+export async function signOutAuthSession() {
+  const session = authSession;
+  writeAuthSession(null);
+  if (!isSupabaseConfigured() || !session?.accessToken) return;
+  try {
+    await fetch(getAuthEndpoint('/logout'), {
+      method: 'POST',
+      headers: buildHeaders({
+        Authorization: `Bearer ${session.accessToken}`,
+      }),
+    });
+  } catch {
+    // Local sign-out already completed.
+  }
+}
 
 const LEGACY_SAMPLE_IDS = {
   projects: ['react-sample-1', 'react-sample-2', 'p1', 'p2', 'p3'],
@@ -290,11 +417,7 @@ export function getSupabaseDiagnosticsInfo() {
 }
 
 function storageAuthHeaders(extraHeaders = {}) {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    ...extraHeaders,
-  };
+  return buildHeaders(extraHeaders);
 }
 
 function encodeStoragePath(path) {
@@ -377,7 +500,7 @@ export async function deleteProjectFileFromStorage(file) {
 async function upsertCollection(table, items) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
-    headers: { ...HEADERS, Prefer: 'resolution=merge-duplicates,return=minimal' },
+    headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
     body: JSON.stringify(items.map((item) => ({ id: item.id, data: item }))),
   });
 
@@ -389,7 +512,7 @@ async function upsertCollection(table, items) {
 async function removeRemoteRow(table, id) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'DELETE',
-    headers: HEADERS,
+    headers: buildHeaders(),
   });
 
   if (!response.ok) {
@@ -399,7 +522,7 @@ async function removeRemoteRow(table, id) {
 
 async function fetchSupabaseJson(path, label) {
   const response = await fetch(`${SUPABASE_URL}${path}`, {
-    headers: HEADERS,
+    headers: buildHeaders(),
   });
   const text = await response.text();
 
@@ -452,7 +575,7 @@ async function persistSettings(settings, storageMode) {
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/settings`, {
       method: 'POST',
-      headers: { ...HEADERS, Prefer: 'resolution=merge-duplicates,return=minimal' },
+      headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
       body: JSON.stringify([{ id: 'app_settings', data: settings }]),
     });
 
@@ -805,7 +928,7 @@ export async function testSupabaseConnection() {
 
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=id&limit=1`, {
-      headers: HEADERS,
+      headers: buildHeaders(),
     });
     const text = await response.text();
 

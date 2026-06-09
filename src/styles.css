@@ -1615,11 +1615,82 @@ button.calendar-chip {
 }
 
 .hero-user-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
   margin-left: auto;
 }
 
-.hero-user-select {
-  min-width: 240px;
+.signed-in-user {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.signed-in-user span,
+.signed-in-user strong {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signed-in-user strong {
+  color: var(--text);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.auth-shell {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.auth-hero-copy .hero-brand {
+  justify-content: center;
+}
+
+.auth-panel {
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.user-role-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-alt);
 }
 
 .user-role-row {
@@ -1633,6 +1704,39 @@ button.calendar-chip {
 .user-role-row select {
   min-width: 0;
   width: 100%;
+}
+
+.user-project-access {
+  display: grid;
+  gap: 8px;
+}
+
+.user-project-access-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.user-project-access-header > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.compact-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.user-project-access-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .files-folder-grid {
@@ -2259,6 +2363,11 @@ button.calendar-chip {
   flex-wrap: wrap;
 }
 
+.inspection-thumbnail-card {
+  display: grid;
+  gap: 8px;
+}
+
 .inspection-thumbnail-button {
   display: grid;
   gap: 8px;
@@ -2270,6 +2379,12 @@ button.calendar-chip {
   background: var(--surface-alt);
   color: var(--text);
   cursor: pointer;
+}
+
+.inspection-thumbnail-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
 }
 
 .inspection-thumbnail-image {

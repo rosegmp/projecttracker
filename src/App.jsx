@@ -36,10 +36,13 @@ import {
   getSupabaseDiagnosticsInfo,
   getProjectHealth,
   getStorageBannerMessage,
+  initializeAuthSession,
   importPeople,
   isSupabaseStorageConfigured,
   loadTrackerData,
   runSupabaseStartupCheck,
+  signInWithPassword,
+  signOutAuthSession,
   testSupabaseConnection,
   uploadProjectFileToStorage,
   updatePerson,
@@ -199,6 +202,19 @@ function getVisibleProjectsForUser(projects, settings, activeUser) {
 function getVisibleTasksForUser(tasks, settings, visibleProjects) {
   const visibleProjectIds = new Set((visibleProjects || []).map((project) => project.id));
   return (tasks || []).filter((task) => !task.projectId || visibleProjectIds.has(task.projectId));
+}
+
+function getActiveUserForAuthSession(users, authSession) {
+  const email = String(authSession?.user?.email || '').trim().toLowerCase();
+  if (!email) return null;
+  const normalizedUsers = Array.isArray(users) ? users : [];
+  const matchingUser = normalizedUsers.find((user) => String(user?.email || '').trim().toLowerCase() === email);
+  if (matchingUser) return matchingUser;
+  const bootstrapAdmin =
+    normalizedUsers.length === 1 &&
+    normalizeAppUserRole(normalizedUsers[0]?.role) === 'Admin' &&
+    !String(normalizedUsers[0]?.email || '').trim();
+  return bootstrapAdmin ? { ...normalizedUsers[0], email } : null;
 }
 
 function getTabFromLocation() {
@@ -3815,12 +3831,13 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
   }
 
   function startCreate() {
-    if (!selectedProject) return;
+    const targetProject = selectedProject || visibleProjects[0] || null;
+    if (!targetProject) return;
     setInspectionDraft({
       mode: 'create',
       id: '',
-      projectId: selectedProject.id,
-      originalProjectId: selectedProject.id,
+      projectId: targetProject.id,
+      originalProjectId: targetProject.id,
       subcode: '',
       inspectionType: '',
       status: 'requested',
@@ -3894,7 +3911,7 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
       }
       if (!src) return;
       setImageEditorDraft({
-        projectId: selectedProject?.id || '',
+        projectId: inspection.projectId || selectedProject?.id || '',
         inspectionId: inspection.id,
         field,
         kind: field === 'reportFile' ? 'report' : 'sticker',
@@ -3906,6 +3923,58 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Unable to open image.');
     }
+  }
+
+  function openInspectionImage(inspection, field) {
+    void (async () => {
+      const attachment = inspection?.[field];
+      if (!attachment || !isImageFile(attachment)) return;
+      try {
+        let objectUrl = attachment.dataUrl || previewUrls[attachment.id] || '';
+        let shouldRevoke = false;
+        if (!objectUrl && attachment.storagePath) {
+          const blob = await downloadProjectFileFromStorage(attachment);
+          objectUrl = URL.createObjectURL(blob);
+          shouldRevoke = true;
+        }
+        if (!objectUrl) return;
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        if (shouldRevoke && objectUrl.startsWith('blob:')) {
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Unable to open image.');
+      }
+    })();
+  }
+
+  function downloadInspectionAttachment(inspection, field) {
+    void (async () => {
+      const attachment = inspection?.[field];
+      if (!attachment) return;
+      try {
+        let objectUrl = '';
+        if (attachment.storagePath && attachment.storageBucket) {
+          const blob = await downloadProjectFileFromStorage(attachment);
+          objectUrl = URL.createObjectURL(blob);
+        } else if (attachment.dataUrl) {
+          objectUrl = attachment.dataUrl;
+        } else {
+          return;
+        }
+
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = attachment.originalName || attachment.name || 'download';
+        anchor.click();
+
+        if (attachment.storagePath && objectUrl.startsWith('blob:')) {
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Unable to download attachment.');
+      }
+    })();
   }
 
   function closeInspectionImageEditor() {
@@ -4064,7 +4133,7 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
         </div>
         <div className="panel-actions header-scope-actions">
           {!readOnly ? (
-            <button className="button primary" type="button" onClick={startCreate} disabled={!selectedProject || saving}>
+            <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length || saving}>
               Add inspection
             </button>
           ) : null}
@@ -4145,34 +4214,80 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
                       ) ? (
                         <div className="inspection-thumbnail-row">
                           {inspection.stickerFile && isImageFile(inspection.stickerFile) ? (
-                            <button
-                              type="button"
-                              className="inspection-thumbnail-button"
-                              onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                              title="Open sticker image"
-                            >
-                              <img
-                                className="inspection-thumbnail-image"
-                                src={getInspectionAttachmentPreview(inspection.stickerFile)}
-                                alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
-                              />
-                              <span>Sticker</span>
-                            </button>
+                            <div className="inspection-thumbnail-card">
+                              <button
+                                type="button"
+                                className="inspection-thumbnail-button"
+                                onClick={() => openInspectionImage(inspection, 'stickerFile')}
+                                title="Open sticker image"
+                              >
+                                <img
+                                  className="inspection-thumbnail-image"
+                                  src={getInspectionAttachmentPreview(inspection.stickerFile)}
+                                  alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
+                                />
+                                <span>Sticker</span>
+                              </button>
+                              <div className="inspection-thumbnail-actions">
+                                <button
+                                  className="button secondary gantt-icon-button"
+                                  type="button"
+                                  onClick={() => downloadInspectionAttachment(inspection, 'stickerFile')}
+                                  title="Download sticker image"
+                                  aria-label={`Download ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
+                                >
+                                  <FluentIcon name="download" />
+                                </button>
+                                <button
+                                  className="button secondary gantt-icon-button"
+                                  type="button"
+                                  onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
+                                  disabled={saving || readOnly}
+                                  title="Edit sticker image"
+                                  aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
+                                >
+                                  <FluentIcon name="edit" />
+                                </button>
+                              </div>
+                            </div>
                           ) : null}
                           {inspection.reportFile && isImageFile(inspection.reportFile) ? (
-                            <button
-                              type="button"
-                              className="inspection-thumbnail-button"
-                              onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                              title="Open report image"
-                            >
-                              <img
-                                className="inspection-thumbnail-image"
-                                src={getInspectionAttachmentPreview(inspection.reportFile)}
-                                alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
-                              />
-                              <span>Report</span>
-                            </button>
+                            <div className="inspection-thumbnail-card">
+                              <button
+                                type="button"
+                                className="inspection-thumbnail-button"
+                                onClick={() => openInspectionImage(inspection, 'reportFile')}
+                                title="Open report image"
+                              >
+                                <img
+                                  className="inspection-thumbnail-image"
+                                  src={getInspectionAttachmentPreview(inspection.reportFile)}
+                                  alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
+                                />
+                                <span>Report</span>
+                              </button>
+                              <div className="inspection-thumbnail-actions">
+                                <button
+                                  className="button secondary gantt-icon-button"
+                                  type="button"
+                                  onClick={() => downloadInspectionAttachment(inspection, 'reportFile')}
+                                  title="Download report image"
+                                  aria-label={`Download ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
+                                >
+                                  <FluentIcon name="download" />
+                                </button>
+                                <button
+                                  className="button secondary gantt-icon-button"
+                                  type="button"
+                                  onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
+                                  disabled={saving || readOnly}
+                                  title="Edit report image"
+                                  aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
+                                >
+                                  <FluentIcon name="edit" />
+                                </button>
+                              </div>
+                            </div>
                           ) : null}
                         </div>
                       ) : null}
@@ -9578,6 +9693,72 @@ function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
   );
 }
 
+function SignInView({ loading, error, onSignIn }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    onSignIn(email, password);
+  }
+
+  return (
+    <main className="app-shell auth-shell">
+      <section className="hero hero-compact">
+        <div className="hero-copy auth-hero-copy">
+          <div className="hero-brand">
+            <div className="hero-logo" aria-hidden="true">
+              <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+            </div>
+            <h1>Destiny Project Hub</h1>
+          </div>
+        </div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="panel-header">
+          <div>
+            <h2>Sign in</h2>
+          </div>
+        </div>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              autoComplete="email"
+              onChange={(event) => setEmail(event.target.value)}
+              disabled={loading}
+              required
+            />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={loading}
+              required
+            />
+          </label>
+          {error ? (
+            <div className="error-banner compact">
+              <strong>Sign-in failed.</strong>
+              <span>{error}</span>
+            </div>
+          ) : null}
+          <button className="button primary" type="submit" disabled={loading || !email.trim() || !password}>
+            {loading ? 'Signing in...' : 'Sign in'}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [saving, setSaving] = useState(false);
   const settingsStateRef = useRef(data);
@@ -9637,6 +9818,12 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       name: String(user?.name || '').trim() || 'Unnamed user',
       email: String(user?.email || '').trim(),
       role: normalizeAppUserRole(String(user?.role || 'View Only')),
+      projectIds: data.projects
+        .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
+        .map((project) => project.id),
+      savedProjectIds: data.projects
+        .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
+        .map((project) => project.id),
       savedName: String(user?.name || '').trim() || 'Unnamed user',
       savedEmail: String(user?.email || '').trim(),
       savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
@@ -9676,6 +9863,12 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
           name: String(user?.name || '').trim() || 'Unnamed user',
           email: String(user?.email || '').trim(),
           role: normalizeAppUserRole(String(user?.role || 'View Only')),
+          projectIds: data.projects
+            .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
+            .map((project) => project.id),
+          savedProjectIds: data.projects
+            .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
+            .map((project) => project.id),
           savedName: String(user?.name || '').trim() || 'Unnamed user',
           savedEmail: String(user?.email || '').trim(),
           savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
@@ -9684,7 +9877,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         ...unsaved,
       ];
     });
-  }, [settings.users]);
+  }, [data.projects, settings.users]);
 
   const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
 
@@ -9917,11 +10110,46 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   }
 
   function hasPendingUserDraft(user) {
+    const projectIds = normalizeProjectAccessUserIds(user.projectIds);
+    const savedProjectIds = normalizeProjectAccessUserIds(user.savedProjectIds);
     return (
       !user.persisted ||
       user.name !== user.savedName ||
       user.email !== user.savedEmail ||
-      user.role !== user.savedRole
+      user.role !== user.savedRole ||
+      projectIds.length !== savedProjectIds.length ||
+      projectIds.some((projectId) => !savedProjectIds.includes(projectId))
+    );
+  }
+
+  function handleUserProjectAccessChange(userId, projectId, enabled) {
+    setUserDrafts((current) =>
+      current.map((user) => {
+        if (user.id !== userId) return user;
+        const currentProjectIds = normalizeProjectAccessUserIds(user.projectIds);
+        const nextProjectIds = enabled
+          ? currentProjectIds.includes(projectId)
+            ? currentProjectIds
+            : [...currentProjectIds, projectId]
+          : currentProjectIds.filter((value) => value !== projectId);
+        return { ...user, projectIds: nextProjectIds };
+      }),
+    );
+  }
+
+  function handleToggleAllUserProjects(userId) {
+    setUserDrafts((current) =>
+      current.map((user) => {
+        if (user.id !== userId) return user;
+        const allProjectIds = data.projects.map((project) => project.id);
+        const currentProjectIds = normalizeProjectAccessUserIds(user.projectIds);
+        const hasAllProjects =
+          allProjectIds.length > 0 && allProjectIds.every((projectId) => currentProjectIds.includes(projectId));
+        return {
+          ...user,
+          projectIds: hasAllProjects ? [] : allProjectIds,
+        };
+      }),
     );
   }
 
@@ -9945,7 +10173,23 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               role: normalizeAppUserRole(user.savedRole),
             },
       );
-    await runSettingsMutation({ users });
+    let nextState = await runSettingsMutation({ users });
+    const selectedProjectIds = normalizeProjectAccessUserIds(targetUser.projectIds);
+    for (const project of nextState.projects || []) {
+      const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
+      const shouldHaveAccess = selectedProjectIds.includes(project.id);
+      const hasAccess = currentAccess.includes(userId);
+      if (shouldHaveAccess === hasAccess) continue;
+      const nextAccess = shouldHaveAccess
+        ? [...currentAccess, userId]
+        : currentAccess.filter((value) => value !== userId);
+      nextState = await updateProject(nextState, project.id, {
+        ...project,
+        accessUserIds: nextAccess,
+      });
+    }
+    onStateChange(nextState);
+    settingsStateRef.current = nextState;
     setUserDrafts((current) =>
       current.map((user) =>
         user.id === userId
@@ -9954,6 +10198,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               name: String(user.name || '').trim() || 'Unnamed user',
               email: String(user.email || '').trim(),
               role: normalizeAppUserRole(user.role),
+              projectIds: normalizeProjectAccessUserIds(user.projectIds),
+              savedProjectIds: normalizeProjectAccessUserIds(user.projectIds),
               savedName: String(user.name || '').trim() || 'Unnamed user',
               savedEmail: String(user.email || '').trim(),
               savedRole: normalizeAppUserRole(user.role),
@@ -9972,6 +10218,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
         name: '',
         email: '',
         role: 'View Only',
+        projectIds: [],
+        savedProjectIds: [],
         savedName: '',
         savedEmail: '',
         savedRole: 'View Only',
@@ -9995,7 +10243,19 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     if (!confirmed) return;
     const users = settings.users.filter((item) => item.id !== userId);
     const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
-    runSettingsMutation({ users, currentUserId });
+    void (async () => {
+      let nextState = await runSettingsMutation({ users, currentUserId });
+      for (const project of nextState.projects || []) {
+        const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
+        if (!currentAccess.includes(userId)) continue;
+        nextState = await updateProject(nextState, project.id, {
+          ...project,
+          accessUserIds: currentAccess.filter((value) => value !== userId),
+        });
+      }
+      onStateChange(nextState);
+      settingsStateRef.current = nextState;
+    })();
   }
 
   return (
@@ -10304,52 +10564,92 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 
               <div className="inspection-subcode-list">
                 {userDrafts.map((user) => (
-                  <div key={user.id} className="user-role-row">
-                    <input
-                      type="text"
-                      value={user.name}
-                      placeholder="User name"
-                      onChange={(event) => handleUserFieldChange(user.id, 'name', event.target.value)}
-                      disabled={saving}
-                    />
-                    <input
-                      type="email"
-                      value={user.email}
-                      placeholder="Email (optional)"
-                      onChange={(event) => handleUserFieldChange(user.id, 'email', event.target.value)}
-                      disabled={saving}
-                    />
-                    <select
-                      value={user.role}
-                      onChange={(event) => handleUserFieldChange(user.id, 'role', event.target.value)}
-                      disabled={saving}
-                    >
-                      {USER_ROLE_OPTIONS.map((role) => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="button secondary gantt-icon-button inline-save-button"
-                      type="button"
-                      onClick={() => void saveUserDraft(user.id)}
-                      disabled={saving || !hasPendingUserDraft(user)}
-                      title="Save user"
-                      aria-label={`Save ${user.name || 'user'}`}
-                    >
-                      <FluentIcon name="check" />
-                    </button>
-                    <button
-                      className="button secondary danger gantt-icon-button"
-                      type="button"
-                      onClick={() => handleRemoveUser(user.id)}
-                      disabled={saving || settings.users.length <= 1}
-                      title="Remove user"
-                      aria-label={`Remove ${user.name || 'user'}`}
-                    >
-                      <FluentIcon name="delete" />
-                    </button>
+                  <div key={user.id} className="user-role-card">
+                    <div className="user-role-row">
+                      <input
+                        type="text"
+                        value={user.name}
+                        placeholder="User name"
+                        onChange={(event) => handleUserFieldChange(user.id, 'name', event.target.value)}
+                        disabled={saving}
+                      />
+                      <input
+                        type="email"
+                        value={user.email}
+                        placeholder="Email (optional)"
+                        onChange={(event) => handleUserFieldChange(user.id, 'email', event.target.value)}
+                        disabled={saving}
+                      />
+                      <select
+                        value={user.role}
+                        onChange={(event) => handleUserFieldChange(user.id, 'role', event.target.value)}
+                        disabled={saving}
+                      >
+                        {USER_ROLE_OPTIONS.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="button secondary gantt-icon-button inline-save-button"
+                        type="button"
+                        onClick={() => void saveUserDraft(user.id)}
+                        disabled={saving || !hasPendingUserDraft(user)}
+                        title="Save user"
+                        aria-label={`Save ${user.name || 'user'}`}
+                      >
+                        <FluentIcon name="check" />
+                      </button>
+                      <button
+                        className="button secondary danger gantt-icon-button"
+                        type="button"
+                        onClick={() => handleRemoveUser(user.id)}
+                        disabled={saving || settings.users.length <= 1}
+                        title="Remove user"
+                        aria-label={`Remove ${user.name || 'user'}`}
+                      >
+                        <FluentIcon name="delete" />
+                      </button>
+                    </div>
+                    <div className="user-project-access">
+                      <div className="user-project-access-header">
+                        <span>Project access</span>
+                        {data.projects.length ? (
+                          <button
+                            className="button secondary compact-button"
+                            type="button"
+                            onClick={() => handleToggleAllUserProjects(user.id)}
+                            disabled={saving}
+                          >
+                            {data.projects.every((project) =>
+                              normalizeProjectAccessUserIds(user.projectIds).includes(project.id),
+                            )
+                              ? 'Clear all'
+                              : 'Select all'}
+                          </button>
+                        ) : null}
+                      </div>
+                      {data.projects.length ? (
+                        <div className="user-project-access-list">
+                          {data.projects.map((project) => (
+                            <label key={project.id} className="project-access-option compact">
+                              <input
+                                type="checkbox"
+                                checked={normalizeProjectAccessUserIds(user.projectIds).includes(project.id)}
+                                onChange={(event) =>
+                                  handleUserProjectAccessChange(user.id, project.id, event.target.checked)
+                                }
+                                disabled={saving}
+                              />
+                              <span>{project.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <small>No projects available.</small>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -10463,6 +10763,10 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(getTabFromLocation);
+  const [authSession, setAuthSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
   const [trackerState, setTrackerState] = useState({
     projects: [],
     tasks: [],
@@ -10492,6 +10796,10 @@ export default function App() {
   }, [trackerState]);
 
   async function refreshData() {
+    if (!authSession) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -10505,8 +10813,35 @@ export default function App() {
   }
 
   useEffect(() => {
-    refreshData();
+    let cancelled = false;
+    initializeAuthSession()
+      .then((session) => {
+        if (!cancelled) {
+          setAuthSession(session);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAuthError(err instanceof Error ? err.message : 'Failed to initialize sign-in.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!authLoading && authSession) {
+      refreshData();
+    } else if (!authLoading && !authSession) {
+      setLoading(false);
+    }
+  }, [authLoading, authSession]);
 
   useEffect(() => {
     syncTabToLocation(activeTab);
@@ -10529,9 +10864,7 @@ export default function App() {
   const users = Array.isArray(trackerState.settings?.users) && trackerState.settings.users.length
     ? trackerState.settings.users
     : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }];
-  const activeUser =
-    users.find((user) => user.id === trackerState.settings?.currentUserId) ||
-    users[0];
+  const activeUser = getActiveUserForAuthSession(users, authSession);
   const capabilities = getUserCapabilities(activeUser?.role);
   const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
 
@@ -10541,10 +10874,32 @@ export default function App() {
     }
   }, [activeTab, capabilities.allowedTabs]);
 
-  async function handleSwitchUser(userId) {
-    const nextState = await updateSettings(trackerStateRef.current, { currentUserId: userId });
-    trackerStateRef.current = nextState;
-    setTrackerState(nextState);
+  async function handleSignIn(email, password) {
+    setSigningIn(true);
+    setAuthError('');
+    try {
+      const session = await signInWithPassword(email, password);
+      setAuthSession(session);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Sign-in failed.');
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  async function handleSignOut() {
+    await signOutAuthSession();
+    setAuthSession(null);
+    setTrackerState((current) => ({
+      ...current,
+      projects: [],
+      tasks: [],
+      subs: [],
+      employees: [],
+      storageMode: 'loading',
+      storageIssue: '',
+    }));
+    setActiveTab('projects');
   }
 
   async function handleTestSupabaseConnection() {
@@ -10563,6 +10918,36 @@ export default function App() {
       status: result.ok ? 'success' : 'error',
       message: result.message,
     });
+  }
+
+  if (authLoading) {
+    return (
+      <main className="app-shell auth-shell">
+        <section className="hero hero-compact">
+          <div className="hero-copy auth-hero-copy">
+            <div className="hero-brand">
+              <div className="hero-logo" aria-hidden="true">
+                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+              </div>
+              <h1>Destiny Project Hub</h1>
+            </div>
+          </div>
+        </section>
+        <section className="auth-panel">
+          <h2>Loading sign-in...</h2>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authSession) {
+    return (
+      <SignInView
+        loading={signingIn}
+        error={authError}
+        onSignIn={(email, password) => void handleSignIn(email, password)}
+      />
+    );
   }
   const activeView = (() => {
     if (activeTab === 'projects') {
@@ -10692,16 +11077,13 @@ export default function App() {
             <h1>Destiny Project Hub</h1>
           </div>
           <div className="hero-user-controls">
-            <label className="task-filter hero-user-select">
-              <span>Current user</span>
-              <select value={activeUser?.id || ''} onChange={(event) => void handleSwitchUser(event.target.value)}>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} ({user.role})
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="signed-in-user">
+              <span>{authSession.user.email}</span>
+              <strong>{activeUser?.role || 'No role'}</strong>
+            </div>
+            <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
+              Sign out
+            </button>
           </div>
         </div>
       </section>
