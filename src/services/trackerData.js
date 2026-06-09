@@ -85,6 +85,22 @@ function normalizeAuthSession(payload) {
   };
 }
 
+function normalizeAuthSessionFromUrlParams(params) {
+  const accessToken = params.get('access_token') || '';
+  if (!accessToken) return null;
+  const expiresIn = Number(params.get('expires_in')) || 0;
+  return {
+    accessToken,
+    refreshToken: params.get('refresh_token') || '',
+    expiresAt: Date.now() + Math.max(0, expiresIn) * 1000,
+    user: {
+      id: '',
+      email: '',
+    },
+    type: params.get('type') || '',
+  };
+}
+
 async function refreshAuthSession(session) {
   if (!isSupabaseConfigured() || !session?.refreshToken) return null;
   const response = await fetch(getAuthEndpoint('/token?grant_type=refresh_token'), {
@@ -142,6 +158,76 @@ export async function signInWithPassword(email, password) {
   if (!session) throw new Error('Supabase returned an invalid sign-in session.');
   writeAuthSession(session);
   return session;
+}
+
+export async function sendPasswordRecoveryEmail(email, redirectTo = '') {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured for password recovery.');
+  }
+  const trimmedEmail = String(email || '').trim();
+  const query = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : '';
+  const response = await fetch(getAuthEndpoint(`/recover${query}`), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ email: trimmedEmail }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = text || 'Unable to send password email.';
+    try {
+      const errorPayload = JSON.parse(text);
+      message = errorPayload.error_description || errorPayload.msg || errorPayload.message || message;
+    } catch {
+      // Keep the raw response text.
+    }
+    throw new Error(message);
+  }
+  return true;
+}
+
+export function consumeAuthSessionFromUrl() {
+  if (typeof window === 'undefined') return null;
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const queryParams = new URLSearchParams(window.location.search);
+  const session = normalizeAuthSessionFromUrlParams(hashParams) || normalizeAuthSessionFromUrlParams(queryParams);
+  if (!session) return null;
+  writeAuthSession(session);
+
+  const url = new URL(window.location.href);
+  ['access_token', 'refresh_token', 'expires_in', 'expires_at', 'token_type', 'type'].forEach((key) =>
+    url.searchParams.delete(key),
+  );
+  url.hash = '';
+  window.history.replaceState(null, '', url);
+  return session;
+}
+
+export async function updateAuthPassword(password, session = authSession) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured for password updates.');
+  }
+  if (!session?.accessToken) {
+    throw new Error('Password reset session is missing or expired.');
+  }
+  const response = await fetch(getAuthEndpoint('/user'), {
+    method: 'PUT',
+    headers: buildHeaders({
+      Authorization: `Bearer ${session.accessToken}`,
+    }),
+    body: JSON.stringify({ password }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = text || 'Unable to update password.';
+    try {
+      const errorPayload = JSON.parse(text);
+      message = errorPayload.error_description || errorPayload.msg || errorPayload.message || message;
+    } catch {
+      // Keep the raw response text.
+    }
+    throw new Error(message);
+  }
+  return text ? JSON.parse(text) : true;
 }
 
 export async function signOutAuthSession() {

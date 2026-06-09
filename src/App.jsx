@@ -25,6 +25,7 @@ import {
   DEFAULT_PROJECT_FILE_FOLDERS,
   PEOPLE_TYPE_OPTIONS,
   USER_ROLE_OPTIONS,
+  consumeAuthSessionFromUrl,
   createPerson,
   createProject,
   createTask,
@@ -41,9 +42,11 @@ import {
   isSupabaseStorageConfigured,
   loadTrackerData,
   runSupabaseStartupCheck,
+  sendPasswordRecoveryEmail,
   signInWithPassword,
   signOutAuthSession,
   testSupabaseConnection,
+  updateAuthPassword,
   uploadProjectFileToStorage,
   updatePerson,
   updateProject,
@@ -9693,7 +9696,7 @@ function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
   );
 }
 
-function SignInView({ loading, error, onSignIn }) {
+function SignInView({ loading, recoveryLoading, error, recoveryMessage, onSignIn, onSendPasswordEmail }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -9750,8 +9753,107 @@ function SignInView({ loading, error, onSignIn }) {
               <span>{error}</span>
             </div>
           ) : null}
+          {recoveryMessage ? (
+            <div className={`auth-message${recoveryMessage.type === 'error' ? ' error' : ''}`}>
+              {recoveryMessage.text}
+            </div>
+          ) : null}
           <button className="button primary" type="submit" disabled={loading || !email.trim() || !password}>
             {loading ? 'Signing in...' : 'Sign in'}
+          </button>
+          <div className="auth-secondary-actions">
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => onSendPasswordEmail(email)}
+              disabled={recoveryLoading || !email.trim()}
+            >
+              {recoveryLoading ? 'Sending...' : 'Forgot password'}
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => onSendPasswordEmail(email)}
+              disabled={recoveryLoading || !email.trim()}
+            >
+              {recoveryLoading ? 'Sending...' : 'Set password'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PasswordResetView({ loading, error, onSavePassword, onSignOut }) {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const mismatch = password && confirmPassword && password !== confirmPassword;
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    if (password.length < 6 || mismatch) return;
+    onSavePassword(password);
+  }
+
+  return (
+    <main className="app-shell auth-shell">
+      <section className="hero hero-compact">
+        <div className="hero-copy auth-hero-copy">
+          <div className="hero-brand">
+            <div className="hero-logo" aria-hidden="true">
+              <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+            </div>
+            <h1>Destiny Project Hub</h1>
+          </div>
+        </div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="panel-header">
+          <div>
+            <h2>Set password</h2>
+          </div>
+        </div>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>New password</span>
+            <input
+              type="password"
+              value={password}
+              autoComplete="new-password"
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={loading}
+              required
+            />
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              autoComplete="new-password"
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              disabled={loading}
+              required
+            />
+          </label>
+          {mismatch ? <div className="auth-message error">Passwords do not match.</div> : null}
+          {error ? (
+            <div className="error-banner compact">
+              <strong>Password update failed.</strong>
+              <span>{error}</span>
+            </div>
+          ) : null}
+          <button
+            className="button primary"
+            type="submit"
+            disabled={loading || password.length < 6 || password !== confirmPassword}
+          >
+            {loading ? 'Saving...' : 'Save password'}
+          </button>
+          <button className="button secondary" type="button" onClick={onSignOut} disabled={loading}>
+            Back to sign in
           </button>
         </form>
       </section>
@@ -10767,6 +10869,10 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState(null);
+  const [passwordResetError, setPasswordResetError] = useState('');
   const [trackerState, setTrackerState] = useState({
     projects: [],
     tasks: [],
@@ -10814,7 +10920,11 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    initializeAuthSession()
+    const recoverySession = consumeAuthSessionFromUrl();
+    if (recoverySession?.type === 'recovery') {
+      setRecoveryMode(true);
+    }
+    Promise.resolve(recoverySession || initializeAuthSession())
       .then((session) => {
         if (!cancelled) {
           setAuthSession(session);
@@ -10887,9 +10997,47 @@ export default function App() {
     }
   }
 
+  async function handleSendPasswordEmail(email) {
+    const trimmedEmail = String(email || '').trim();
+    if (!trimmedEmail) return;
+    setRecoveryLoading(true);
+    setRecoveryMessage(null);
+    try {
+      await sendPasswordRecoveryEmail(trimmedEmail, window.location.origin + window.location.pathname);
+      setRecoveryMessage({
+        type: 'success',
+        text: `Password email sent to ${trimmedEmail}.`,
+      });
+    } catch (err) {
+      setRecoveryMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to send password email.',
+      });
+    } finally {
+      setRecoveryLoading(false);
+    }
+  }
+
+  async function handleSaveRecoveredPassword(password) {
+    setRecoveryLoading(true);
+    setPasswordResetError('');
+    try {
+      await updateAuthPassword(password, authSession);
+      setRecoveryMode(false);
+      await refreshData();
+    } catch (err) {
+      setPasswordResetError(err instanceof Error ? err.message : 'Unable to save password.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  }
+
   async function handleSignOut() {
     await signOutAuthSession();
     setAuthSession(null);
+    setRecoveryMode(false);
+    setRecoveryMessage(null);
+    setPasswordResetError('');
     setTrackerState((current) => ({
       ...current,
       projects: [],
@@ -10944,8 +11092,22 @@ export default function App() {
     return (
       <SignInView
         loading={signingIn}
+        recoveryLoading={recoveryLoading}
         error={authError}
+        recoveryMessage={recoveryMessage}
         onSignIn={(email, password) => void handleSignIn(email, password)}
+        onSendPasswordEmail={(email) => void handleSendPasswordEmail(email)}
+      />
+    );
+  }
+
+  if (recoveryMode) {
+    return (
+      <PasswordResetView
+        loading={recoveryLoading}
+        error={passwordResetError}
+        onSavePassword={(password) => void handleSaveRecoveredPassword(password)}
+        onSignOut={() => void handleSignOut()}
       />
     );
   }

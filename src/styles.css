@@ -1684,6 +1684,28 @@ button.calendar-chip {
   min-width: 0;
 }
 
+.auth-secondary-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.auth-message {
+  padding: 10px 12px;
+  border: 1px solid rgba(29, 158, 117, 0.22);
+  border-radius: 14px;
+  background: rgba(29, 158, 117, 0.08);
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-message.error {
+  border-color: rgba(176, 59, 59, 0.22);
+  background: rgba(176, 59, 59, 0.08);
+  color: var(--danger);
+}
+
 .user-role-card {
   display: grid;
   gap: 10px;
