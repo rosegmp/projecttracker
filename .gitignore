@@ -5,3 +5,4 @@ dist/
 .env.*.local
 .tmp-edge-qa-profile/
 qa-output/
+supabase/.temp/
