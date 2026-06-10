@@ -185,6 +185,36 @@ export async function sendPasswordRecoveryEmail(email, redirectTo = '') {
   return true;
 }
 
+export async function inviteAuthUser(email, name = '', redirectTo = '') {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured for user invitations.');
+  }
+  const trimmedEmail = String(email || '').trim();
+  if (!trimmedEmail) {
+    throw new Error('Enter an email address before sending an invite.');
+  }
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/create-auth-user`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({
+      email: trimmedEmail,
+      name: String(name || '').trim(),
+      redirectTo,
+    }),
+  });
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error || text || 'Unable to send login invite.');
+  }
+  return payload;
+}
+
 export function consumeAuthSessionFromUrl() {
   if (typeof window === 'undefined') return null;
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -632,6 +662,13 @@ async function persistCollection(items, storageKey, table, storageMode, deletedI
     return 'local-unconfigured';
   }
 
+  // If the app fell back to local mode because a remote read failed, keep writes
+  // local-only until a fresh Supabase load succeeds again. This avoids overwriting
+  // good remote data with stale fallback snapshots.
+  if (storageMode !== 'supabase') {
+    return storageMode;
+  }
+
   try {
     if (deletedId) {
       await removeRemoteRow(table, deletedId);
@@ -656,6 +693,13 @@ async function persistSettings(settings, storageMode) {
 
   if (!isSupabaseConfigured()) {
     return 'local-unconfigured';
+  }
+
+  // Only push settings remotely after the current session has successfully loaded
+  // from Supabase. This prevents fallback/default settings from clobbering the
+  // remote app_settings row after a transient read/auth failure.
+  if (storageMode !== 'supabase') {
+    return storageMode;
   }
 
   try {

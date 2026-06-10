@@ -39,6 +39,7 @@ import {
   getStorageBannerMessage,
   initializeAuthSession,
   importPeople,
+  inviteAuthUser,
   isSupabaseStorageConfigured,
   loadTrackerData,
   runSupabaseStartupCheck,
@@ -9863,6 +9864,7 @@ function PasswordResetView({ loading, error, onSavePassword, onSignOut }) {
 
 function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [saving, setSaving] = useState(false);
+  const [authInviteStatus, setAuthInviteStatus] = useState({});
   const settingsStateRef = useRef(data);
   const settingsSaveChainRef = useRef(Promise.resolve());
   const pendingSettingsSavesRef = useRef(0);
@@ -10312,6 +10314,43 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     );
   }
 
+  async function handleSendAuthInvite(user) {
+    const email = String(user?.email || '').trim();
+    if (!email) {
+      setAuthInviteStatus((current) => ({
+        ...current,
+        [user.id]: { status: 'error', message: 'Add an email address before sending an invite.' },
+      }));
+      return;
+    }
+    if (hasPendingUserDraft(user)) {
+      setAuthInviteStatus((current) => ({
+        ...current,
+        [user.id]: { status: 'error', message: 'Save this user before sending an invite.' },
+      }));
+      return;
+    }
+    setAuthInviteStatus((current) => ({
+      ...current,
+      [user.id]: { status: 'sending', message: 'Sending login invite...' },
+    }));
+    try {
+      await inviteAuthUser(email, user.name, window.location.origin + window.location.pathname);
+      setAuthInviteStatus((current) => ({
+        ...current,
+        [user.id]: { status: 'success', message: `Login invite sent to ${email}.` },
+      }));
+    } catch (error) {
+      setAuthInviteStatus((current) => ({
+        ...current,
+        [user.id]: {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Unable to send login invite.',
+        },
+      }));
+    }
+  }
+
   function handleAddUser() {
     setUserDrafts((current) => [
       ...current,
@@ -10667,6 +10706,19 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <div className="inspection-subcode-list">
                 {userDrafts.map((user) => (
                   <div key={user.id} className="user-role-card">
+                    {(() => {
+                      const inviteStatus = authInviteStatus[user.id];
+                      const hasPendingChanges = hasPendingUserDraft(user);
+                      const hasEmail = !!String(user.email || '').trim();
+                      const inviteDisabled =
+                        saving || inviteStatus?.status === 'sending' || hasPendingChanges || !hasEmail;
+                      const inviteTitle = !hasEmail
+                        ? 'Add an email before sending an invite'
+                        : hasPendingChanges
+                          ? 'Save this user before sending an invite'
+                          : 'Send login invite';
+                      return (
+                        <>
                     <div className="user-role-row">
                       <input
                         type="text"
@@ -10704,6 +10756,16 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                         <FluentIcon name="check" />
                       </button>
                       <button
+                        className="button secondary gantt-icon-button"
+                        type="button"
+                        onClick={() => void handleSendAuthInvite(user)}
+                        disabled={inviteDisabled}
+                        title={inviteTitle}
+                        aria-label={`Send login invite to ${user.name || 'user'}`}
+                      >
+                        <FluentIcon name="mail" />
+                      </button>
+                      <button
                         className="button secondary danger gantt-icon-button"
                         type="button"
                         onClick={() => handleRemoveUser(user.id)}
@@ -10714,6 +10776,14 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                         <FluentIcon name="delete" />
                       </button>
                     </div>
+                    {inviteStatus?.message ? (
+                      <div className={`auth-invite-message ${inviteStatus.status}`}>
+                        {inviteStatus.message}
+                      </div>
+                    ) : null}
+                        </>
+                      );
+                    })()}
                     <div className="user-project-access">
                       <div className="user-project-access-header">
                         <span>Project access</span>

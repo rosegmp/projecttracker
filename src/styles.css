@@ -1717,7 +1717,7 @@ button.calendar-chip {
 
 .user-role-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.85fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.85fr) auto auto auto;
   gap: 10px;
   align-items: start;
 }
@@ -1726,6 +1726,28 @@ button.calendar-chip {
 .user-role-row select {
   min-width: 0;
   width: 100%;
+}
+
+.auth-invite-message {
+  padding: 8px 10px;
+  border: 1px solid rgba(70, 126, 93, 0.2);
+  border-radius: 12px;
+  background: rgba(70, 126, 93, 0.08);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.auth-invite-message.error {
+  border-color: rgba(176, 59, 59, 0.22);
+  background: rgba(176, 59, 59, 0.08);
+  color: var(--danger);
+}
+
+.auth-invite-message.sending {
+  border-color: rgba(74, 82, 133, 0.2);
+  background: rgba(74, 82, 133, 0.08);
+  color: var(--accent);
 }
 
 .user-project-access {
