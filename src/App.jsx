@@ -99,6 +99,7 @@ const GANTT_ZOOM_MIN_PIXELS_PER_DAY = 2;
 const GANTT_ZOOM_MAX_PIXELS_PER_DAY = 48;
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
+const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
 const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = {
   company: 220,
@@ -3660,8 +3661,16 @@ function InspectionImageEditorModal({ draft, saving, onClose, onSave }) {
   );
 }
 
-function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
-  const [selectedProjectId, setSelectedProjectId] = useState('all');
+function NativeInspectionsView({
+  data,
+  refresh,
+  loading,
+  onStateChange,
+  readOnly = false,
+  activeUser = null,
+  projectFilter = 'all',
+  onProjectFilterChange = () => {},
+}) {
   const [inspectionDraft, setInspectionDraft] = useState(null);
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
   const [subcodeDraft, setSubcodeDraft] = useState(null);
@@ -3675,18 +3684,18 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
 
   useEffect(() => {
     if (!visibleProjects.length) {
-      setSelectedProjectId('');
+      onProjectFilterChange('all');
       return;
     }
-    if (selectedProjectId !== 'all' && !visibleProjects.some((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId('all');
+    if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
+      onProjectFilterChange('all');
     }
-  }, [selectedProjectId, visibleProjects]);
+  }, [onProjectFilterChange, projectFilter, visibleProjects]);
 
   const selectedProject =
-    selectedProjectId === 'all'
+    projectFilter === 'all'
       ? null
-      : visibleProjects.find((project) => project.id === selectedProjectId) || null;
+      : visibleProjects.find((project) => project.id === projectFilter) || null;
   const inspectionSubcodes = useMemo(
     () =>
       Array.isArray(data.settings?.inspectionSubcodes)
@@ -4145,7 +4154,7 @@ function NativeInspectionsView({ data, refresh, loading, onStateChange, readOnly
             <div className="files-toolbar header-scope-toolbar">
               <label className="task-filter">
                 <span>Project</span>
-                <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
                   <option value="all">All projects</option>
                   {visibleProjects.map((project) => (
                     <option key={project.id} value={project.id}>
@@ -5559,9 +5568,16 @@ function TaskRow({
   );
 }
 
-function NativePhotosView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
-  const [selectedProjectId, setSelectedProjectId] = useState('all');
-
+function NativePhotosView({
+  data,
+  refresh,
+  loading,
+  onStateChange,
+  readOnly = false,
+  activeUser = null,
+  projectFilter = 'all',
+  onProjectFilterChange = () => {},
+}) {
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
@@ -5569,18 +5585,18 @@ function NativePhotosView({ data, refresh, loading, onStateChange, readOnly = fa
 
   useEffect(() => {
     if (!visibleProjects.length) {
-      setSelectedProjectId('all');
+      onProjectFilterChange('all');
       return;
     }
-    if (selectedProjectId !== 'all' && !visibleProjects.some((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId('all');
+    if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
+      onProjectFilterChange('all');
     }
-  }, [selectedProjectId, visibleProjects]);
+  }, [onProjectFilterChange, projectFilter, visibleProjects]);
 
   const selectedProject =
-    selectedProjectId === 'all'
+    projectFilter === 'all'
       ? null
-      : visibleProjects.find((project) => project.id === selectedProjectId) || null;
+      : visibleProjects.find((project) => project.id === projectFilter) || null;
   const scopedProjects = selectedProject ? [selectedProject] : visibleProjects;
   const photoCount = scopedProjects.reduce((sum, project) => sum + (project.photos?.length || 0), 0);
 
@@ -5595,7 +5611,7 @@ function NativePhotosView({ data, refresh, loading, onStateChange, readOnly = fa
             <div className="files-toolbar header-scope-toolbar">
               <label className="task-filter">
                 <span>Project</span>
-                <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
                   <option value="all">All projects</option>
                   {visibleProjects.map((project) => (
                     <option key={project.id} value={project.id}>
@@ -5651,9 +5667,16 @@ function NativePhotosView({ data, refresh, loading, onStateChange, readOnly = fa
   );
 }
 
-function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null }) {
-  const [selectedProjectId, setSelectedProjectId] = useState('all');
-
+function NativeFilesView({
+  data,
+  refresh,
+  loading,
+  onStateChange,
+  readOnly = false,
+  activeUser = null,
+  projectFilter = 'all',
+  onProjectFilterChange = () => {},
+}) {
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
@@ -5661,18 +5684,18 @@ function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = fal
 
   useEffect(() => {
     if (!visibleProjects.length) {
-      setSelectedProjectId('all');
+      onProjectFilterChange('all');
       return;
     }
-    if (selectedProjectId !== 'all' && !visibleProjects.some((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId('all');
+    if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
+      onProjectFilterChange('all');
     }
-  }, [selectedProjectId, visibleProjects]);
+  }, [onProjectFilterChange, projectFilter, visibleProjects]);
 
   const selectedProject =
-    selectedProjectId === 'all'
+    projectFilter === 'all'
       ? null
-      : visibleProjects.find((project) => project.id === selectedProjectId) || null;
+      : visibleProjects.find((project) => project.id === projectFilter) || null;
   const scopedProjects = selectedProject ? [selectedProject] : visibleProjects;
   const folderCount = scopedProjects.reduce((sum, project) => sum + (project.files?.folders?.length || 0), 0);
   const fileCount = scopedProjects.reduce(
@@ -5692,7 +5715,7 @@ function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = fal
             <div className="files-toolbar header-scope-toolbar">
               <label className="task-filter">
                 <span>Project</span>
-                <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
                   <option value="all">All projects</option>
                   {visibleProjects.map((project) => (
                     <option key={project.id} value={project.id}>
@@ -5760,8 +5783,15 @@ function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = fal
   );
 }
 
-function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = null }) {
-  const [filter, setFilter] = useState('all');
+function NativeTasksView({
+  data,
+  onStateChange,
+  refresh,
+  loading,
+  activeUser = null,
+  projectFilter = 'all',
+  onProjectFilterChange = () => {},
+}) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
   const [newTask, setNewTask] = useState({ label: '', projectId: '', due: '', assignee: '' });
@@ -5780,6 +5810,16 @@ function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = n
     [data.tasks, data.settings, visibleProjects],
   );
 
+  useEffect(() => {
+    if (!visibleProjects.length) {
+      onProjectFilterChange('all');
+      return;
+    }
+    if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
+      onProjectFilterChange('all');
+    }
+  }, [onProjectFilterChange, projectFilter, visibleProjects]);
+
   const projectMap = useMemo(
     () => new Map(visibleProjects.map((project) => [project.id, project])),
     [visibleProjects],
@@ -5794,7 +5834,8 @@ function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = n
   );
 
   const filteredTasks = useMemo(() => {
-    const tasks = filter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === filter);
+    const tasks =
+      projectFilter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === projectFilter);
     const scopedTasks =
       statusFilter === 'open'
         ? tasks.filter((task) => !task.done)
@@ -5811,11 +5852,11 @@ function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = n
       if (aKey !== bKey) return aKey < bKey ? -1 : 1;
       return a.label.localeCompare(b.label);
     });
-  }, [filter, projectMap, statusFilter, visibleTasks]);
+  }, [projectFilter, projectMap, statusFilter, visibleTasks]);
 
   const projectScopedTasks = useMemo(
-    () => (filter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === filter)),
-    [filter, visibleTasks],
+    () => (projectFilter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === projectFilter)),
+    [projectFilter, visibleTasks],
   );
 
   const totals = useMemo(
@@ -5978,9 +6019,9 @@ function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = n
     const openTasks = openTasksByAssignee.get(assigneeLabel) || [];
     if (!openTasks.length) return;
     const subject =
-      filter === 'all'
+      projectFilter === 'all'
         ? `${assigneeLabel} open tasks`
-        : `${projectMap.get(filter)?.name || 'Project'} open tasks`;
+        : `${projectMap.get(projectFilter)?.name || 'Project'} open tasks`;
     const body = [
       `Assignee: ${assigneeLabel}`,
       '',
@@ -6034,7 +6075,7 @@ function NativeTasksView({ data, onStateChange, refresh, loading, activeUser = n
             </label>
             <label className="task-filter">
               <span>Project</span>
-              <select value={filter} onChange={(event) => setFilter(event.target.value)}>
+              <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
                 <option value="all">All projects</option>
                 {visibleProjects.map((project) => (
                   <option key={project.id} value={project.id}>
@@ -6958,13 +6999,21 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   );
 }
 
-function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'schedule', activeUser = null }) {
+function NativeScheduleView({
+  data,
+  refresh,
+  loading,
+  onStateChange,
+  view = 'schedule',
+  activeUser = null,
+  projectFilter = 'all',
+  onProjectFilterChange = () => {},
+}) {
   const ganttGridRef = useRef(null);
   const ganttTimelineWrapRef = useRef(null);
   const ganttLabelRowRefs = useRef([]);
   const ganttTimelineRowRefs = useRef([]);
   const lastAutoScrollKeyRef = useRef('');
-  const [filter, setFilter] = useState('all');
   const [ganttZoomValue, setGanttZoomValue] = useState(28);
   const [expandedProjects, setExpandedProjects] = useState({});
   const [expandedPhases, setExpandedPhases] = useState({});
@@ -6998,9 +7047,19 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     [data.tasks, data.settings, visibleProjects],
   );
 
+  useEffect(() => {
+    if (!visibleProjects.length) {
+      onProjectFilterChange('all');
+      return;
+    }
+    if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
+      onProjectFilterChange('all');
+    }
+  }, [onProjectFilterChange, projectFilter, visibleProjects]);
+
   const filteredProjects = useMemo(
-    () => (filter === 'all' ? visibleProjects : visibleProjects.filter((project) => project.id === filter)),
-    [filter, visibleProjects],
+    () => (projectFilter === 'all' ? visibleProjects : visibleProjects.filter((project) => project.id === projectFilter)),
+    [projectFilter, visibleProjects],
   );
   const legacyShowTaskDueDates = data.settings?.showTaskDueDates;
   const showGanttTasks =
@@ -7309,7 +7368,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     measureRowHeights();
     window.addEventListener('resize', measureRowHeights);
     return () => window.removeEventListener('resize', measureRowHeights);
-  }, [rows, filter, showGanttTasks, expandedProjects, expandedPhases, dragDependency]);
+  }, [rows, projectFilter, showGanttTasks, expandedProjects, expandedPhases, dragDependency]);
 
   useEffect(() => {
     if (!isScheduleView) return;
@@ -7320,7 +7379,13 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
     const todayKey = toIsoDate(today);
     if (todayKey < toIsoDate(timeline.minDate) || todayKey > toIsoDate(timeline.maxDate)) return;
 
-    const scrollKey = [view, filter, timeline.minDate.toISOString(), timeline.maxDate.toISOString(), timelineCanvasWidth].join('|');
+    const scrollKey = [
+      view,
+      projectFilter,
+      timeline.minDate.toISOString(),
+      timeline.maxDate.toISOString(),
+      timelineCanvasWidth,
+    ].join('|');
 
     if (lastAutoScrollKeyRef.current === scrollKey) return;
     lastAutoScrollKeyRef.current = scrollKey;
@@ -7337,7 +7402,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
 
     wrap.scrollLeft = targetScrollLeft;
   }, [
-    filter,
+    projectFilter,
     ganttPixelsPerDay,
     isScheduleView,
     timeline.maxDate,
@@ -8811,7 +8876,7 @@ function NativeScheduleView({ data, refresh, loading, onStateChange, view = 'sch
             ) : null}
             <label className="task-filter">
               <span>Project</span>
-              <select value={filter} onChange={(event) => setFilter(event.target.value)}>
+              <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
                 <option value="all">All projects</option>
                 {visibleProjects.map((project) => (
                   <option key={project.id} value={project.id}>
@@ -9865,6 +9930,14 @@ function PasswordResetView({ loading, error, onSavePassword, onSignOut }) {
 function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   const [saving, setSaving] = useState(false);
   const [authInviteStatus, setAuthInviteStatus] = useState({});
+  const [schedulingDraft, setSchedulingDraft] = useState(() => ({
+    weekdaysOnly: !!data.settings?.weekdaysOnly,
+    showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (data.settings?.showTaskDueDates !== false),
+    showCalendarTaskDueDates: data.settings?.showCalendarTaskDueDates ?? (data.settings?.showTaskDueDates !== false),
+    showCalendarPhases: data.settings?.showCalendarPhases !== false,
+    showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
+    showPageStats: data.settings?.showPageStats !== false,
+  }));
   const settingsStateRef = useRef(data);
   const settingsSaveChainRef = useRef(Promise.resolve());
   const pendingSettingsSavesRef = useRef(0);
@@ -9944,6 +10017,24 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   }, [settings.holidays]);
 
   useEffect(() => {
+    setSchedulingDraft({
+      weekdaysOnly: settings.weekdaysOnly,
+      showGanttTaskDueDates: settings.showGanttTaskDueDates,
+      showCalendarTaskDueDates: settings.showCalendarTaskDueDates,
+      showCalendarPhases: settings.showCalendarPhases,
+      showCalendarHebrewDates: settings.showCalendarHebrewDates,
+      showPageStats: settings.showPageStats,
+    });
+  }, [
+    settings.weekdaysOnly,
+    settings.showGanttTaskDueDates,
+    settings.showCalendarTaskDueDates,
+    settings.showCalendarPhases,
+    settings.showCalendarHebrewDates,
+    settings.showPageStats,
+  ]);
+
+  useEffect(() => {
     setInspectionSubcodeDrafts((current) => {
       const unsaved = current.filter((item) => !item.persisted);
       return [
@@ -10008,6 +10099,35 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 
   function handleToggle(field, value) {
     runSettingsMutation({ [field]: value });
+  }
+
+  function handleSchedulingDraftToggle(field, value) {
+    setSchedulingDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function hasPendingSchedulingDefaults() {
+    return (
+      schedulingDraft.weekdaysOnly !== settings.weekdaysOnly ||
+      schedulingDraft.showGanttTaskDueDates !== settings.showGanttTaskDueDates ||
+      schedulingDraft.showCalendarTaskDueDates !== settings.showCalendarTaskDueDates ||
+      schedulingDraft.showCalendarPhases !== settings.showCalendarPhases ||
+      schedulingDraft.showCalendarHebrewDates !== settings.showCalendarHebrewDates ||
+      schedulingDraft.showPageStats !== settings.showPageStats
+    );
+  }
+
+  function handleSaveSchedulingDefaults() {
+    runSettingsMutation({
+      weekdaysOnly: schedulingDraft.weekdaysOnly,
+      showGanttTaskDueDates: schedulingDraft.showGanttTaskDueDates,
+      showCalendarTaskDueDates: schedulingDraft.showCalendarTaskDueDates,
+      showCalendarPhases: schedulingDraft.showCalendarPhases,
+      showCalendarHebrewDates: schedulingDraft.showCalendarHebrewDates,
+      showPageStats: schedulingDraft.showPageStats,
+    });
   }
 
   function handleHolidayDraftChange(index, field, value) {
@@ -10425,13 +10545,25 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
                   <h3>Scheduling defaults</h3>
                   <p>Control the default work-calendar behavior for schedule calculations.</p>
                 </div>
+                <div className="settings-card-actions">
+                  <button
+                    className="button secondary gantt-icon-button inline-save-button"
+                    type="button"
+                    onClick={handleSaveSchedulingDefaults}
+                    disabled={saving || !hasPendingSchedulingDefaults()}
+                    title="Save scheduling defaults"
+                    aria-label="Save scheduling defaults"
+                  >
+                    <FluentIcon name="check" />
+                  </button>
+                </div>
               </div>
 
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.weekdaysOnly}
-                  onChange={(event) => handleToggle('weekdaysOnly', event.target.checked)}
+                  checked={schedulingDraft.weekdaysOnly}
+                  onChange={(event) => handleSchedulingDraftToggle('weekdaysOnly', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10443,8 +10575,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.showGanttTaskDueDates}
-                  onChange={(event) => handleToggle('showGanttTaskDueDates', event.target.checked)}
+                  checked={schedulingDraft.showGanttTaskDueDates}
+                  onChange={(event) => handleSchedulingDraftToggle('showGanttTaskDueDates', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10456,8 +10588,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.showCalendarTaskDueDates}
-                  onChange={(event) => handleToggle('showCalendarTaskDueDates', event.target.checked)}
+                  checked={schedulingDraft.showCalendarTaskDueDates}
+                  onChange={(event) => handleSchedulingDraftToggle('showCalendarTaskDueDates', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10469,8 +10601,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.showCalendarPhases}
-                  onChange={(event) => handleToggle('showCalendarPhases', event.target.checked)}
+                  checked={schedulingDraft.showCalendarPhases}
+                  onChange={(event) => handleSchedulingDraftToggle('showCalendarPhases', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10482,8 +10614,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.showCalendarHebrewDates}
-                  onChange={(event) => handleToggle('showCalendarHebrewDates', event.target.checked)}
+                  checked={schedulingDraft.showCalendarHebrewDates}
+                  onChange={(event) => handleSchedulingDraftToggle('showCalendarHebrewDates', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10495,8 +10627,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
               <label className="settings-toggle">
                 <input
                   type="checkbox"
-                  checked={settings.showPageStats}
-                  onChange={(event) => handleToggle('showPageStats', event.target.checked)}
+                  checked={schedulingDraft.showPageStats}
+                  onChange={(event) => handleSchedulingDraftToggle('showPageStats', event.target.checked)}
                   disabled={saving}
                 />
                 <span>
@@ -10965,6 +11097,10 @@ export default function App() {
   const [error, setError] = useState('');
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
+  const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
+    if (typeof window === 'undefined') return 'all';
+    return window.sessionStorage.getItem(SESSION_PROJECT_FILTER_KEY) || 'all';
+  });
   const trackerStateRef = useRef(trackerState);
 
   useEffect(() => {
@@ -11046,7 +11182,15 @@ export default function App() {
     : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }];
   const activeUser = getActiveUserForAuthSession(users, authSession);
   const capabilities = getUserCapabilities(activeUser?.role);
+  const signedInUserName =
+    String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
+  const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
   const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(SESSION_PROJECT_FILTER_KEY, sessionProjectFilter || 'all');
+  }, [sessionProjectFilter]);
 
   useEffect(() => {
     if (!capabilities.allowedTabs.includes(activeTab)) {
@@ -11204,6 +11348,8 @@ export default function App() {
           refresh={refreshData}
           loading={loading}
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11217,6 +11363,8 @@ export default function App() {
           loading={loading}
           readOnly={!capabilities.canEdit}
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11230,6 +11378,8 @@ export default function App() {
           loading={loading}
           readOnly={!capabilities.canEdit}
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11243,6 +11393,8 @@ export default function App() {
           loading={loading}
           readOnly={!capabilities.canEdit}
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11256,6 +11408,8 @@ export default function App() {
           onStateChange={setTrackerState}
           view="schedule"
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11269,6 +11423,8 @@ export default function App() {
           onStateChange={setTrackerState}
           view="calendar"
           activeUser={activeUser}
+          projectFilter={sessionProjectFilter}
+          onProjectFilterChange={setSessionProjectFilter}
         />
       );
     }
@@ -11309,9 +11465,8 @@ export default function App() {
             <h1>Destiny Project Hub</h1>
           </div>
           <div className="hero-user-controls">
-            <div className="signed-in-user">
-              <span>{authSession.user.email}</span>
-              <strong>{activeUser?.role || 'No role'}</strong>
+            <div className="signed-in-user" title={signedInUserEmail || undefined}>
+              <strong>{signedInUserName}</strong>
             </div>
             <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
               Sign out
