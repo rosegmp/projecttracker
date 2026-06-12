@@ -142,6 +142,33 @@ const tests = [
     },
   },
   {
+    name: 'syncProjectTasks skips unnamed steps without crashing',
+    run() {
+      const project = {
+        id: 'project-1',
+        phases: [
+          {
+            id: 'phase-1',
+            steps: [
+              { id: 'step-1', end: '2026-05-28' },
+              { id: 'step-2', name: 'Framing', end: '2026-05-30' },
+            ],
+          },
+        ],
+      };
+
+      const tasks = [
+        { id: 'task-1', projectId: 'project-1', label: 'Framing', due: '' },
+        { id: 'task-2', projectId: 'project-1', due: '' },
+      ];
+
+      const synced = syncProjectTasks('project-1', project, tasks);
+
+      assert.equal(synced[0].due, '2026-05-30');
+      assert.equal(synced[1].due, '');
+    },
+  },
+  {
     name: 'wouldCreatePhaseCycleFromPreds blocks reverse links that would create a phase cycle',
     run() {
       const project = {

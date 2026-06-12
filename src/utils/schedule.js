@@ -402,12 +402,13 @@ export function syncProjectTasks(projectId, project, tasks) {
   const dueByName = new Map();
   (project.phases || []).forEach((phase) => {
     (phase.steps || []).forEach((step) => {
-      if (step.end) dueByName.set(step.name.trim().toLowerCase(), step.end);
+      const stepName = String(step?.name || '').trim().toLowerCase();
+      if (step.end && stepName) dueByName.set(stepName, step.end);
     });
   });
   return tasks.map((task) => {
     if (task.projectId !== projectId) return task;
-    const nextDue = dueByName.get(task.label.trim().toLowerCase());
+    const nextDue = dueByName.get(String(task?.label || '').trim().toLowerCase());
     return nextDue ? { ...task, due: nextDue } : task;
   });
 }

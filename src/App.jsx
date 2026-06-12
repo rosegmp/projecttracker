@@ -78,15 +78,51 @@ import {
 } from './utils/scheduleView.js';
 
 const tabs = [
-  { id: 'projects', label: 'Projects' },
-  { id: 'schedule', label: 'Schedule' },
-  { id: 'calendar', label: 'Calendar' },
-  { id: 'inspections', label: 'Inspections' },
-  { id: 'files', label: 'Files' },
-  { id: 'photos', label: 'Photos' },
-  { id: 'tasks', label: 'Tasks' },
-  { id: 'people', label: 'People' },
-  { id: 'settings', label: 'Settings' },
+  {
+    id: 'projects',
+    label: 'Projects',
+    description: 'Review active jobs, scan next actions, and open any project into its full workspace.',
+  },
+  {
+    id: 'schedule',
+    label: 'Schedule',
+    description: 'Review phases, step timing, dependencies, delays, and task markers in one timeline.',
+  },
+  {
+    id: 'calendar',
+    label: 'Calendar',
+    description: 'Daily visibility for phases, steps, tasks, holidays, and weekends using the same project filter as the Gantt.',
+  },
+  {
+    id: 'inspections',
+    label: 'Inspections',
+    description: 'Review upcoming, passed, failed, and follow-up inspections across visible projects.',
+  },
+  {
+    id: 'files',
+    label: 'Files',
+    description: 'Manage plans, permits, surveys, selections, and custom folders.',
+  },
+  {
+    id: 'photos',
+    label: 'Photos',
+    description: 'Manage progress, site, and finish photos.',
+  },
+  {
+    id: 'tasks',
+    label: 'Tasks',
+    description: 'Track what is open, overdue, and already complete.',
+  },
+  {
+    id: 'people',
+    label: 'People',
+    description: 'Switch between people types, search quickly, and choose the best view.',
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    description: 'Controls that shape date calculations, calendar visibility, and page-level display helpers.',
+  },
 ];
 
 const GANTT_ROW_MIN_HEIGHT = 48;
@@ -100,6 +136,8 @@ const GANTT_ZOOM_MAX_PIXELS_PER_DAY = 48;
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
+const PEOPLE_VIEW_MODE_KEY = 'cx_people_view_mode';
+const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks', 'files', 'photos', 'inspections']);
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
 const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = {
   company: 220,
@@ -4140,57 +4178,17 @@ function NativeInspectionsView({
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>Inspections</h2>
-        </div>
+      {!readOnly ? (
         <div className="panel-actions header-scope-actions">
-          {!readOnly ? (
-            <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length || saving}>
-              Add inspection
-            </button>
-          ) : null}
-          {visibleProjects.length ? (
-            <div className="files-toolbar header-scope-toolbar">
-              <label className="task-filter">
-                <span>Project</span>
-                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
-                  <option value="all">All projects</option>
-                  {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
+          <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length || saving}>
+            Add inspection
+          </button>
         </div>
-      </div>
-
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
-        <div className="project-summary-chip">Shown {inspections.length}</div>
-        <div className="project-summary-chip">Requested {statusCounts.requested}</div>
-        <div className="project-summary-chip">Scheduled {statusCounts.scheduled}</div>
-        <div className="project-summary-chip">Passed {statusCounts.passed}</div>
-        <div className="project-summary-chip">Follow-up {statusCounts['follow-up'] + statusCounts.failed}</div>
-        <div className="project-summary-chip">Current {selectedProject?.name || 'All projects'}</div>
-      </div>
+      ) : null}
 
       {visibleProjects.length ? (
         <>
           <section className="workspace-section">
-            <div className="panel-header">
-              <div>
-                <h3>{selectedProject?.name || 'All projects'}</h3>
-                <p className="panel-copy">
-                  {selectedProject
-                    ? 'Review upcoming, passed, failed, and follow-up inspections for this job.'
-                    : 'Review inspection activity across every visible project in one list.'}
-                </p>
-              </div>
-            </div>
             {inspections.length ? (
                 <div className="inspection-grid">
                   {inspections.map((inspection) => (
@@ -5313,25 +5311,11 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>{selectedProject ? 'Project page' : 'Projects Dashboard'}</h2>
-        </div>
+      {!selectedProject && !readOnly ? (
         <div className="panel-actions">
-          {!selectedProject && !readOnly ? (
-            <button className="button primary" type="button" onClick={startCreate}>
-              New project
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {!selectedProject ? (
-        <div className="project-detail-summary">
-          <div className="project-summary-chip">Projects {visibleProjects.length}</div>
-          <div className="project-summary-chip">Phases {totals.phases}</div>
-          <div className="project-summary-chip">Steps {totals.steps}</div>
-          <div className="project-summary-chip">Tasks {totals.tasks}</div>
+          <button className="button primary" type="button" onClick={startCreate}>
+            New project
+          </button>
         </div>
       ) : null}
 
@@ -5352,12 +5336,6 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
         <>
           {visibleProjects.length ? (
             <section className="workspace-section">
-              <div className="panel-header">
-                <div>
-                  <h3>Projects overview</h3>
-                  <p className="panel-copy">Review active jobs, scan next actions, and open any project into its full workspace.</p>
-                </div>
-              </div>
               <div className="project-grid">
                 {visibleProjects.map((project) => (
                   <ProjectCard
@@ -5602,47 +5580,11 @@ function NativePhotosView({
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>Photos</h2>
-        </div>
-        <div className="panel-actions header-scope-actions">
-          {visibleProjects.length ? (
-            <div className="files-toolbar header-scope-toolbar">
-              <label className="task-filter">
-                <span>Project</span>
-                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
-                  <option value="all">All projects</option>
-                  {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
-        <div className="project-summary-chip">Photos {photoCount}</div>
-        <div className="project-summary-chip">
-          Current {selectedProject?.name || 'All projects'}
-        </div>
-      </div>
-
       {visibleProjects.length ? (
         <>
           {scopedProjects.map((project) => (
             <section key={project.id} className="workspace-section">
-              <div className="panel-header">
-                <div>
-                  <h3>{project.name}</h3>
-                  <p className="panel-copy">Manage progress, site, and finish photos for this job.</p>
-                </div>
-              </div>
+              <h3>{project.name}</h3>
               <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={readOnly} />
             </section>
           ))}
@@ -5706,47 +5648,12 @@ function NativeFilesView({
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>Files</h2>
-        </div>
-        <div className="panel-actions header-scope-actions">
-          {visibleProjects.length ? (
-            <div className="files-toolbar header-scope-toolbar">
-              <label className="task-filter">
-                <span>Project</span>
-                <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
-                  <option value="all">All projects</option>
-                  {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
-        <div className="project-summary-chip">Folders {folderCount}</div>
-        <div className="project-summary-chip">Files {fileCount}</div>
-        <div className="project-summary-chip">Current {selectedProject?.name || 'All projects'}</div>
-      </div>
-
       {visibleProjects.length ? (
         <>
           {scopedProjects.length ? (
             scopedProjects.map((project) => (
               <section className="workspace-section" key={project.id}>
-                <div className="panel-header">
-                  <div>
-                    <h3>{project.name}</h3>
-                    <p className="panel-copy">Manage plans, permits, surveys, selections, and custom folders.</p>
-                  </div>
-                </div>
+                <h3>{project.name}</h3>
                 <ProjectFilesManager
                   data={data}
                   project={project}
@@ -6037,54 +5944,38 @@ function NativeTasksView({
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>Tasks</h2>
-        </div>
-        <div className="panel-actions task-header-actions">
-          <div className="task-toolbar task-toolbar-header">
-            <div className="people-view-toggle" role="tablist" aria-label="Task status filter">
-              <button
-                className={`people-toggle-button${statusFilter === 'all' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setStatusFilter('all')}
-              >
-                All
-              </button>
-              <button
-                className={`people-toggle-button${statusFilter === 'open' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setStatusFilter('open')}
-              >
-                Open
-              </button>
-              <button
-                className={`people-toggle-button${statusFilter === 'completed' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setStatusFilter('completed')}
-              >
-                Completed
-              </button>
-            </div>
-            <label className="task-filter">
-              <span>Group by</span>
-              <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
-                <option value="none">None</option>
-                <option value="assignee">Assignee</option>
-              </select>
-            </label>
-            <label className="task-filter">
-              <span>Project</span>
-              <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
-                <option value="all">All projects</option>
-                {visibleProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+      <div className="panel-actions task-header-actions">
+        <div className="task-toolbar task-toolbar-header">
+          <div className="people-view-toggle" role="tablist" aria-label="Task status filter">
+            <button
+              className={`people-toggle-button${statusFilter === 'all' ? ' active' : ''}`}
+              type="button"
+              onClick={() => setStatusFilter('all')}
+            >
+              All
+            </button>
+            <button
+              className={`people-toggle-button${statusFilter === 'open' ? ' active' : ''}`}
+              type="button"
+              onClick={() => setStatusFilter('open')}
+            >
+              Open
+            </button>
+            <button
+              className={`people-toggle-button${statusFilter === 'completed' ? ' active' : ''}`}
+              type="button"
+              onClick={() => setStatusFilter('completed')}
+            >
+              Completed
+            </button>
           </div>
+          <label className="task-filter">
+            <span>Group by</span>
+            <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
+              <option value="none">None</option>
+              <option value="assignee">Assignee</option>
+            </select>
+          </label>
         </div>
       </div>
 
@@ -6098,12 +5989,6 @@ function NativeTasksView({
 
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
-          <div className="panel-header">
-            <div>
-              <h3>Add task</h3>
-              <p className="panel-copy">Capture a new open item and optionally assign a project and due date.</p>
-            </div>
-          </div>
           <form className="task-create-panel workspace-plain-card" onSubmit={handleCreateTask}>
             <div className="task-create-grid">
               <input
@@ -6130,7 +6015,7 @@ function NativeTasksView({
                 value={newTask.due}
                 onChange={(event) => setNewTask((current) => ({ ...current, due: event.target.value }))}
               />
-              <div className="inline-action-field">
+              <div className="inline-action-field task-assignee-field">
                 <select
                   className="task-input"
                   value={newTask.assignee}
@@ -6157,12 +6042,6 @@ function NativeTasksView({
       </div>
 
       <section className="workspace-section">
-        <div className="panel-header">
-          <div>
-            <h3>Task list</h3>
-            <p className="panel-copy">Track what is open, overdue, and already complete.</p>
-          </div>
-        </div>
         <div className="task-list">
           {filteredTasks.length ? (
             groupBy === 'assignee' ? (
@@ -6596,10 +6475,19 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
 function NativePeopleView({ data, onStateChange, refresh, loading }) {
   const [personType, setPersonType] = useState('sub');
   const [query, setQuery] = useState('');
-  const [viewMode, setViewMode] = useState('cards');
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window === 'undefined') return 'list';
+    const stored = window.localStorage.getItem(PEOPLE_VIEW_MODE_KEY);
+    return stored === 'cards' || stored === 'list' ? stored : 'list';
+  });
   const [personDraft, setPersonDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const importInputRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PEOPLE_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
 
   const visibleSubs = useMemo(() => data.subs || [], [data.subs]);
   const employeeBackedPeople = useMemo(() => data.employees || [], [data.employees]);
@@ -6814,21 +6702,16 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>People</h2>
-        </div>
-        <div className="panel-actions">
-          <button className="button secondary" type="button" onClick={triggerImport} disabled={saving}>
-            Import CSV
-          </button>
-          <button className="button secondary" type="button" onClick={handleExportPeople} disabled={!filteredPeople.length}>
-            Export CSV
-          </button>
-          <button className="button primary" type="button" onClick={() => startCreate(personType)}>
-            {typeMeta.addLabel}
-          </button>
-        </div>
+      <div className="panel-actions people-page-actions">
+        <button className="button secondary" type="button" onClick={triggerImport} disabled={saving}>
+          Import CSV
+        </button>
+        <button className="button secondary" type="button" onClick={handleExportPeople} disabled={!filteredPeople.length}>
+          Export CSV
+        </button>
+        <button className="button primary" type="button" onClick={() => startCreate(personType)}>
+          {typeMeta.addLabel}
+        </button>
       </div>
       <input
         ref={importInputRef}
@@ -6838,62 +6721,19 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
         onChange={handleImportPeople}
       />
 
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Subcontractors {totals.subs}</div>
-        <div className="project-summary-chip">Employees {totals.employees}</div>
-        <div className="project-summary-chip">Suppliers {totals.suppliers}</div>
-        <div className="project-summary-chip">Consultants {totals.consultants}</div>
-        <div className="project-summary-chip">Customers {totals.customers}</div>
-        <div className="project-summary-chip">With email {totals.withEmail}</div>
-        <div className="project-summary-chip">Tagged {totals.tagged}</div>
-      </div>
-
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
-          <div className="panel-header">
-            <div>
-              <h3>People workspace</h3>
-              <p className="panel-copy">Switch between people types, search quickly, and choose the best view.</p>
-            </div>
-          </div>
           <div className="people-toolbar">
-            <div className="people-toggle" role="tablist" aria-label="People types">
-              <button
-                className={`people-toggle-button${personType === 'sub' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setPersonType('sub')}
-              >
-                Subcontractors
-              </button>
-              <button
-                className={`people-toggle-button${personType === 'emp' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setPersonType('emp')}
-              >
-                Employees
-              </button>
-              <button
-                className={`people-toggle-button${personType === 'supplier' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setPersonType('supplier')}
-              >
-                Suppliers
-              </button>
-              <button
-                className={`people-toggle-button${personType === 'consultant' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setPersonType('consultant')}
-              >
-                Consultants
-              </button>
-              <button
-                className={`people-toggle-button${personType === 'customer' ? ' active' : ''}`}
-                type="button"
-                onClick={() => setPersonType('customer')}
-              >
-                Customers
-              </button>
-            </div>
+            <label className="task-filter people-type-filter">
+              <span>People type</span>
+              <select value={personType} onChange={(event) => setPersonType(event.target.value)}>
+                <option value="sub">Subcontractors</option>
+                <option value="emp">Employees</option>
+                <option value="supplier">Suppliers</option>
+                <option value="consultant">Consultants</option>
+                <option value="customer">Customers</option>
+              </select>
+            </label>
 
             <label className="task-filter people-search">
               <span>Search {typeMeta.searchLabel}</span>
@@ -6926,12 +6766,6 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
       </div>
 
       <section className="workspace-section">
-        <div className="panel-header">
-          <div>
-            <h3>{typeMeta.plural}</h3>
-            <p className="panel-copy">Review contact details, responsibilities, and tags in the view that fits best.</p>
-          </div>
-        </div>
         {filteredPeople.length ? (
           viewMode === 'cards' ? (
             <div className="people-grid">
@@ -8571,6 +8405,8 @@ function NativeScheduleView({
       } else {
         setEditorDraft(null);
       }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to save schedule item.');
     } finally {
       setSaving(false);
     }
@@ -8848,64 +8684,33 @@ function NativeScheduleView({
 
   return (
     <section className="panel native-panel workspace-page">
-      <div className="panel-header">
-        <div>
-          <h2>{isCalendarView ? 'Month Calendar' : 'Schedule and Gantt'}</h2>
-        </div>
-        <div className="panel-actions header-scope-actions">
-          <div className="schedule-toolbar header-scope-toolbar">
-            {isScheduleView ? (
-              <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
-                <span>Zoom</span>
-                <input
-                  className="gantt-zoom-slider"
-                  type="range"
-                  min={GANTT_ZOOM_MIN}
-                  max={GANTT_ZOOM_MAX}
-                  step="1"
-                  value={ganttZoomValue}
-                  onChange={(event) => setGanttZoomValue(Number(event.target.value))}
-                />
-                <strong>{ganttZoomLabel}</strong>
-              </div>
-            ) : null}
-            {isScheduleView ? (
-              <button className="button secondary" type="button" onClick={toggleAllExpanded}>
-                {allExpanded ? 'Collapse all' : 'Expand all'}
-              </button>
-            ) : null}
-            <label className="task-filter">
-              <span>Project</span>
-              <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)}>
-                <option value="all">All projects</option>
-                {visibleProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+      <div className="panel-actions header-scope-actions">
+        <div className="schedule-toolbar header-scope-toolbar">
+          {isScheduleView ? (
+            <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
+              <span>Zoom</span>
+              <input
+                className="gantt-zoom-slider"
+                type="range"
+                min={GANTT_ZOOM_MIN}
+                max={GANTT_ZOOM_MAX}
+                step="1"
+                value={ganttZoomValue}
+                onChange={(event) => setGanttZoomValue(Number(event.target.value))}
+              />
+              <strong>{ganttZoomLabel}</strong>
+            </div>
+          ) : null}
+          {isScheduleView ? (
+            <button className="button secondary" type="button" onClick={toggleAllExpanded}>
+              {allExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
+          ) : null}
         </div>
       </div>
 
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Projects {filteredProjects.length}</div>
-        <div className="project-summary-chip">Phases {stats.phases}</div>
-        <div className="project-summary-chip">Steps {stats.steps}</div>
-        <div className="project-summary-chip">
-          {isCalendarView ? 'Calendar tasks' : 'Visible tasks'} {(isCalendarView ? showCalendarTasks : showGanttTasks) ? stats.visibleTaskCount : 0}
-        </div>
-        {isScheduleView ? <div className="project-summary-chip">Scheduled rows {stats.scheduledRows}</div> : null}
-      </div>
       {isScheduleView ? (
         <section className="workspace-section">
-          <div className="panel-header">
-            <div>
-              <h3>Gantt workspace</h3>
-              <p className="panel-copy">Review phases, step timing, dependencies, delays, and task markers in one timeline.</p>
-            </div>
-          </div>
         {rows.length ? (
         <div className="gantt-shell">
           <div className="gantt-table">
@@ -9237,13 +9042,7 @@ function NativeScheduleView({
 
       {isCalendarView ? (
       <section className="schedule-calendar-card workspace-section">
-        <div className="panel-header schedule-calendar-header">
-          <div>
-            <h3>Month workspace</h3>
-            <p className="panel-copy">
-              Daily visibility for phases, steps, tasks, holidays, and weekends using the same project filter as the Gantt.
-            </p>
-          </div>
+        <div className="schedule-calendar-header">
           <div className="calendar-nav">
             <button
               className="button secondary"
@@ -10522,9 +10321,6 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   return (
     <section className="panel native-panel">
       <div className="panel-header">
-        <div>
-          <h2>Settings</h2>
-        </div>
         <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
           {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
         </button>
@@ -10535,7 +10331,6 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
           <div className="settings-section-header">
             <div>
               <h3>Scheduling and Calendar</h3>
-              <p>Controls that shape date calculations, calendar visibility, and page-level display helpers.</p>
             </div>
           </div>
           <div className="settings-grid">
@@ -11090,6 +10885,7 @@ export default function App() {
       users: [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
       currentUserId: 'user-admin',
     },
+    settingsLoadedFromSupabase: false,
     storageMode: 'loading',
     storageIssue: '',
   });
@@ -11182,10 +10978,16 @@ export default function App() {
     : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }];
   const activeUser = getActiveUserForAuthSession(users, authSession);
   const capabilities = getUserCapabilities(activeUser?.role);
+  const visibleProjects = getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser);
   const signedInUserName =
     String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
   const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
   const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
+  const sharedScopeEnabled = PROJECT_SCOPED_TAB_IDS.has(activeTab) && visibleProjects.length > 0;
+  const sharedScopeProject =
+    sessionProjectFilter === 'all'
+      ? null
+      : visibleProjects.find((project) => project.id === sessionProjectFilter) || null;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -11236,7 +11038,8 @@ export default function App() {
     setRecoveryLoading(true);
     setPasswordResetError('');
     try {
-      await updateAuthPassword(password, authSession);
+      const nextSession = await updateAuthPassword(password, authSession);
+      setAuthSession(nextSession || authSession);
       setRecoveryMode(false);
       await refreshData();
     } catch (err) {
@@ -11456,21 +11259,27 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero hero-compact">
-        <div className="hero-copy">
-          <div className="hero-brand">
-            <div className="hero-logo" aria-hidden="true">
-              <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+      <section className="workspace-header">
+        <div className="workspace-header-card">
+          <div className="workspace-header-main">
+            <div className="workspace-brand">
+              <div className="hero-logo workspace-logo" aria-hidden="true">
+                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+              </div>
+              <div className="workspace-brand-copy">
+                <p className="eyebrow">Destiny Homes</p>
+                <h1>Destiny Project Hub</h1>
+              </div>
             </div>
-            <h1>Destiny Project Hub</h1>
-          </div>
-          <div className="hero-user-controls">
-            <div className="signed-in-user" title={signedInUserEmail || undefined}>
-              <strong>{signedInUserName}</strong>
+            <div className="hero-user-controls workspace-user-controls">
+              <div className="signed-in-user" title={signedInUserEmail || undefined}>
+                <span className="signed-in-label">Signed in</span>
+                <strong>{signedInUserName}</strong>
+              </div>
+              <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
+                Sign out
+              </button>
             </div>
-            <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
-              Sign out
-            </button>
           </div>
         </div>
       </section>
@@ -11527,18 +11336,41 @@ export default function App() {
       ) : null}
 
       {capabilities.showTabs ? (
-        <nav className="react-tabs" aria-label="Destiny Project Hub sections">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+        <section className="workspace-shell-bar">
+          <nav className="react-tabs" aria-label="Destiny Project Hub sections">
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                title={tab.description}
+                aria-label={`${tab.label}: ${tab.description}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+          {sharedScopeEnabled ? (
+            <div className="workspace-scope-bar">
+              <div className="workspace-scope-meta">
+                <span className="workspace-scope-label">Project scope</span>
+                <strong>{sharedScopeProject?.name || 'All visible projects'}</strong>
+              </div>
+              <label className="task-filter workspace-scope-filter">
+                <span>Current filter</span>
+                <select value={sessionProjectFilter} onChange={(event) => setSessionProjectFilter(event.target.value)}>
+                  <option value="all">All projects</option>
+                  {visibleProjects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+        </section>
       ) : null}
       <AppErrorBoundary resetKey={activeTab}>
         {activeView}

@@ -40,16 +40,107 @@ a {
 
 .app-shell {
   width: min(1240px, calc(100vw - 32px));
-  margin: 24px auto 12px;
-  padding: 12px;
+  margin: 18px auto 10px;
+  padding: 10px;
   display: grid;
-  gap: 18px;
+  gap: 14px;
   border: 1px solid var(--border);
-  border-radius: 30px;
+  border-radius: 26px;
   background: var(--surface-strong);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.78),
     0 14px 30px rgba(31, 37, 79, 0.08);
+}
+
+.workspace-header-card,
+.workspace-shell-bar {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.workspace-header-card {
+  padding: 18px 20px;
+  background:
+    radial-gradient(circle at top right, rgba(109, 116, 190, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 248, 252, 0.96) 100%);
+}
+
+.workspace-header-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.workspace-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.workspace-brand-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-brand-copy .eyebrow {
+  margin-bottom: 0;
+}
+
+.workspace-brand-copy h1 {
+  margin: 0;
+  color: var(--brand);
+  font-size: clamp(1.45rem, 3vw, 2.2rem);
+  line-height: 1;
+  letter-spacing: 0.06em;
+}
+
+.workspace-header-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.workspace-logo {
+  width: 68px;
+  height: 68px;
+  border-radius: 18px;
+  padding: 6px;
+}
+
+.workspace-logo img {
+  border-radius: 12px;
+}
+
+.workspace-user-controls {
+  gap: 10px;
+  align-items: center;
+}
+
+.signed-in-user {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.signed-in-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.signed-in-user strong {
+  font-size: 14px;
+  line-height: 1.3;
 }
 
 .hero {
@@ -75,7 +166,7 @@ a {
 .hero-copy,
 .status-card,
 .panel {
-  padding: 28px;
+  padding: 24px;
 }
 
 .hero-copy {
@@ -173,10 +264,14 @@ a {
   flex-wrap: wrap;
 }
 
+.panel-actions:empty {
+  display: none;
+}
+
 .page-refresh-footer {
   display: flex;
   justify-content: flex-end;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .button {
@@ -305,30 +400,31 @@ a {
 .react-tabs {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-shell-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 8;
+  display: grid;
   gap: 10px;
+  padding: 12px;
 }
 
 .react-tab {
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  min-width: 132px;
-  padding: 12px 14px;
+  align-items: center;
+  justify-content: center;
+  min-width: 112px;
+  padding: 10px 14px;
   border: 1px solid var(--border);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.85);
+  border-radius: 14px;
+  background: rgba(247, 248, 252, 0.94);
   color: var(--text);
   cursor: pointer;
-  box-shadow: var(--shadow);
-}
-
-.react-tab small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  box-shadow: none;
+  font-weight: 700;
 }
 
 .react-tab.active {
@@ -336,8 +432,35 @@ a {
   color: #fff;
 }
 
-.react-tab.active small {
-  color: rgba(255, 255, 255, 0.7);
+.workspace-scope-bar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+  border-top: 1px solid rgba(61, 66, 120, 0.1);
+}
+
+.workspace-scope-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.workspace-scope-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-scope-meta strong {
+  font-size: 14px;
+}
+
+.workspace-scope-filter {
+  min-width: min(280px, 100%);
 }
 
 .panel {
@@ -345,7 +468,9 @@ a {
 }
 
 .native-panel .panel-header {
-  margin-bottom: 18px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(61, 66, 120, 0.08);
 }
 
 .metrics-grid {
@@ -416,6 +541,10 @@ a {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.inline-action-field > * {
+  min-width: 0;
 }
 
 .task-toolbar {
@@ -491,6 +620,10 @@ a {
   min-width: min(360px, 100%);
 }
 
+.people-type-filter {
+  min-width: 190px;
+}
+
 .people-view-toggle {
   display: inline-flex;
   gap: 8px;
@@ -507,6 +640,9 @@ a {
 
 .task-filter select,
 .task-input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 42px;
   padding: 0 12px;
   border: 1px solid var(--border);
@@ -673,7 +809,7 @@ a {
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -683,12 +819,16 @@ a {
 
 .settings-sections {
   display: grid;
-  gap: 22px;
+  gap: 18px;
 }
 
 .settings-section {
   display: grid;
-  gap: 14px;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(61, 66, 120, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(247, 248, 252, 0.9) 100%);
 }
 
 .settings-section-header {
@@ -696,7 +836,7 @@ a {
   justify-content: space-between;
   align-items: end;
   gap: 12px;
-  padding-bottom: 2px;
+  padding-bottom: 8px;
   border-bottom: 1px solid rgba(61, 66, 120, 0.12);
 }
 
@@ -1163,18 +1303,24 @@ a {
 }
 
 .schedule-calendar-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
   margin-bottom: 14px;
 }
 
 .calendar-nav {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .calendar-month-label {
   min-width: 190px;
+  flex: 0 1 220px;
   text-align: center;
   font-size: 1rem;
   font-weight: 700;
@@ -2332,17 +2478,17 @@ button.calendar-chip {
 
 .inspection-grid {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .inspection-card {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 16px;
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
-  box-shadow: 0 10px 28px rgba(19, 26, 56, 0.06);
+  box-shadow: 0 8px 20px rgba(19, 26, 56, 0.05);
 }
 
 .inspection-card.inspection-passed {
@@ -2359,35 +2505,35 @@ button.calendar-chip {
 .inspection-card-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   align-items: start;
 }
 
 .inspection-card-header h3 {
-  margin: 4px 0 0;
-  font-size: 15px;
-  line-height: 1.35;
+  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 1.3;
 }
 
 .inspection-type {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .inspection-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .inspection-meta span {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(61, 66, 120, 0.05);
 }
@@ -2707,21 +2853,21 @@ button.calendar-chip {
 
 .person-card {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 16px;
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
 }
 
 .person-card-top {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .person-card-header {
   display: flex;
-  gap: 14px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -2729,27 +2875,27 @@ button.calendar-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   background: linear-gradient(135deg, var(--brand), #6d74be);
   color: #fff;
-  font-size: 1rem;
+  font-size: 0.88rem;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
 
 .person-card h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  line-height: 1.35;
+  margin: 0 0 2px;
+  font-size: 14px;
+  line-height: 1.3;
 }
 
 .person-subtitle {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .person-card-actions {
@@ -2759,13 +2905,13 @@ button.calendar-chip {
 .person-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
   margin: 0;
 }
 
 .person-details div {
-  padding: 12px;
-  border-radius: 14px;
+  padding: 10px;
+  border-radius: 12px;
   background: rgba(61, 66, 120, 0.04);
 }
 
@@ -3107,18 +3253,18 @@ button.calendar-chip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .project-summary-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 9px;
   border-radius: 999px;
   background: rgba(61, 66, 120, 0.08);
   color: var(--brand);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -3169,7 +3315,7 @@ button.calendar-chip {
 
 .workspace-page {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .project-detail-header {
@@ -3184,6 +3330,10 @@ button.calendar-chip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(61, 66, 120, 0.08);
+  border-radius: 16px;
+  background: rgba(61, 66, 120, 0.03);
 }
 
 .workspace-control-grid {
@@ -3454,6 +3604,36 @@ button.calendar-chip {
 
   .hero-brand {
     gap: 12px;
+  }
+
+  .workspace-header-card,
+  .workspace-shell-bar {
+    border-radius: 16px;
+  }
+
+  .workspace-header-card {
+    padding: 14px;
+  }
+
+  .workspace-header-main,
+  .workspace-brand,
+  .workspace-scope-bar {
+    align-items: start;
+  }
+
+  .workspace-brand {
+    width: 100%;
+  }
+
+  .workspace-user-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .workspace-shell-bar {
+    position: static;
+    top: 6px;
+    padding: 10px;
   }
 
   .hero-logo {
@@ -3761,8 +3941,47 @@ button.calendar-chip {
     height: 56px;
   }
 
+  .workspace-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+  }
+
+  .workspace-brand-copy h1 {
+    font-size: 20px;
+  }
+
+  .workspace-header-subtitle,
+  .signed-in-user strong {
+    font-size: 12px;
+  }
+
   .hero h1 {
     font-size: 22px;
+  }
+
+  .auth-hero-copy {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .auth-hero-copy .hero-brand {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .auth-hero-copy .hero-logo {
+    width: 64px;
+    height: 64px;
+  }
+
+  .auth-hero-copy h1 {
+    font-size: 24px;
+    line-height: 1.12;
+    letter-spacing: 0.04em;
+    text-wrap: balance;
   }
 
   .project-detail-facts {
@@ -3779,10 +3998,90 @@ button.calendar-chip {
     font-size: 12px;
   }
 
+  .react-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .react-tab {
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
     padding: 8px 9px;
     border-radius: 12px;
     font-size: 12px;
+  }
+
+  .workspace-user-controls {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .task-toolbar.task-toolbar-header {
+    width: 100%;
+    justify-content: stretch;
+    align-items: stretch;
+  }
+
+  .task-toolbar.task-toolbar-header .people-view-toggle {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .task-toolbar.task-toolbar-header .people-toggle-button {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
+  .task-toolbar.task-toolbar-header .task-filter {
+    width: 100%;
+  }
+
+  .task-create-grid .inline-action-field,
+  .task-assignee-field {
+    grid-template-columns: 1fr;
+  }
+
+  .task-assignee-field > *,
+  .task-create-grid > .button {
+    width: 100%;
+  }
+
+  .people-page-actions {
+    width: 100%;
+  }
+
+  .people-page-actions .button {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .people-summary {
+    align-items: flex-start;
+  }
+
+  .people-toolbar {
+    display: grid;
+    gap: 12px;
+  }
+
+  .people-toggle,
+  .people-view-toggle {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .people-toggle-button {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+    padding-inline: 10px;
+  }
+
+  .people-search {
+    min-width: 0;
+    width: 100%;
   }
 
   .metrics-grid,

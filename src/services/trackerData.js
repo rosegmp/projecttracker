@@ -114,6 +114,31 @@ async function refreshAuthSession(session) {
   return nextSession;
 }
 
+async function hydrateAuthSessionUser(session) {
+  if (!isSupabaseConfigured() || !session?.accessToken) return session || null;
+  const response = await fetch(getAuthEndpoint('/user'), {
+    method: 'GET',
+    headers: buildHeaders({
+      Authorization: `Bearer ${session.accessToken}`,
+    }),
+  });
+
+  if (!response.ok) return session;
+
+  const payload = await response.json().catch(() => null);
+  const email = String(payload?.email || payload?.user?.email || '').trim();
+  const userId = String(payload?.id || payload?.user?.id || '').trim();
+  const nextSession = {
+    ...session,
+    user: {
+      id: userId || session?.user?.id || '',
+      email: email || session?.user?.email || '',
+    },
+  };
+  writeAuthSession(nextSession);
+  return nextSession;
+}
+
 export function getStoredAuthSession() {
   return authSession;
 }
@@ -128,6 +153,9 @@ export async function initializeAuthSession() {
     return refreshAuthSession(session);
   }
   writeAuthSession(session);
+  if (!String(session?.user?.email || '').trim()) {
+    return hydrateAuthSessionUser(session);
+  }
   return session;
 }
 
@@ -257,7 +285,21 @@ export async function updateAuthPassword(password, session = authSession) {
     }
     throw new Error(message);
   }
-  return text ? JSON.parse(text) : true;
+  const responsePayload = text ? JSON.parse(text) : null;
+  const nextSession = await hydrateAuthSessionUser(session);
+  if (!nextSession) return responsePayload || true;
+  if (responsePayload?.email || responsePayload?.user?.email || responsePayload?.id || responsePayload?.user?.id) {
+    const mergedSession = {
+      ...nextSession,
+      user: {
+        id: String(responsePayload?.id || responsePayload?.user?.id || nextSession.user?.id || '').trim(),
+        email: String(responsePayload?.email || responsePayload?.user?.email || nextSession.user?.email || '').trim(),
+      },
+    };
+    writeAuthSession(mergedSession);
+    return mergedSession;
+  }
+  return nextSession;
 }
 
 export async function signOutAuthSession() {
@@ -506,6 +548,7 @@ function getFallbackData(overrides = {}) {
     subs: fromStorage('cx_s', []).map((person) => normalizePerson('sub', person)),
     employees: fromStorage('cx_e', []).map((person) => normalizePerson('emp', person)),
     settings: normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS)),
+    settingsLoadedFromSupabase: false,
     storageMode: 'local',
     storageIssue: '',
     ...overrides,
@@ -688,7 +731,7 @@ async function persistProjects(projects, storageMode, deletedProjectId = null) {
   return persistCollection(projects, 'cx_p', 'projects', storageMode, deletedProjectId);
 }
 
-async function persistSettings(settings, storageMode) {
+async function persistSettings(settings, storageMode, canWriteRemote = false) {
   writeStorage('cx_settings', settings);
 
   if (!isSupabaseConfigured()) {
@@ -698,7 +741,7 @@ async function persistSettings(settings, storageMode) {
   // Only push settings remotely after the current session has successfully loaded
   // from Supabase. This prevents fallback/default settings from clobbering the
   // remote app_settings row after a transient read/auth failure.
-  if (storageMode !== 'supabase') {
+  if (storageMode !== 'supabase' || !canWriteRemote) {
     return storageMode;
   }
 
@@ -759,6 +802,7 @@ export async function loadTrackerData() {
       Array.isArray(settingsResponse) && settingsResponse.length
         ? normalizeSettings(settingsResponse[0].data || EMPTY_SETTINGS)
         : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
+    const settingsLoadedFromSupabase = Array.isArray(settingsResponse) && settingsResponse.length > 0;
 
     return stripLegacySampleData({
       projects,
@@ -766,6 +810,7 @@ export async function loadTrackerData() {
       subs,
       employees,
       settings,
+      settingsLoadedFromSupabase,
       storageMode: 'supabase',
       storageIssue: '',
     });
@@ -1028,8 +1073,17 @@ export async function updateSettings(currentState, updates) {
       ? updates.holidays
       : baselineSettings.holidays,
   });
-  const storageMode = await persistSettings(settings, currentState.storageMode);
-  return { ...currentState, settings, storageMode };
+  const storageMode = await persistSettings(
+    settings,
+    currentState.storageMode,
+    currentState.settingsLoadedFromSupabase === true,
+  );
+  return {
+    ...currentState,
+    settings,
+    settingsLoadedFromSupabase: currentState.settingsLoadedFromSupabase === true,
+    storageMode,
+  };
 }
 
 export function getStorageBannerMessage(storageMode, storageIssue = '') {
