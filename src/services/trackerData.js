@@ -579,6 +579,14 @@ function storageAuthHeaders(extraHeaders = {}) {
   return buildHeaders(extraHeaders);
 }
 
+function storageAnonHeaders(extraHeaders = {}) {
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_KEY}`,
+    ...extraHeaders,
+  };
+}
+
 function encodeStoragePath(path) {
   return String(path || '')
     .split('/')
@@ -626,19 +634,31 @@ export async function downloadProjectFileFromStorage(file) {
   if (!file?.storageBucket || !file?.storagePath || !isSupabaseConfigured()) {
     throw new Error('Storage file is missing its bucket or path.');
   }
-  const response = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(file.storageBucket)}/${encodeStoragePath(file.storagePath)}`,
-    {
-      method: 'GET',
-      headers: storageAuthHeaders(),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`File download failed: ${await response.text()}`);
+  const downloadUrl =
+    `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(file.storageBucket)}/${encodeStoragePath(file.storagePath)}`;
+  const requestOptions = { method: 'GET' };
+  const headerCandidates = [storageAuthHeaders()];
+  if (getAuthAccessToken()) {
+    headerCandidates.push(storageAnonHeaders());
   }
 
-  return response.blob();
+  let lastError = 'File download failed.';
+  for (const headers of headerCandidates) {
+    try {
+      const response = await fetch(downloadUrl, {
+        ...requestOptions,
+        headers,
+      });
+      if (response.ok) {
+        return response.blob();
+      }
+      lastError = `File download failed: ${await response.text()}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'File download failed.';
+    }
+  }
+
+  throw new Error(lastError);
 }
 
 export async function deleteProjectFileFromStorage(file) {

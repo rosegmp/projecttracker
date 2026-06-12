@@ -2493,16 +2493,21 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
   const [editingPhotoNames, setEditingPhotoNames] = useState({});
   const [storageNotice, setStorageNotice] = useState('');
   const [previewUrls, setPreviewUrls] = useState({});
+  const previewUrlsRef = useRef({});
   const uploadInputRef = useRef(null);
   const replacePhotoInputRefs = useRef({});
 
   const photos = project?.photos || [];
 
   useEffect(() => {
-    return () => {
-      Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url));
-    };
+    previewUrlsRef.current = previewUrls;
   }, [previewUrls]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   useEffect(() => {
     const keepIds = new Set();
@@ -3713,6 +3718,7 @@ function NativeInspectionsView({
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
   const [subcodeDraft, setSubcodeDraft] = useState(null);
   const [previewUrls, setPreviewUrls] = useState({});
+  const previewUrlsRef = useRef({});
   const [saving, setSaving] = useState(false);
 
   const visibleProjects = useMemo(
@@ -3771,10 +3777,14 @@ function NativeInspectionsView({
   }, [inspections]);
 
   useEffect(() => {
-    return () => {
-      Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url));
-    };
+    previewUrlsRef.current = previewUrls;
   }, [previewUrls]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   useEffect(() => {
     const keepIds = new Set();
