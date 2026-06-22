@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#3D4278</color>
+    <color name="colorPrimaryDark">#1F2442</color>
+    <color name="colorAccent">#5B63AA</color>
+    <color name="colorSurface">#FFFFFF</color>
+    <color name="colorSurfaceAlt">#EDF1F6</color>
+    <color name="colorStatusBar">#EDF1F6</color>
+    <color name="colorNavigationBar">#EDF1F6</color>
+    <color name="colorSplashBackground">#EDF1F6</color>
+</resources>

@@ -19,6 +19,7 @@ import {
   Eye24Regular,
   Mail24Regular,
   ReOrderDotsVertical24Regular,
+  SignOut24Regular,
   Warning24Regular,
 } from '@fluentui/react-icons';
 import {
@@ -170,6 +171,7 @@ function FluentIcon({ name, size = 18, className = '' }) {
     camera: Camera24Regular,
     eye: Eye24Regular,
     mail: Mail24Regular,
+    signOut: SignOut24Regular,
     dependency: ArrowBidirectionalUpDown24Regular,
     check: Checkmark24Regular,
     chevronRight: ChevronRight24Regular,
@@ -267,10 +269,21 @@ function getTabFromLocation() {
   return validTabIds.has(tab) ? tab : 'projects';
 }
 
-function syncTabToLocation(tab) {
+function isNativeAndroidApp() {
+  if (typeof window === 'undefined') return false;
+  const isNativePlatform = window.Capacitor?.isNativePlatform?.() === true;
+  const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  return isNativePlatform && /Android/i.test(userAgent);
+}
+
+function syncTabToLocation(tab, { push = false } = {}) {
   if (typeof window === 'undefined' || !validTabIds.has(tab)) return;
   const url = new URL(window.location.href);
   url.searchParams.set('tab', tab);
+  if (push) {
+    window.history.pushState(null, '', url);
+    return;
+  }
   window.history.replaceState(null, '', url);
 }
 
@@ -646,6 +659,42 @@ function endOfWeek(date) {
   const result = startOfWeek(date);
   result.setDate(result.getDate() + 6);
   return result;
+}
+
+function useHorizontalSwipe(onSwipeLeft, onSwipeRight, { minDistance = 56, maxOffAxis = 72 } = {}) {
+  const touchStateRef = useRef(null);
+
+  function handleTouchStart(event) {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    touchStateRef.current = { x: touch.clientX, y: touch.clientY };
+  }
+
+  function handleTouchEnd(event) {
+    const start = touchStateRef.current;
+    touchStateRef.current = null;
+    const touch = event.changedTouches?.[0];
+    if (!start || !touch) return;
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (absX < minDistance || absY > maxOffAxis || absX <= absY) return;
+
+    if (deltaX < 0) {
+      onSwipeLeft?.();
+      return;
+    }
+
+    onSwipeRight?.();
+  }
+
+  return {
+    onTouchStart: handleTouchStart,
+    onTouchEnd: handleTouchEnd,
+  };
 }
 
 function addDays(date, days) {
@@ -1142,6 +1191,11 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [expandedCalendarWeeks, setExpandedCalendarWeeks] = useState({});
   const showHebrewDates = settings?.showCalendarHebrewDates === true;
+  const goToPreviousMonth = () =>
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1));
+  const goToNextMonth = () =>
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1));
+  const calendarSwipeHandlers = useHorizontalSwipe(goToNextMonth, goToPreviousMonth);
 
   useEffect(() => {
     setCalendarMonth(startOfMonth(new Date()));
@@ -1203,7 +1257,7 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
           <button
             className="button secondary"
             type="button"
-            onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+            onClick={goToPreviousMonth}
           >
             Previous
           </button>
@@ -1213,14 +1267,14 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
           <button
             className="button secondary"
             type="button"
-            onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+            onClick={goToNextMonth}
           >
             Next
           </button>
         </div>
       </div>
 
-      <div className="calendar-grid-shell project-detail-calendar">
+      <div className="calendar-grid-shell project-detail-calendar" {...calendarSwipeHandlers}>
         <div className="calendar-dow-grid">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
             <div className="calendar-dow" key={day}>
@@ -6865,6 +6919,11 @@ function NativeScheduleView({
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
+  const goToPreviousCalendarMonth = () =>
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1));
+  const goToNextCalendarMonth = () =>
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1));
+  const calendarSwipeHandlers = useHorizontalSwipe(goToNextCalendarMonth, goToPreviousCalendarMonth);
   const [editorDraft, setEditorDraft] = useState(null);
   const [delayDraft, setDelayDraft] = useState(null);
   const [dependencyDraft, setDependencyDraft] = useState(null);
@@ -9057,11 +9116,7 @@ function NativeScheduleView({
             <button
               className="button secondary"
               type="button"
-              onClick={() =>
-                setCalendarMonth(
-                  new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1),
-                )
-              }
+              onClick={goToPreviousCalendarMonth}
             >
               Previous
             </button>
@@ -9071,17 +9126,14 @@ function NativeScheduleView({
             <button
               className="button secondary"
               type="button"
-              onClick={() =>
-                setCalendarMonth(
-                  new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1),
-                )
-              }
+              onClick={goToNextCalendarMonth}
             >
               Next
             </button>
           </div>
         </div>
 
+        <div className="calendar-swipe-shell" {...calendarSwipeHandlers}>
         <div className="calendar-dow-grid">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
             <div key={day} className="calendar-dow">
@@ -9297,6 +9349,7 @@ function NativeScheduleView({
               </div>
             );
           })}
+        </div>
         </div>
       </section>
       ) : null}
@@ -10871,6 +10924,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 }
 
 export default function App() {
+  const nativeAndroid = isNativeAndroidApp();
   const [activeTab, setActiveTab] = useState(getTabFromLocation);
   const [authSession, setAuthSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -10903,11 +10957,14 @@ export default function App() {
   const [error, setError] = useState('');
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
+  const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
+  const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
   const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
     if (typeof window === 'undefined') return 'all';
     return window.sessionStorage.getItem(SESSION_PROJECT_FILTER_KEY) || 'all';
   });
   const trackerStateRef = useRef(trackerState);
+  const previousActiveTabRef = useRef(activeTab);
 
   useEffect(() => {
     trackerStateRef.current = trackerState;
@@ -10966,7 +11023,10 @@ export default function App() {
   }, [authLoading, authSession]);
 
   useEffect(() => {
-    syncTabToLocation(activeTab);
+    const previousTab = previousActiveTabRef.current;
+    const shouldPushHistory = isNativeAndroidApp() && previousTab !== activeTab;
+    syncTabToLocation(activeTab, { push: shouldPushHistory });
+    previousActiveTabRef.current = activeTab;
   }, [activeTab]);
 
   useEffect(() => {
@@ -10993,6 +11053,7 @@ export default function App() {
     String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
   const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
   const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
+  const activeTabMeta = visibleTabs.find((tab) => tab.id === activeTab) || tabs.find((tab) => tab.id === activeTab) || tabs[0];
   const sharedScopeEnabled = PROJECT_SCOPED_TAB_IDS.has(activeTab) && visibleProjects.length > 0;
   const sharedScopeProject =
     sessionProjectFilter === 'all'
@@ -11009,6 +11070,11 @@ export default function App() {
       setActiveTab(capabilities.allowedTabs[0] || 'projects');
     }
   }, [activeTab, capabilities.allowedTabs]);
+
+  useEffect(() => {
+    setShowAndroidNavMenu(false);
+    setShowAndroidAccountMenu(false);
+  }, [activeTab, authSession]);
 
   async function handleSignIn(email, password) {
     setSigningIn(true);
@@ -11269,30 +11335,150 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="workspace-header">
-        <div className="workspace-header-card">
-          <div className="workspace-header-main">
-            <div className="workspace-brand">
-              <div className="hero-logo workspace-logo" aria-hidden="true">
-                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+      {nativeAndroid ? (
+        <section className="workspace-shell-bar android-shell-bar">
+          <div className="android-shell-main">
+            {capabilities.showTabs ? (
+              <div className="android-nav-menu-shell">
+                <button
+                  className="button secondary android-nav-trigger"
+                  type="button"
+                  onClick={() => {
+                    setShowAndroidAccountMenu(false);
+                    setShowAndroidNavMenu((current) => !current);
+                  }}
+                  aria-expanded={showAndroidNavMenu ? 'true' : 'false'}
+                  aria-label="Open section menu"
+                >
+                  <span className="android-nav-trigger-copy">
+                    <span className="android-nav-trigger-label">Section</span>
+                    <strong>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
+                  </span>
+                  <FluentIcon name="arrowDown" />
+                </button>
+                {showAndroidNavMenu ? (
+                  <div className="android-nav-menu" role="menu" aria-label="Sections">
+                    {visibleTabs.map((tab) => (
+                      <button
+                        key={tab.id}
+                        className={`android-nav-menu-item${activeTab === tab.id ? ' active' : ''}`}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={activeTab === tab.id ? 'true' : 'false'}
+                        onClick={() => {
+                          setActiveTab(tab.id);
+                          setShowAndroidNavMenu(false);
+                        }}
+                      >
+                        <span className="android-nav-menu-item-copy">
+                          <strong>{tab.label}</strong>
+                          <small>{tab.description}</small>
+                        </span>
+                        {activeTab === tab.id ? <FluentIcon name="check" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-              <div className="workspace-brand-copy">
-                <p className="eyebrow">Destiny Homes</p>
-                <h1>Destiny Project Hub</h1>
-              </div>
-            </div>
-            <div className="hero-user-controls workspace-user-controls">
-              <div className="signed-in-user" title={signedInUserEmail || undefined}>
-                <span className="signed-in-label">Signed in</span>
-                <strong>{signedInUserName}</strong>
-              </div>
-              <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
-                Sign out
+            ) : (
+              <strong className="android-shell-title">{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
+            )}
+            <div className="android-shell-actions">
+              <button
+                className="button secondary gantt-icon-button android-account-button"
+                type="button"
+                onClick={() => {
+                  setShowAndroidNavMenu(false);
+                  setShowAndroidAccountMenu((current) => !current);
+                }}
+                title="Account"
+                aria-label="Account"
+                aria-expanded={showAndroidAccountMenu ? 'true' : 'false'}
+              >
+                <span className="android-account-initial" aria-hidden="true">
+                  {signedInUserName.slice(0, 1).toUpperCase()}
+                </span>
               </button>
             </div>
           </div>
-        </div>
-      </section>
+          {sharedScopeEnabled ? (
+            <div className="workspace-scope-bar android-scope-bar">
+              <div className="workspace-scope-meta">
+                <span className="workspace-scope-label">Project scope</span>
+                <strong>{sharedScopeProject?.name || 'All visible projects'}</strong>
+              </div>
+              <label className="task-filter workspace-scope-filter">
+                <span>Current filter</span>
+                <select value={sessionProjectFilter} onChange={(event) => setSessionProjectFilter(event.target.value)}>
+                  <option value="all">All projects</option>
+                  {visibleProjects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+          {showAndroidAccountMenu ? (
+            <div className="android-account-menu">
+              <div className="workspace-user-card android-account-card">
+                <div className="workspace-user-avatar" aria-hidden="true">
+                  {signedInUserName.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="signed-in-user" title={signedInUserEmail || undefined}>
+                  <span className="signed-in-label">Signed in</span>
+                  <strong>{signedInUserName}</strong>
+                  {signedInUserEmail ? <small>{signedInUserEmail}</small> : null}
+                </div>
+              </div>
+              <button
+                className="button secondary android-signout-button"
+                type="button"
+                onClick={() => void handleSignOut()}
+              >
+                Sign out
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : (
+        <section className="workspace-header">
+          <div className="workspace-header-card">
+            <div className="workspace-header-main">
+              <div className="workspace-brand">
+                <div className="hero-logo workspace-logo" aria-hidden="true">
+                  <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+                </div>
+                <div className="workspace-brand-copy">
+                  <h1>Destiny Project Hub</h1>
+                </div>
+              </div>
+              <div className="hero-user-controls workspace-user-controls">
+                <div className="workspace-user-card">
+                  <div className="workspace-user-avatar" aria-hidden="true">
+                    {signedInUserName.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="signed-in-user" title={signedInUserEmail || undefined}>
+                    <span className="signed-in-label">Signed in</span>
+                    <strong>{signedInUserName}</strong>
+                    {signedInUserEmail ? <small>{signedInUserEmail}</small> : null}
+                  </div>
+                </div>
+                <button
+                  className="button secondary gantt-icon-button workspace-signout-button"
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  <FluentIcon name="signOut" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {storageBanner ? (
         <section className="storage-banner">
@@ -11345,7 +11531,7 @@ export default function App() {
         </section>
       ) : null}
 
-      {capabilities.showTabs ? (
+      {capabilities.showTabs && !nativeAndroid ? (
         <section className="workspace-shell-bar">
           <nav className="react-tabs" aria-label="Destiny Project Hub sections">
             {visibleTabs.map((tab) => (

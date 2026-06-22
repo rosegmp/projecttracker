@@ -1,0 +1,9 @@
+{
+  "appId": "com.destinyhomes.projecthub",
+  "appName": "Destiny Project Hub",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": {
+    "backgroundColor": "#edf1f6"
+  }
+}

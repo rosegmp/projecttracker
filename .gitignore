@@ -6,3 +6,4 @@ dist/
 .tmp-edge-qa-profile/
 qa-output/
 supabase/.temp/
+dev-server.log

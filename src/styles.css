@@ -39,7 +39,7 @@ a {
 }
 
 .app-shell {
-  width: min(1240px, calc(100vw - 32px));
+  width: min(1240px, calc(100% - 32px));
   margin: 18px auto 10px;
   padding: 10px;
   display: grid;
@@ -85,7 +85,7 @@ a {
 
 .workspace-brand-copy {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -97,8 +97,11 @@ a {
   margin: 0;
   color: var(--brand);
   font-size: clamp(1.45rem, 3vw, 2.2rem);
-  line-height: 1;
-  letter-spacing: 0.06em;
+  line-height: 1.02;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "Avenir Next", "Century Gothic", "Segoe UI", Arial, sans-serif;
+  font-weight: 500;
 }
 
 .workspace-header-subtitle {
@@ -111,8 +114,14 @@ a {
 .workspace-logo {
   width: 68px;
   height: 68px;
-  border-radius: 18px;
-  padding: 6px;
+  border-radius: 20px;
+  padding: 7px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 243, 252, 0.98)),
+    var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 12px 24px rgba(31, 37, 79, 0.12);
 }
 
 .workspace-logo img {
@@ -122,6 +131,31 @@ a {
 .workspace-user-controls {
   gap: 10px;
   align-items: center;
+}
+
+.workspace-user-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(61, 66, 120, 0.12);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.workspace-user-avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--brand-light), var(--brand));
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  flex: 0 0 auto;
 }
 
 .signed-in-user {
@@ -141,6 +175,21 @@ a {
 .signed-in-user strong {
   font-size: 14px;
   line-height: 1.3;
+}
+
+.signed-in-user small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.workspace-signout-button {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 14px;
+  flex: 0 0 auto;
 }
 
 .hero {
@@ -461,6 +510,177 @@ a {
 
 .workspace-scope-filter {
   min-width: min(280px, 100%);
+}
+
+.android-shell-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 10;
+}
+
+.android-shell-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.android-nav-menu-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.android-nav-trigger,
+.android-scope-bar .workspace-scope-filter select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(247, 248, 252, 0.94);
+  color: var(--text);
+  font: inherit;
+}
+
+.android-nav-trigger {
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 16px;
+}
+
+.android-nav-trigger-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.android-nav-trigger-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.android-nav-trigger-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.android-nav-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(31, 37, 79, 0.14);
+  backdrop-filter: blur(14px);
+}
+
+.android-nav-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.android-nav-menu-item.active {
+  background: rgba(61, 66, 120, 0.08);
+}
+
+.android-nav-menu-item-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.android-nav-menu-item-copy strong,
+.android-nav-menu-item-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.android-nav-menu-item-copy strong {
+  font-size: 0.96rem;
+  line-height: 1.3;
+}
+
+.android-nav-menu-item-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.android-shell-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.android-shell-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.android-account-button {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 14px;
+}
+
+.android-account-initial {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--brand-light), var(--brand));
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.android-account-menu {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(61, 66, 120, 0.1);
+}
+
+.android-account-card {
+  background: rgba(247, 248, 252, 0.9);
+}
+
+.android-signout-button {
+  width: 100%;
+}
+
+.android-scope-bar {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .panel {
@@ -1327,6 +1547,11 @@ a {
   color: var(--text);
 }
 
+.calendar-swipe-shell,
+.project-detail-calendar {
+  touch-action: pan-y;
+}
+
 .calendar-dow-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1772,13 +1997,6 @@ button.calendar-chip {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-alt);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.2;
 }
 
 .signed-in-user span,
@@ -1791,9 +2009,6 @@ button.calendar-chip {
 
 .signed-in-user strong {
   color: var(--text);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .auth-shell {
@@ -3548,7 +3763,7 @@ button.calendar-chip {
   }
 
   .app-shell {
-    width: min(1240px, calc(100vw - 20px));
+    width: min(1240px, calc(100% - 20px));
     margin: 14px auto 10px;
     padding: 10px;
     gap: 14px;
@@ -3578,7 +3793,7 @@ button.calendar-chip {
 
 @media (max-width: 720px) {
   .app-shell {
-    width: min(1240px, calc(100vw - 12px));
+    width: min(1240px, calc(100% - 12px));
     margin: 6px auto;
     padding: 8px;
     gap: 10px;
@@ -3630,10 +3845,18 @@ button.calendar-chip {
     justify-content: space-between;
   }
 
+  .workspace-user-card {
+    flex: 1 1 auto;
+  }
+
   .workspace-shell-bar {
     position: static;
     top: 6px;
     padding: 10px;
+  }
+
+  .android-shell-main {
+    align-items: stretch;
   }
 
   .hero-logo {
@@ -3913,7 +4136,7 @@ button.calendar-chip {
 
 @media (max-width: 560px) {
   .app-shell {
-    width: min(1240px, calc(100vw - 8px));
+    width: min(1240px, calc(100% - 8px));
     padding: 6px;
     gap: 8px;
     border-radius: 14px;
@@ -4016,6 +4239,19 @@ button.calendar-chip {
   .workspace-user-controls {
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  .workspace-user-card,
+  .workspace-signout-button {
+    width: 100%;
+  }
+
+  .workspace-signout-button {
+    min-width: 0;
+  }
+
+  .android-shell-main {
+    gap: 8px;
   }
 
   .task-toolbar.task-toolbar-header {
