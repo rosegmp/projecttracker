@@ -4253,7 +4253,6 @@ button.calendar-chip {
   .android-shell-main {
     gap: 8px;
   }
-
   .task-toolbar.task-toolbar-header {
     width: 100%;
     justify-content: stretch;

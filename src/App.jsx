@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Add24Regular,
@@ -285,6 +285,45 @@ function syncTabToLocation(tab, { push = false } = {}) {
     return;
   }
   window.history.replaceState(null, '', url);
+}
+
+
+async function dataUrlToBlob(dataUrl) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) {
+    throw new Error('Unable to prepare download.');
+  }
+  return response.blob();
+}
+
+function isShareDismissed(error) {
+  if (!error) return false;
+  const message = String(error?.message || error || '').toLowerCase();
+  return error?.name === 'AbortError' || message.includes('abort') || message.includes('cancel');
+}
+
+async function downloadBlobForCurrentPlatform(blob, fileName = 'download') {
+  const safeName = String(fileName || 'download').trim() || 'download';
+
+  if (isNativeAndroidApp() && typeof navigator !== 'undefined' && typeof navigator.share === 'function' && typeof File !== 'undefined') {
+    const shareFile = new File([blob], safeName, { type: blob.type || 'application/octet-stream' });
+    const sharePayload = {
+      title: safeName,
+      files: [shareFile],
+    };
+
+    if (!navigator.canShare || navigator.canShare(sharePayload)) {
+      await navigator.share(sharePayload);
+      return;
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = safeName;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 function renderModalPortal(content) {
@@ -1952,25 +1991,18 @@ function ProjectFilesManager({
   function downloadProjectFile(file) {
     void (async () => {
       try {
-        let objectUrl = '';
+        let blob = null;
         if (file?.storagePath && file?.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(file);
-          objectUrl = URL.createObjectURL(blob);
+          blob = await downloadProjectFileFromStorage(file);
         } else if (file?.dataUrl) {
-          objectUrl = file.dataUrl;
+          blob = await dataUrlToBlob(file.dataUrl);
         } else {
           return;
         }
 
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = file.originalName || file.name || 'download';
-        anchor.click();
-
-        if (file?.storagePath && objectUrl.startsWith('blob:')) {
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        }
+        await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'download');
       } catch (error) {
+        if (isShareDismissed(error)) return;
         window.alert(error instanceof Error ? error.message : 'Failed to open file.');
       }
     })();
@@ -2870,25 +2902,18 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
   function downloadPhoto(photo) {
     void (async () => {
       try {
-        let objectUrl = '';
+        let blob = null;
         if (photo?.storagePath && photo?.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(photo);
-          objectUrl = URL.createObjectURL(blob);
+          blob = await downloadProjectFileFromStorage(photo);
         } else if (photo?.dataUrl) {
-          objectUrl = photo.dataUrl;
+          blob = await dataUrlToBlob(photo.dataUrl);
         } else {
           return;
         }
 
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = photo.originalName || photo.name || 'photo';
-        anchor.click();
-
-        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        }
+        await downloadBlobForCurrentPlatform(blob, photo.originalName || photo.name || 'photo');
       } catch (error) {
+        if (isShareDismissed(error)) return;
         window.alert(error instanceof Error ? error.message : 'Failed to download photo.');
       }
     })();
@@ -4068,25 +4093,18 @@ function NativeInspectionsView({
       const attachment = inspection?.[field];
       if (!attachment) return;
       try {
-        let objectUrl = '';
+        let blob = null;
         if (attachment.storagePath && attachment.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(attachment);
-          objectUrl = URL.createObjectURL(blob);
+          blob = await downloadProjectFileFromStorage(attachment);
         } else if (attachment.dataUrl) {
-          objectUrl = attachment.dataUrl;
+          blob = await dataUrlToBlob(attachment.dataUrl);
         } else {
           return;
         }
 
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = attachment.originalName || attachment.name || 'download';
-        anchor.click();
-
-        if (attachment.storagePath && objectUrl.startsWith('blob:')) {
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        }
+        await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'download');
       } catch (error) {
+        if (isShareDismissed(error)) return;
         window.alert(error instanceof Error ? error.message : 'Unable to download attachment.');
       }
     })();
