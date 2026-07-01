@@ -528,7 +528,12 @@ function normalizeTask(task = {}) {
 }
 
 function fromStorage(key, fallback) {
-  const raw = window.localStorage.getItem(key);
+  let raw = null;
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return fallback;
+  }
   if (!raw) return fallback;
   try {
     return JSON.parse(raw);
@@ -537,8 +542,31 @@ function fromStorage(key, fallback) {
   }
 }
 
+function isStorageQuotaError(error) {
+  if (!error) return false;
+  if (error?.name === 'QuotaExceededError') return true;
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+    return error.code === 22 || error.code === 1014;
+  }
+  return String(error?.message || error).toLowerCase().includes('quota');
+}
+
 function writeStorage(key, value) {
-  window.localStorage.setItem(key, JSON.stringify(value));
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    if (isStorageQuotaError(error)) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        // Ignore storage cleanup failures and keep the app running.
+      }
+      console.warn(`Local storage quota exceeded while caching ${key}. Continuing without local cache.`, error);
+      return false;
+    }
+    throw error;
+  }
 }
 
 function getFallbackData(overrides = {}) {
