@@ -885,10 +885,10 @@ async function removeRemoteRow(table, id) {
   }
 }
 
-async function fetchSupabaseJson(path, label) {
+async function fetchSupabaseJson(path, label, { timeoutMs = 12000 } = {}) {
   const response = await fetchWithTimeout(`${SUPABASE_URL}${path}`, {
     headers: buildHeaders(),
-  }, label);
+  }, label, timeoutMs);
   const text = await response.text();
 
   if (!response.ok) {
@@ -902,6 +902,29 @@ async function fetchSupabaseJson(path, label) {
   } catch {
     throw new Error(`${label} returned invalid JSON.`);
   }
+}
+
+async function loadSupabaseSettingsWithRetry() {
+  const attempts = [
+    { timeoutMs: 12000, delayMs: 0 },
+    { timeoutMs: 18000, delayMs: 900 },
+    { timeoutMs: 22000, delayMs: 1800 },
+  ];
+  let lastError = null;
+  for (const attempt of attempts) {
+    if (attempt.delayMs) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt.delayMs));
+    }
+    try {
+      const response = await fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings', {
+        timeoutMs: attempt.timeoutMs,
+      });
+      return Array.isArray(response) ? response : null;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new Error('Unknown settings load error.'));
 }
 
 function getRemoteSaveError(storageMode, context = 'save') {
@@ -987,8 +1010,7 @@ export async function loadTrackerData() {
     let settingsResponse = null;
     let settingsIssue = '';
     try {
-      const nextSettingsResponse = await fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings');
-      settingsResponse = Array.isArray(nextSettingsResponse) ? nextSettingsResponse : null;
+      settingsResponse = await loadSupabaseSettingsWithRetry();
     } catch (error) {
       settingsIssue = error instanceof Error ? error.message : 'Unknown settings load error.';
       console.warn('Settings load failed; using cached/default settings for this session.', error);
@@ -1007,6 +1029,9 @@ export async function loadTrackerData() {
         ? normalizeSettings(settingsResponse[0].data || EMPTY_SETTINGS)
         : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
     const settingsLoadedFromSupabase = Array.isArray(settingsResponse) && settingsResponse.length > 0;
+    if (settingsLoadedFromSupabase) {
+      writeStorage('cx_settings', settings);
+    }
 
     return stripLegacySampleData({
       projects,
@@ -1297,6 +1322,7 @@ export async function updateSettings(currentState, updates) {
     currentState.storageMode,
     currentState.settingsLoadedFromSupabase === true,
   );
+  writeStorage('cx_settings', settings);
   return {
     ...currentState,
     settings,
