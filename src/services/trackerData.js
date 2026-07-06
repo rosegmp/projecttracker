@@ -967,23 +967,31 @@ export async function loadTrackerData() {
   }
 
   try {
-    const [projectsResponse, tasksResponse, subsResponse, employeesResponse, settingsResponse] =
+    const [projectsResponse, tasksResponse, subsResponse, employeesResponse] =
       await Promise.all([
         fetchSupabaseJson('/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
         fetchSupabaseJson('/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
         fetchSupabaseJson('/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
         fetchSupabaseJson('/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
-        fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings'),
       ]);
 
     if (
       !Array.isArray(projectsResponse) ||
       !Array.isArray(tasksResponse) ||
       !Array.isArray(subsResponse) ||
-      !Array.isArray(employeesResponse) ||
-      !Array.isArray(settingsResponse)
+      !Array.isArray(employeesResponse)
     ) {
       throw new Error('Supabase returned an unexpected response.');
+    }
+
+    let settingsResponse = null;
+    let settingsIssue = '';
+    try {
+      const nextSettingsResponse = await fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings');
+      settingsResponse = Array.isArray(nextSettingsResponse) ? nextSettingsResponse : null;
+    } catch (error) {
+      settingsIssue = error instanceof Error ? error.message : 'Unknown settings load error.';
+      console.warn('Settings load failed; using cached/default settings for this session.', error);
     }
 
     const projects = projectsResponse.map((row) => normalizeProject(row.data || row));
@@ -1008,7 +1016,7 @@ export async function loadTrackerData() {
       settings,
       settingsLoadedFromSupabase,
       storageMode: 'supabase',
-      storageIssue: '',
+      storageIssue: settingsIssue,
     });
   } catch (error) {
     const storageIssue = error instanceof Error ? error.message : 'Unknown Supabase load error.';
