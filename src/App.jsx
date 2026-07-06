@@ -95,21 +95,6 @@ const tabs = [
     description: 'Daily visibility for phases, steps, tasks, holidays, and weekends using the same project filter as the Gantt.',
   },
   {
-    id: 'inspections',
-    label: 'Inspections',
-    description: 'Review upcoming, passed, failed, and follow-up inspections across visible projects.',
-  },
-  {
-    id: 'files',
-    label: 'Files',
-    description: 'Manage plans, permits, surveys, selections, and custom folders.',
-  },
-  {
-    id: 'photos',
-    label: 'Photos',
-    description: 'Manage progress, site, and finish photos.',
-  },
-  {
     id: 'tasks',
     label: 'Tasks',
     description: 'Track what is open, overdue, and already complete.',
@@ -135,10 +120,24 @@ const GANTT_ZOOM_MAX = 100;
 const GANTT_ZOOM_MIN_PIXELS_PER_DAY = 2;
 const GANTT_ZOOM_MAX_PIXELS_PER_DAY = 48;
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
+const SELECTION_STATUS_OPTIONS = ['needs decision', 'selected', 'ordered', 'installed'];
+const SELECTION_CATEGORY_OPTIONS = [
+  'Exterior',
+  'Interior',
+  'Flooring',
+  'Cabinets',
+  'Countertops',
+  'Plumbing',
+  'Electrical',
+  'Paint',
+  'Appliances',
+  'Misc',
+];
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
 const PEOPLE_VIEW_MODE_KEY = 'cx_people_view_mode';
-const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks', 'files', 'photos', 'inspections']);
+const LAST_ACTIVE_TAB_KEY = 'cx_last_active_tab';
+const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks']);
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
 const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = {
   company: 220,
@@ -157,7 +156,7 @@ const PEOPLE_LIST_COLUMN_DEFS = [
   { id: 'tags', label: 'Tags', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.tags },
 ];
 const validTabIds = new Set(tabs.map((tab) => tab.id));
-const NON_EDITOR_TAB_IDS = ['projects', 'calendar', 'inspections', 'files', 'photos'];
+const NON_EDITOR_TAB_IDS = ['projects', 'calendar'];
 
 function FluentIcon({ name, size = 18, className = '' }) {
   const icons = {
@@ -266,7 +265,20 @@ function getTabFromLocation() {
   if (typeof window === 'undefined') return 'projects';
   const params = new URLSearchParams(window.location.search);
   const tab = params.get('tab');
-  return validTabIds.has(tab) ? tab : 'projects';
+  if (validTabIds.has(tab)) return tab;
+  let storedTab = '';
+  try {
+    storedTab = window.localStorage.getItem(LAST_ACTIVE_TAB_KEY) || '';
+  } catch {
+    storedTab = '';
+  }
+  return validTabIds.has(storedTab) ? storedTab : 'projects';
+}
+
+function getProjectIdFromLocation() {
+  if (typeof window === 'undefined') return '';
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get('project') || '').trim();
 }
 
 function isNativeAndroidApp() {
@@ -280,6 +292,24 @@ function syncTabToLocation(tab, { push = false } = {}) {
   if (typeof window === 'undefined' || !validTabIds.has(tab)) return;
   const url = new URL(window.location.href);
   url.searchParams.set('tab', tab);
+  if (tab !== 'projects') {
+    url.searchParams.delete('project');
+  }
+  if (push) {
+    window.history.pushState(null, '', url);
+    return;
+  }
+  window.history.replaceState(null, '', url);
+}
+
+function syncProjectToLocation(projectId, { push = false } = {}) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (String(projectId || '').trim()) {
+    url.searchParams.set('project', String(projectId).trim());
+  } else {
+    url.searchParams.delete('project');
+  }
   if (push) {
     window.history.pushState(null, '', url);
     return;
@@ -346,6 +376,19 @@ function formatShortDate(iso) {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+  }).format(date);
+}
+
+function formatDateTime(iso) {
+  if (!iso) return 'Unknown';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   }).format(date);
 }
 
@@ -1835,59 +1878,23 @@ function ProjectFilesManager({
     replaceFileInputRefs.current[fileId]?.click();
   }
 
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({
-          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          dataUrl: String(reader.result || ''),
-        });
-      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function createProjectFileRecord(folderId, file) {
     if (!project?.id) throw new Error('Project not found.');
-    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    if (isSupabaseStorageConfigured()) {
-      try {
-        const storageMeta = await uploadProjectFileToStorage(project.id, folderId, fileId, file);
-        return {
-          fileRecord: {
-            id: fileId,
-            name: file.name,
-            originalName: file.name,
-            size: file.size,
-            type: file.type,
-            uploadedAt: new Date().toISOString(),
-            ...storageMeta,
-            dataUrl: '',
-          },
-          usedFallback: false,
-        };
-      } catch {
-        // Fall back to inline storage so uploads still work if the bucket/policies are not ready.
-      }
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for file uploads.');
     }
-
-    const inlineFile = await readFileAsDataUrl(file);
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return {
       fileRecord: {
-        ...inlineFile,
         id: fileId,
-        storageProvider: 'inline',
-        storageBucket: '',
-        storagePath: '',
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        type: file.type,
+        uploadedAt: new Date().toISOString(),
+        ...(await uploadProjectFileToStorage(project.id, folderId, fileId, file)),
+        dataUrl: '',
       },
-      usedFallback: true,
     };
   }
 
@@ -1899,16 +1906,7 @@ function ProjectFilesManager({
     try {
       const uploadResults = await Promise.all(files.map((file) => createProjectFileRecord(folderId, file)));
       const uploads = uploadResults.map((result) => result.fileRecord);
-      const usedFallback = uploadResults.some((result) => result.usedFallback);
-      if (usedFallback) {
-        setStorageNotice(
-          isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
-        );
-      } else {
-        setStorageNotice('');
-      }
+      setStorageNotice('');
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
       const nextProject = {
@@ -1970,15 +1968,7 @@ function ProjectFilesManager({
       };
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
-      if (uploadResult.usedFallback) {
-        setStorageNotice(
-          isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more files were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so files are being saved locally in project data.',
-        );
-      } else {
-        setStorageNotice('');
-      }
+      setStorageNotice('');
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Failed to replace file.');
     } finally {
@@ -2327,12 +2317,11 @@ function ProjectFilesManager({
 
   return (
     <div className="project-files-manager">
-      {storageNotice || !isSupabaseStorageConfigured() ? (
+      {storageNotice ? (
         <section className="storage-banner">
           <strong>Files storage notice.</strong>
           <span>
-            {storageNotice ||
-              'Supabase Storage is not configured yet, so uploaded files are being stored locally in project data.'}
+            {storageNotice}
           </span>
         </section>
       ) : null}
@@ -2661,54 +2650,23 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
     }
   }
 
-  function readPhotoAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({
-          id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          dataUrl: String(reader.result || ''),
-          storageProvider: 'inline',
-          storageBucket: '',
-          storagePath: '',
-        });
-      reader.onerror = () => reject(reader.error || new Error('Failed to read image.'));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function createProjectPhotoRecord(file) {
     if (!project?.id) throw new Error('Project not found.');
-    const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (isSupabaseStorageConfigured()) {
-      try {
-        const storageMeta = await uploadProjectFileToStorage(project.id, 'photos', photoId, file);
-        return {
-          photoRecord: {
-            id: photoId,
-            name: file.name,
-            originalName: file.name,
-            size: file.size,
-            type: file.type,
-            uploadedAt: new Date().toISOString(),
-            ...storageMeta,
-            dataUrl: '',
-          },
-          usedFallback: false,
-        };
-      } catch {
-        // Fall back to inline storage so photo uploads still work if storage is unavailable.
-      }
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for photo uploads.');
     }
-
+    const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return {
-      photoRecord: await readPhotoAsDataUrl(file),
-      usedFallback: true,
+      photoRecord: {
+        id: photoId,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        type: file.type,
+        uploadedAt: new Date().toISOString(),
+        ...(await uploadProjectFileToStorage(project.id, 'photos', photoId, file)),
+        dataUrl: '',
+      },
     };
   }
 
@@ -2728,14 +2686,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
     try {
       const uploadResults = await Promise.all(files.map((file) => createProjectPhotoRecord(file)));
       const uploads = uploadResults.map((result) => result.photoRecord);
-      const usedFallback = uploadResults.some((result) => result.usedFallback);
-      setStorageNotice(
-        usedFallback
-          ? isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more photos were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so photos are being saved locally in project data.'
-          : '',
-      );
+      setStorageNotice('');
 
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
@@ -2780,11 +2731,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
       setStorageNotice(
-        uploadResult.usedFallback
-          ? isSupabaseStorageConfigured()
-            ? 'Supabase Storage is not fully ready, so one or more photos were saved locally in project data instead.'
-            : 'Supabase Storage is not configured, so photos are being saved locally in project data.'
-          : '',
+        '',
       );
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Failed to replace photo.');
@@ -2945,12 +2892,11 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
 
   return (
     <div className="project-photos-manager">
-      {storageNotice || !isSupabaseStorageConfigured() ? (
+      {storageNotice ? (
         <section className="storage-banner">
           <strong>Photos storage notice.</strong>
           <span>
-            {storageNotice ||
-              'Supabase Storage is not configured yet, so uploaded photos are being stored locally in project data.'}
+            {storageNotice}
           </span>
         </section>
       ) : null}
@@ -3086,26 +3032,933 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
   );
 }
 
+function SelectionModal({
+  draft,
+  projectName,
+  vendorOptions,
+  saving,
+  onChange,
+  onAddPerson,
+  onClose,
+  onSave,
+  onDelete,
+  onDownloadFile,
+  onRemoveAttachment,
+  onRemovePhoto,
+  onRemovePendingAttachment,
+  onRemovePendingPhoto,
+}) {
+  if (!draft) return null;
+  const isEditing = draft.mode === 'edit';
+
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Selection</p>
+            <h2>{isEditing ? 'Edit selection' : 'Add selection'}</h2>
+            <p className="panel-copy">{projectName || 'Project'}</p>
+          </div>
+        </div>
+
+        <div className="project-form-grid">
+          <label>
+            <span>Category</span>
+            <select value={draft.category} onChange={(event) => onChange('category', event.target.value)}>
+              <option value="">Select category</option>
+              {SELECTION_CATEGORY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={draft.status} onChange={(event) => onChange('status', event.target.value)}>
+              {SELECTION_STATUS_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="full">
+            <span>Item name</span>
+            <input value={draft.itemName} onChange={(event) => onChange('itemName', event.target.value)} />
+          </label>
+          <label className="full">
+            <span>Chosen option</span>
+            <input value={draft.chosenOption} onChange={(event) => onChange('chosenOption', event.target.value)} />
+          </label>
+          <label>
+            <span>Vendor / supplier</span>
+            <div className="inline-action-field">
+              <select value={draft.vendor} onChange={(event) => onChange('vendor', event.target.value)}>
+                <option value="">Not set</option>
+                {vendorOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+              <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
+                Add person
+              </button>
+            </div>
+          </label>
+          <label>
+            <span>Selection date</span>
+            <input type="date" value={draft.selectionDate} onChange={(event) => onChange('selectionDate', event.target.value)} />
+          </label>
+          <label className="full">
+            <span>Notes</span>
+            <textarea rows={4} value={draft.notes} onChange={(event) => onChange('notes', event.target.value)} />
+          </label>
+          <label className="full">
+            <span>Attachments</span>
+            <input type="file" multiple onChange={(event) => onChange('pendingAttachments', Array.from(event.target.files || []))} />
+            {draft.attachments?.length || draft.pendingAttachments?.length ? (
+              <div className="task-attachment-list selection-modal-file-list">
+                {(draft.attachments || []).map((attachment) => (
+                  <div key={attachment.id} className="task-attachment-chip">
+                    <button
+                      className="task-attachment-link"
+                      type="button"
+                      onClick={() => onDownloadFile(attachment)}
+                      disabled={saving}
+                    >
+                      {attachment.originalName || attachment.name || 'Attachment'}
+                    </button>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onRemoveAttachment(attachment.id)}
+                      disabled={saving}
+                      title="Remove attachment"
+                      aria-label="Remove attachment"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+                {(draft.pendingAttachments || []).map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
+                    <span>{file.name}</span>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onRemovePendingAttachment(index)}
+                      disabled={saving}
+                      title="Remove pending attachment"
+                      aria-label="Remove pending attachment"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <small className="task-attachment-empty">No attachments yet.</small>
+            )}
+          </label>
+          <label className="full">
+            <span>Photos</span>
+            <input type="file" accept="image/*" multiple onChange={(event) => onChange('pendingPhotos', Array.from(event.target.files || []))} />
+            {draft.photos?.length || draft.pendingPhotos?.length ? (
+              <div className="task-attachment-list selection-modal-file-list">
+                {(draft.photos || []).map((photo) => (
+                  <div key={photo.id} className="task-attachment-chip">
+                    <button
+                      className="task-attachment-link"
+                      type="button"
+                      onClick={() => onDownloadFile(photo)}
+                      disabled={saving}
+                    >
+                      {photo.originalName || photo.name || 'Photo'}
+                    </button>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onRemovePhoto(photo.id)}
+                      disabled={saving}
+                      title="Remove photo"
+                      aria-label="Remove photo"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+                {(draft.pendingPhotos || []).map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
+                    <span>{file.name}</span>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onRemovePendingPhoto(index)}
+                      disabled={saving}
+                      title="Remove pending photo"
+                      aria-label="Remove pending photo"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <small className="task-attachment-empty">No photos yet.</small>
+            )}
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          {isEditing ? (
+            <button className="button secondary danger" type="button" onClick={onDelete} disabled={saving}>
+              Delete
+            </button>
+          ) : null}
+          <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="button primary" type="button" onClick={onSave} disabled={saving || !draft.itemName.trim()}>
+            {saving ? 'Saving...' : 'Save selection'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
+function ProjectSelectionsManager({
+  data,
+  project,
+  onStateChange,
+  readOnly = false,
+  highlightSelectionId = '',
+  highlightToken = '',
+  onOpenTask = () => {},
+}) {
+  const [selectionDraft, setSelectionDraft] = useState(null);
+  const [personDraft, setPersonDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [storageNotice, setStorageNotice] = useState('');
+  const [previewUrls, setPreviewUrls] = useState({});
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchFilter, setSearchFilter] = useState('');
+  const [activeHighlightSelectionId, setActiveHighlightSelectionId] = useState('');
+  const previewUrlsRef = useRef({});
+  const selectionCardRefs = useRef({});
+
+  const selections = project?.selections || [];
+  const taskMap = useMemo(
+    () => new Map((data.tasks || []).map((task) => [task.id, task])),
+    [data.tasks],
+  );
+  const vendorOptions = useMemo(
+    () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
+    [data.employees, data.subs],
+  );
+  const selectionFolderId = useMemo(() => {
+    const folder =
+      (project?.files?.folders || []).find((item) => String(item?.name || '').trim().toLowerCase() === 'selections') || null;
+    return folder?.id || 'folder-selections';
+  }, [project?.files?.folders]);
+
+  useEffect(() => {
+    previewUrlsRef.current = previewUrls;
+  }, [previewUrls]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  useEffect(() => {
+    const keepIds = new Set();
+    selections.forEach((selection) => {
+      (selection.photos || []).forEach((photo) => {
+        if (photo?.storagePath && isImageFile(photo)) {
+          keepIds.add(photo.id);
+        }
+      });
+    });
+    setPreviewUrls((current) => {
+      const next = {};
+      Object.entries(current).forEach(([photoId, url]) => {
+        if (keepIds.has(photoId)) {
+          next[photoId] = url;
+        } else {
+          URL.revokeObjectURL(url);
+        }
+      });
+      return next;
+    });
+  }, [selections]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreviews() {
+      for (const selection of selections) {
+        for (const photo of selection.photos || []) {
+          if (!photo?.storagePath || !isImageFile(photo) || previewUrls[photo.id]) continue;
+          try {
+            const blob = await downloadProjectFileFromStorage(photo);
+            const url = URL.createObjectURL(blob);
+            if (cancelled) {
+              URL.revokeObjectURL(url);
+              return;
+            }
+            setPreviewUrls((current) => {
+              if (current[photo.id]) {
+                URL.revokeObjectURL(url);
+                return current;
+              }
+              return { ...current, [photo.id]: url };
+            });
+          } catch {
+            // Keep the page usable even if one preview cannot be loaded.
+          }
+        }
+      }
+    }
+
+    void loadPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [selections, previewUrls]);
+
+  const filteredSelections = useMemo(() => {
+    const query = searchFilter.trim().toLowerCase();
+    return selections.filter((selection) => {
+      if (categoryFilter !== 'all' && (selection.category || '') !== categoryFilter) return false;
+      if (statusFilter !== 'all' && (selection.status || 'needs decision') !== statusFilter) return false;
+      if (!query) return true;
+      const haystack = [
+        selection.itemName,
+        selection.chosenOption,
+        selection.vendor,
+        selection.notes,
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [categoryFilter, searchFilter, selections, statusFilter]);
+
+  useEffect(() => {
+    if (!highlightSelectionId) return;
+    setCategoryFilter('all');
+    setStatusFilter('all');
+    setSearchFilter('');
+    setActiveHighlightSelectionId(highlightSelectionId);
+    const scrollTimer = window.setTimeout(() => {
+      selectionCardRefs.current[highlightSelectionId]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setActiveHighlightSelectionId((current) => (current === highlightSelectionId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightSelectionId, highlightToken]);
+
+  async function createSelectionFileRecord(kind, file) {
+    if (!project?.id) throw new Error('Project not found.');
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for selection uploads.');
+    }
+    const fileId = `selection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const folderCandidates =
+      kind === 'photo'
+        ? ['photos', selectionFolderId, 'folder-selections']
+        : [selectionFolderId, 'folder-selections'];
+    const attemptErrors = [];
+    for (const folderId of folderCandidates) {
+      try {
+        const storageMeta = await uploadProjectFileToStorage(project.id, folderId, fileId, file);
+        return {
+          fileRecord: {
+            id: fileId,
+            name: file.name,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            uploadedAt: new Date().toISOString(),
+            ...storageMeta,
+            dataUrl: '',
+          },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || 'Unknown storage upload failure.');
+        attemptErrors.push(`${folderId}: ${message}`);
+      }
+    }
+    throw new Error(
+      attemptErrors.length
+        ? `Supabase Storage upload failed. ${attemptErrors.join(' | ')}`
+        : 'Supabase Storage upload failed for an unknown reason.',
+    );
+  }
+
+  function startCreateSelection() {
+    setSelectionDraft({
+      mode: 'create',
+      id: '',
+      category: '',
+      itemName: '',
+      chosenOption: '',
+      status: 'needs decision',
+      vendor: '',
+      allowance: '',
+      actualCost: '',
+      selectionDate: '',
+      notes: '',
+      attachments: [],
+      photos: [],
+      taskIds: [],
+      pendingAttachments: [],
+      pendingPhotos: [],
+    });
+  }
+
+  function startEditSelection(selection) {
+    setSelectionDraft({
+      mode: 'edit',
+      id: selection.id,
+      category: selection.category || '',
+      itemName: selection.itemName || '',
+      chosenOption: selection.chosenOption || '',
+      status: selection.status || 'needs decision',
+      vendor: selection.vendor || '',
+      allowance: selection.allowance ?? '',
+      actualCost: selection.actualCost ?? '',
+      selectionDate: selection.selectionDate || '',
+      notes: selection.notes || '',
+      attachments: Array.isArray(selection.attachments) ? selection.attachments : [],
+      photos: Array.isArray(selection.photos) ? selection.photos : [],
+      taskIds: Array.isArray(selection.taskIds) ? selection.taskIds : [],
+      pendingAttachments: [],
+      pendingPhotos: [],
+    });
+  }
+
+  function updateSelectionDraft(field, value) {
+    setSelectionDraft((current) => {
+      if (!current) return current;
+      if (field === 'pendingAttachments' || field === 'pendingPhotos') {
+        return {
+          ...current,
+          [field]: [...(current[field] || []), ...value],
+        };
+      }
+      return { ...current, [field]: value };
+    });
+  }
+
+  function startCreateVendorPerson() {
+    setPersonDraft({
+      id: '',
+      first: '',
+      last: '',
+      company: '',
+      role: '',
+      phone: '',
+      email: '',
+      license: '',
+      notes: '',
+      tags: '',
+      type: 'supplier',
+    });
+  }
+
+  async function handleSaveVendorPerson() {
+    if (!personDraft) return;
+    if (!personDraft.first.trim() && !personDraft.last.trim() && !personDraft.company.trim()) return;
+    setSaving(true);
+    try {
+      const nextState = await createPerson(data, personDraft.type, personDraft);
+      const createdPerson = (personDraft.type === 'sub' ? nextState.subs : nextState.employees)?.at(-1);
+      const nextVendor = createdPerson ? personAssignmentLabel(createdPerson) : '';
+      onStateChange(nextState);
+      if (nextVendor) {
+        setSelectionDraft((current) => (current ? { ...current, vendor: nextVendor } : current));
+      }
+      setPersonDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSelection() {
+    if (!project?.id || !selectionDraft?.itemName.trim()) return;
+    setSaving(true);
+    try {
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const existingSelection =
+        selectionDraft.mode === 'edit'
+          ? (currentProject.selections || []).find((item) => item.id === selectionDraft.id) || null
+          : null;
+      const attachmentUploads = await Promise.all(
+        (selectionDraft.pendingAttachments || []).map((file) => createSelectionFileRecord('attachment', file)),
+      );
+      const photoUploads = await Promise.all(
+        (selectionDraft.pendingPhotos || []).map((file) => createSelectionFileRecord('photo', file)),
+      );
+      setStorageNotice('');
+
+      const nextSelection = {
+        id: selectionDraft.id || `selection-${Date.now()}`,
+        category: selectionDraft.category,
+        itemName: selectionDraft.itemName.trim(),
+        chosenOption: selectionDraft.chosenOption.trim(),
+        status: selectionDraft.status,
+        vendor: selectionDraft.vendor.trim(),
+        selectionDate: selectionDraft.selectionDate,
+        notes: selectionDraft.notes.trim(),
+        attachments: [...(selectionDraft.attachments || []), ...attachmentUploads.map((result) => result.fileRecord)],
+        photos: [...(selectionDraft.photos || []), ...photoUploads.map((result) => result.fileRecord)],
+        taskIds: selectionDraft.taskIds || [],
+      };
+
+      const nextProject = {
+        ...currentProject,
+        selections:
+          selectionDraft.mode === 'edit'
+            ? (currentProject.selections || []).map((item) => (item.id === selectionDraft.id ? nextSelection : item))
+            : [...(currentProject.selections || []), nextSelection],
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      if (existingSelection) {
+        const removedFiles = [
+          ...(existingSelection.attachments || []).filter(
+            (file) => !(nextSelection.attachments || []).some((nextFile) => nextFile.id === file.id),
+          ),
+          ...(existingSelection.photos || []).filter(
+            (file) => !(nextSelection.photos || []).some((nextFile) => nextFile.id === file.id),
+          ),
+        ];
+        await Promise.allSettled(
+          removedFiles
+            .filter((file) => file?.storagePath)
+            .map((file) => deleteProjectFileFromStorage(file)),
+        );
+      }
+      onStateChange(nextState);
+      setSelectionDraft(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to save selection.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSelection() {
+    if (!project?.id || !selectionDraft?.id) return;
+    const confirmed = window.confirm('Delete this selection?');
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      const currentProject = data.projects.find((item) => item.id === project.id);
+      if (!currentProject) return;
+      const existingSelection = (currentProject.selections || []).find((item) => item.id === selectionDraft.id);
+      for (const file of [...(existingSelection?.attachments || []), ...(existingSelection?.photos || [])]) {
+        if (file?.storagePath) {
+          await deleteProjectFileFromStorage(file);
+        }
+      }
+      const nextProject = {
+        ...currentProject,
+        selections: (currentProject.selections || []).filter((item) => item.id !== selectionDraft.id),
+      };
+      const nextState = await updateProject(data, project.id, nextProject);
+      onStateChange(nextState);
+      setSelectionDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function downloadSelectionFile(file) {
+    void (async () => {
+      try {
+        let blob = null;
+        if (file?.storagePath && file?.storageBucket) {
+          blob = await downloadProjectFileFromStorage(file);
+        } else if (file?.dataUrl) {
+          blob = await dataUrlToBlob(file.dataUrl);
+        } else {
+          return;
+        }
+        await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'selection-file');
+      } catch (error) {
+        if (isShareDismissed(error)) return;
+        window.alert(error instanceof Error ? error.message : 'Unable to download selection file.');
+      }
+    })();
+  }
+
+  function getSelectionPhotoPreview(photo) {
+    if (!photo) return '';
+    return photo.dataUrl || previewUrls[photo.id] || '';
+  }
+
+  function openSelectionPhoto(photo) {
+    void (async () => {
+      try {
+        let objectUrl = '';
+        if (photo?.storagePath && photo?.storageBucket) {
+          const blob = await downloadProjectFileFromStorage(photo);
+          objectUrl = URL.createObjectURL(blob);
+        } else if (photo?.dataUrl) {
+          objectUrl = photo.dataUrl;
+        } else {
+          return;
+        }
+        window.open(objectUrl, '_blank', 'noopener');
+        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        }
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Unable to open selection photo.');
+      }
+    })();
+  }
+
+  async function createTaskFromSelection(selection) {
+    if (!project?.id || !selection?.itemName) return;
+    setSaving(true);
+    try {
+      const taskId = `t${Date.now()}`;
+      const label = selection.chosenOption
+        ? `Selection follow-up: ${selection.itemName} - ${selection.chosenOption}`
+        : `Selection follow-up: ${selection.itemName}`;
+      const nextStateWithTask = await createTask(data, {
+        id: taskId,
+        label,
+        projectId: project.id,
+        due: '',
+        assignee: selection.vendor || '',
+        sourceSelectionId: selection.id || '',
+        sourceSelectionProjectId: project.id,
+        sourceSelectionLabel: selection.itemName || selection.chosenOption || 'Selection',
+        attachments: [],
+        createdAt: new Date().toISOString(),
+      });
+      const refreshedProject = nextStateWithTask.projects.find((item) => item.id === project.id);
+      if (!refreshedProject) return;
+      const nextProject = {
+        ...refreshedProject,
+        selections: (refreshedProject.selections || []).map((item) =>
+          item.id === selection.id
+            ? { ...item, taskIds: Array.from(new Set([...(item.taskIds || []), taskId])) }
+            : item,
+        ),
+      };
+      const finalState = await updateProject(nextStateWithTask, project.id, nextProject);
+      onStateChange(finalState);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to create task from selection.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="project-selections-manager">
+      {storageNotice ? (
+        <section className="storage-banner">
+          <strong>Selections storage notice.</strong>
+          <span>
+            {storageNotice}
+          </span>
+        </section>
+      ) : null}
+
+      <div className="files-toolbar project-files-toolbar">
+        <div className="files-toolbar-actions">
+          <span className="project-photos-count">
+            {filteredSelections.length} of {selections.length} selection(s)
+          </span>
+        </div>
+        {!readOnly ? (
+          <div className="panel-actions">
+            <button className="button primary" type="button" onClick={startCreateSelection} disabled={saving}>
+              Add selection
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="selection-filters">
+        <label className="task-filter">
+          <span>Category</span>
+          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+            <option value="all">All categories</option>
+            {SELECTION_CATEGORY_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="task-filter">
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All statuses</option>
+            {SELECTION_STATUS_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="task-filter selection-search">
+          <span>Search</span>
+          <input
+            type="search"
+            value={searchFilter}
+            onChange={(event) => setSearchFilter(event.target.value)}
+            placeholder="Item, option, vendor..."
+          />
+        </label>
+      </div>
+
+      {filteredSelections.length ? (
+        <div className="selection-grid">
+          {filteredSelections.map((selection) => (
+            <article
+              key={selection.id}
+              ref={(node) => {
+                if (node) {
+                  selectionCardRefs.current[selection.id] = node;
+                } else {
+                  delete selectionCardRefs.current[selection.id];
+                }
+              }}
+              className={`selection-card${activeHighlightSelectionId === selection.id ? ' highlighted' : ''}`}
+            >
+              <div className="selection-card-header">
+                <div>
+                  <p className="project-status">{selection.category || 'Selection'}</p>
+                  <h3>{selection.itemName || 'Untitled selection'}</h3>
+                  <p className="inspection-type">{selection.chosenOption || 'Option not chosen yet'}</p>
+                </div>
+                <span className={`status-pill status-${String(selection.status || 'needs decision').replace(/\s+/g, '-')}`}>
+                  {selection.status || 'needs decision'}
+                </span>
+              </div>
+              <div className="inspection-meta">
+                <span>Vendor: {selection.vendor || 'Not set'}</span>
+                <span>Date: {selection.selectionDate ? formatTooltipDate(selection.selectionDate) : 'Not set'}</span>
+              </div>
+              {selection.photos?.length ? (
+                <div className="selection-photo-strip">
+                  {selection.photos.map((photo) => (
+                    <button
+                      key={photo.id}
+                      className="selection-photo-button"
+                      type="button"
+                      onClick={() => void openSelectionPhoto(photo)}
+                      title={photo.originalName || photo.name || 'Selection photo'}
+                    >
+                      {getSelectionPhotoPreview(photo) ? (
+                        <img
+                          className="selection-photo-thumb"
+                          src={getSelectionPhotoPreview(photo)}
+                          alt={photo.originalName || photo.name || 'Selection photo'}
+                        />
+                      ) : (
+                        <div className="selection-photo-placeholder">
+                          <FluentIcon name="camera" size={18} />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {selection.notes ? <p className="inspection-notes">{selection.notes}</p> : null}
+              {(selection.attachments?.length || selection.photos?.length) ? (
+                <div className="selection-file-list">
+                  {(selection.attachments || []).map((file) => (
+                    <button key={file.id} className="task-attachment-link-chip" type="button" onClick={() => downloadSelectionFile(file)}>
+                      {file.name || file.originalName || 'Attachment'}
+                    </button>
+                  ))}
+                  {(selection.photos || []).map((file) => (
+                    <button key={file.id} className="task-attachment-link-chip" type="button" onClick={() => downloadSelectionFile(file)}>
+                      {file.name || file.originalName || 'Photo'}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="selection-card-footer">
+                <div className="selection-linked-tasks">
+                  {selection.taskIds?.length ? (
+                    (selection.taskIds || []).map((taskId, index) => {
+                      const linkedTask = taskMap.get(taskId);
+                      const label = linkedTask?.label || `Task ${index + 1}`;
+                      return (
+                        <button
+                          key={taskId}
+                          className="task-attachment-link-chip task-selection-link-chip"
+                          type="button"
+                          onClick={() => onOpenTask(taskId)}
+                          disabled={saving}
+                          title={label}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <small>No tasks generated yet</small>
+                  )}
+                </div>
+                <div className="task-row-actions">
+                  {!readOnly ? (
+                    <button className="button secondary" type="button" onClick={() => void createTaskFromSelection(selection)} disabled={saving}>
+                      Create task
+                    </button>
+                  ) : null}
+                  {!readOnly ? (
+                    <button className="button secondary gantt-icon-button" type="button" onClick={() => startEditSelection(selection)} disabled={saving} title="Edit selection" aria-label={`Edit ${selection.itemName || 'selection'}`}>
+                      <FluentIcon name="edit" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state compact">
+          <h3>{selections.length ? 'No selections match these filters' : 'No selections yet'}</h3>
+          <p>
+            {selections.length
+              ? 'Try a different search or clear the category and status filters.'
+              : 'Track finish choices, vendor decisions, allowances, and install follow-up for this project here.'}
+          </p>
+        </div>
+      )}
+
+      {!readOnly ? (
+        <SelectionModal
+          draft={selectionDraft}
+          projectName={project?.name || ''}
+          vendorOptions={vendorOptions}
+          saving={saving}
+          onChange={updateSelectionDraft}
+          onAddPerson={startCreateVendorPerson}
+          onClose={() => setSelectionDraft(null)}
+          onSave={saveSelection}
+          onDelete={deleteSelection}
+          onDownloadFile={downloadSelectionFile}
+          onRemoveAttachment={(attachmentId) =>
+            setSelectionDraft((current) =>
+              current
+                ? {
+                    ...current,
+                    attachments: (current.attachments || []).filter((attachment) => attachment.id !== attachmentId),
+                  }
+                : current,
+            )
+          }
+          onRemovePhoto={(photoId) =>
+            setSelectionDraft((current) =>
+              current
+                ? {
+                    ...current,
+                    photos: (current.photos || []).filter((photo) => photo.id !== photoId),
+                  }
+                : current,
+            )
+          }
+          onRemovePendingAttachment={(index) =>
+            setSelectionDraft((current) =>
+              current
+                ? {
+                    ...current,
+                    pendingAttachments: (current.pendingAttachments || []).filter((_, fileIndex) => fileIndex !== index),
+                  }
+                : current,
+            )
+          }
+          onRemovePendingPhoto={(index) =>
+            setSelectionDraft((current) =>
+              current
+                ? {
+                    ...current,
+                    pendingPhotos: (current.pendingPhotos || []).filter((_, fileIndex) => fileIndex !== index),
+                  }
+                : current,
+            )
+          }
+        />
+      ) : null}
+      {personDraft ? (
+        <PersonModal
+          draft={personDraft}
+          type={personDraft.type}
+          isEditing={false}
+          saving={saving}
+          showTypeSelector
+          onChange={(field, value) => setPersonDraft((current) => (current ? { ...current, [field]: value } : current))}
+          onClose={() => setPersonDraft(null)}
+          onSave={handleSaveVendorPerson}
+          onDelete={() => {}}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function ProjectDetailView({
   data,
   project,
   tasks,
   settings,
   canEdit = true,
+  activeUser = null,
+  selectionNavigationRequest = null,
   onBack,
   onEdit,
   onDateClick,
   onCalendarItemClick,
   onStateChange,
 }) {
+  const [activeDetailTab, setActiveDetailTab] = useState('overview');
+  const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
+  const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
   const health = getProjectHealth(project);
   const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
+  const selectionCount = project.selections?.length || 0;
   const photoCount = project.photos?.length || 0;
   const stepCount = getProjectStepCount(project);
   const blockLotLabel =
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
       : 'Not set';
+
+  useEffect(() => {
+    setActiveDetailTab('overview');
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!selectionNavigationRequest) return;
+    if (selectionNavigationRequest.projectId !== project.id) return;
+    setActiveDetailTab('selections');
+    setSelectionHighlightRequest(selectionNavigationRequest);
+  }, [project.id, selectionNavigationRequest]);
 
   return (
     <div className="project-detail-page">
@@ -3137,122 +3990,168 @@ function ProjectDetailView({
         <div className="project-summary-chip">Steps {stepCount}</div>
         <div className="project-summary-chip">Tasks {tasks.length || 0}</div>
         <div className="project-summary-chip">Inspections {project.inspections?.length || 0}</div>
+        <div className="project-summary-chip">Selections {selectionCount}</div>
         <div className="project-summary-chip">Files {allFiles.length}</div>
         <div className="project-summary-chip">Photos {photoCount}</div>
       </div>
 
-      <div className="project-detail-grid">
-        <div className="project-detail-primary-grid">
-          <div className="project-detail-info-stack">
-            <section className="project-detail-section project-detail-overview">
-              <div className="panel-header">
-                <div>
-                  <h3>Project details</h3>
-                </div>
-              </div>
-              <dl className="project-facts project-detail-facts">
-                <div>
-                  <dt>Address</dt>
-                  <dd>{project.address || 'Not set'}</dd>
-                </div>
-                <div>
-                  <dt>Permit #</dt>
-                  <dd>{project.permitNumber || 'Not set'}</dd>
-                </div>
-                <div>
-                  <dt>Block / Lot</dt>
-                  <dd>{blockLotLabel}</dd>
-                </div>
-                <div>
-                  <dt>DR #</dt>
-                  <dd>{project.drNumber || 'Not set'}</dd>
-                </div>
-                <div>
-                  <dt>Start date</dt>
-                  <dd>{project.start ? formatShortDate(project.start) : 'Not set'}</dd>
-                </div>
-                <div>
-                  <dt>End date</dt>
-                  <dd>{project.end ? formatShortDate(project.end) : 'Not set'}</dd>
-                </div>
-                <div className="project-fact-compact">
-                  <dt>Customer</dt>
-                  <dd>{project.customerName || 'Not set'}</dd>
-                </div>
-                <div className="project-fact-compact">
-                  <dt>Customer phone</dt>
-                  <dd>{project.customerPhone || 'Not set'}</dd>
-                </div>
-                <div className="project-fact-compact">
-                  <dt>Customer email</dt>
-                  <dd>{project.customerEmail || 'Not set'}</dd>
-                </div>
-                <div className="project-fact-wide">
-                  <dt>Customer address</dt>
-                  <dd>{project.customerAddress || 'Not set'}</dd>
-                </div>
-              </dl>
-              {project.desc ? (
-                <div className="project-detail-note">
-                  <strong>Description</strong>
-                  <p>{project.desc}</p>
-                </div>
-              ) : null}
-              {project.customerNotes ? (
-                <div className="project-detail-note">
-                  <strong>Customer notes</strong>
-                  <p>{project.customerNotes}</p>
-                </div>
-              ) : null}
-            </section>
+      <div className="project-detail-tabs" role="tablist" aria-label={`${project.name} sections`}>
+        <button
+          className={`react-tab${activeDetailTab === 'overview' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'overview' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('overview')}
+        >
+          Overview
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'tasks' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'tasks' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('tasks')}
+        >
+          Tasks
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'calendar' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'calendar' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('calendar')}
+        >
+          Calendar
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'inspections' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'inspections' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('inspections')}
+        >
+          Inspections
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'selections' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'selections' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('selections')}
+        >
+          Selections
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'files' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'files' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('files')}
+        >
+          Files
+        </button>
+        <button
+          className={`react-tab${activeDetailTab === 'photos' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'photos' ? 'true' : 'false'}
+          onClick={() => setActiveDetailTab('photos')}
+        >
+          Photos
+        </button>
+      </div>
 
-            <section className="project-detail-section">
-              <div className="panel-header">
-                <div>
-                  <h3>Inspections</h3>
-                </div>
-              </div>
-              {project.inspections?.length ? (
-                <div className="inspection-grid">
-                  {project.inspections.map((inspection) => (
-                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status || 'requested'}`}>
-                      <div className="inspection-card-header">
-                        <div>
-                          <p className="project-status">{inspection.status || 'requested'}</p>
-                          <h3>{inspection.subcode || 'No subcode'}</h3>
-                          <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
-                        </div>
-                      </div>
-                      <div className="inspection-meta">
-                        <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
-                        <span>Agency: {inspection.agency || 'Not set'}</span>
-                        <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
-                        {['failed', 'follow-up'].includes(inspection.status) ? (
-                          <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
-                        ) : null}
-                      </div>
-                      {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state compact">
-                  <h3>No inspections yet</h3>
-                  <p>This project does not have any inspections saved yet.</p>
-                </div>
-              )}
-            </section>
-
-            <section className="project-detail-section">
-              <div className="panel-header">
-                <div>
-                  <h3>Photos</h3>
-                </div>
-              </div>
-              <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
-            </section>
+      {activeDetailTab === 'overview' ? (
+        <section className="project-detail-section project-detail-overview project-detail-overview-full">
+          <div className="panel-header">
+            <div>
+              <h3>Project Details</h3>
+            </div>
           </div>
+          <dl className="project-facts project-detail-facts">
+            <div>
+              <dt>Address</dt>
+              <dd>{project.address || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Permit #</dt>
+              <dd>{project.permitNumber || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Block / Lot</dt>
+              <dd>{blockLotLabel}</dd>
+            </div>
+            <div>
+              <dt>DR #</dt>
+              <dd>{project.drNumber || 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>Start date</dt>
+              <dd>{project.start ? formatShortDate(project.start) : 'Not set'}</dd>
+            </div>
+            <div>
+              <dt>End date</dt>
+              <dd>{project.end ? formatShortDate(project.end) : 'Not set'}</dd>
+            </div>
+            <div className="project-fact-compact">
+              <dt>Customer</dt>
+              <dd>{project.customerName || 'Not set'}</dd>
+            </div>
+            <div className="project-fact-compact">
+              <dt>Customer phone</dt>
+              <dd>{project.customerPhone || 'Not set'}</dd>
+            </div>
+            <div className="project-fact-compact">
+              <dt>Customer email</dt>
+              <dd>{project.customerEmail || 'Not set'}</dd>
+            </div>
+            <div className="project-fact-wide">
+              <dt>Customer address</dt>
+              <dd>{project.customerAddress || 'Not set'}</dd>
+            </div>
+          </dl>
+          {project.desc ? (
+            <div className="project-detail-note">
+              <strong>Description</strong>
+              <p>{project.desc}</p>
+            </div>
+          ) : null}
+          {project.customerNotes ? (
+            <div className="project-detail-note">
+              <strong>Customer notes</strong>
+              <p>{project.customerNotes}</p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
+      {activeDetailTab === 'tasks' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
+          <NativeTasksView
+            data={data}
+            onStateChange={onStateChange}
+            refresh={() => {}}
+            loading={false}
+            activeUser={activeUser}
+            projectFilter={project.id}
+            onProjectFilterChange={() => {}}
+            embedded
+            lockedProjectId={project.id}
+            highlightTaskId={taskHighlightRequest?.taskId || ''}
+            highlightToken={taskHighlightRequest?.token || ''}
+            onOpenSelection={(selectionLink) => {
+              setActiveDetailTab('selections');
+              setSelectionHighlightRequest({
+                ...selectionLink,
+                token: `${selectionLink.selectionId}-${Date.now()}`,
+              });
+            }}
+          />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'calendar' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
           <ProjectDetailCalendar
             project={project}
             tasks={tasks}
@@ -3260,31 +4159,69 @@ function ProjectDetailView({
             onDateClick={onDateClick}
             onItemClick={onCalendarItemClick}
           />
-        </div>
+        </section>
+      ) : null}
 
-        <div className="project-detail-secondary-grid">
-          <section className="project-detail-section project-detail-files-section">
-            <div className="panel-header">
-              <div>
-                <h3>Files</h3>
-              </div>
-            </div>
-            <ProjectFilesManager
-              data={data}
-              project={project}
-              onStateChange={onStateChange}
-              readOnly={!canEdit}
-              forcedViewMode="list"
-              hideViewToggle
-            />
-          </section>
-        </div>
-      </div>
+      {activeDetailTab === 'inspections' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
+          <NativeInspectionsView
+            data={data}
+            refresh={() => {}}
+            loading={false}
+            onStateChange={onStateChange}
+            readOnly={!canEdit}
+            activeUser={activeUser}
+            projectFilter={project.id}
+            onProjectFilterChange={() => {}}
+            embedded
+          />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'selections' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
+          <ProjectSelectionsManager
+            data={data}
+            project={project}
+            onStateChange={onStateChange}
+            readOnly={!canEdit}
+            highlightSelectionId={selectionHighlightRequest?.selectionId || ''}
+            highlightToken={selectionHighlightRequest?.token || ''}
+            onOpenTask={(taskId) => {
+              setActiveDetailTab('tasks');
+              setTaskHighlightRequest({
+                taskId,
+                token: `${taskId}-${Date.now()}`,
+              });
+            }}
+          />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'files' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
+          <ProjectFilesManager
+            data={data}
+            project={project}
+            onStateChange={onStateChange}
+            readOnly={!canEdit}
+            forcedViewMode="list"
+            hideViewToggle
+          />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'photos' ? (
+        <section className="project-detail-section project-detail-subtab-panel">
+          <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
+        </section>
+      ) : null}
 
       <PageStats settings={settings}>
         <DashboardStat label="Status" value={project.status || 'planning'} tone="brand" />
         <DashboardStat label="Phases" value={project.phases?.length || 0} />
         <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
+        <DashboardStat label="Selections" value={selectionCount} />
         <DashboardStat label="Files" value={allFiles.length} />
         <DashboardStat label="Photos" value={photoCount} />
       </PageStats>
@@ -3792,6 +4729,7 @@ function NativeInspectionsView({
   activeUser = null,
   projectFilter = 'all',
   onProjectFilterChange = () => {},
+  embedded = false,
 }) {
   const [inspectionDraft, setInspectionDraft] = useState(null);
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
@@ -3927,47 +4865,22 @@ function NativeInspectionsView({
     return file.dataUrl || previewUrls[file.id] || '';
   }
 
-  function readInspectionFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({
-          id: `inspection-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: '',
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          dataUrl: String(reader.result || ''),
-          storageProvider: 'inline',
-          storageBucket: '',
-          storagePath: '',
-        });
-      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function createInspectionAttachmentRecord(projectId, kind, file) {
-    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (isSupabaseStorageConfigured()) {
-      try {
-        const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
-        return {
-          id: attachmentId,
-          name: '',
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          ...storageMeta,
-          dataUrl: '',
-        };
-      } catch {
-        // Fall back to inline storage for inspection attachments.
-      }
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for inspection attachments.');
     }
-    return readInspectionFileAsDataUrl(file);
+    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
+    return {
+      id: attachmentId,
+      name: '',
+      originalName: file.name,
+      size: file.size,
+      type: file.type,
+      uploadedAt: new Date().toISOString(),
+      ...storageMeta,
+      dataUrl: '',
+    };
   }
 
   function startCreate() {
@@ -4258,10 +5171,10 @@ function NativeInspectionsView({
     }
   }
 
-  return (
-    <section className="panel native-panel workspace-page">
+  const inspectionContent = (
+    <>
       {!readOnly ? (
-        <div className="panel-actions header-scope-actions">
+        <div className={`panel-actions header-scope-actions${embedded ? ' embedded-inspection-actions' : ''}`}>
           <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length || saving}>
             Add inspection
           </button>
@@ -4270,7 +5183,7 @@ function NativeInspectionsView({
 
       {visibleProjects.length ? (
         <>
-          <section className="workspace-section">
+          <section className={embedded ? 'project-inspection-list' : 'workspace-section'}>
             {inspections.length ? (
                 <div className="inspection-grid">
                   {inspections.map((inspection) => (
@@ -4407,16 +5320,20 @@ function NativeInspectionsView({
         </div>
       )}
 
-      <PageStats settings={data.settings}>
-        <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
-        <DashboardStat label="Inspections" value={inspections.length} />
-        <DashboardStat label="Requested" value={statusCounts.requested} />
-        <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
-        <DashboardStat label="Passed" value={statusCounts.passed} />
-        <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
-      </PageStats>
-      <div className="page-refresh-footer">
-      </div>
+      {!embedded ? (
+        <>
+          <PageStats settings={data.settings}>
+            <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+            <DashboardStat label="Inspections" value={inspections.length} />
+            <DashboardStat label="Requested" value={statusCounts.requested} />
+            <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
+            <DashboardStat label="Passed" value={statusCounts.passed} />
+            <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
+          </PageStats>
+          <div className="page-refresh-footer">
+          </div>
+        </>
+      ) : null}
 
       {!readOnly ? (
         <InspectionModal
@@ -4447,6 +5364,16 @@ function NativeInspectionsView({
         onClose={closeInspectionImageEditor}
         onSave={saveInspectionImageEdits}
       />
+    </>
+  );
+
+  if (embedded) {
+    return <div className="project-inspections-embedded">{inspectionContent}</div>;
+  }
+
+  return (
+    <section className="panel native-panel workspace-page">
+      {inspectionContent}
     </section>
   );
 }
@@ -4783,13 +5710,26 @@ function DependencyModal({ draft, saving, onTogglePred, onLagChange, onClose, on
   );
 }
 
-function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null, users = [] }) {
+function NativeProjectsView({
+  data,
+  refresh,
+  loading,
+  onStateChange,
+  readOnly = false,
+  activeUser = null,
+  users = [],
+  homeSignal = 0,
+  navigationTarget = null,
+}) {
   const [projectDraft, setProjectDraft] = useState(null);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState(getProjectIdFromLocation);
   const [stepDraft, setStepDraft] = useState(null);
   const [stepPredecessorDraft, setStepPredecessorDraft] = useState(null);
   const [phaseNameDraft, setPhaseNameDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
+  const nextProjectHistoryModeRef = useRef('none');
+  const initializedHomeSignalRef = useRef(false);
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
@@ -4835,11 +5775,56 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
     return { phases, steps, tasks };
   }, [taskCountByProject, visibleProjects]);
 
+  function setSelectedProject(projectId, history = 'push') {
+    nextProjectHistoryModeRef.current = history;
+    setSelectedProjectId(String(projectId || '').trim());
+  }
+
   useEffect(() => {
     if (selectedProjectId && !visibleProjects.some((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId('');
+      setSelectedProject('', 'replace');
     }
   }, [selectedProjectId, visibleProjects]);
+
+  useEffect(() => {
+    if (!initializedHomeSignalRef.current) {
+      initializedHomeSignalRef.current = true;
+      return;
+    }
+    setSelectedProject('', 'push');
+  }, [homeSignal]);
+
+  useEffect(() => {
+    if (!navigationTarget?.projectId) return;
+    if (!visibleProjects.some((project) => project.id === navigationTarget.projectId)) return;
+    setSelectedProject(navigationTarget.projectId, 'push');
+  }, [navigationTarget, visibleProjects]);
+
+  useEffect(() => {
+    const previousProjectId = previousSelectedProjectIdRef.current;
+    const historyMode = nextProjectHistoryModeRef.current;
+    nextProjectHistoryModeRef.current = 'none';
+
+    if (previousProjectId === selectedProjectId) return;
+
+    if (historyMode === 'replace') {
+      syncProjectToLocation(selectedProjectId, { push: false });
+    } else if (historyMode === 'push') {
+      syncProjectToLocation(selectedProjectId, { push: true });
+    }
+
+    previousSelectedProjectIdRef.current = selectedProjectId;
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    function handleProjectPopState() {
+      nextProjectHistoryModeRef.current = 'none';
+      setSelectedProjectId(getProjectIdFromLocation());
+    }
+
+    window.addEventListener('popstate', handleProjectPopState);
+    return () => window.removeEventListener('popstate', handleProjectPopState);
+  }, []);
 
   function startCreate() {
     setProjectDraft({
@@ -5408,7 +6393,9 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
           tasks={selectedProjectTasks}
           settings={data.settings}
           canEdit={!readOnly}
-          onBack={() => setSelectedProjectId('')}
+          activeUser={activeUser}
+          selectionNavigationRequest={navigationTarget}
+          onBack={() => setSelectedProject('', 'push')}
           onEdit={startEdit}
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
           onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
@@ -5425,7 +6412,7 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
                     project={project}
                     taskCount={taskCountByProject.get(project.id) || 0}
                     onEdit={readOnly ? undefined : startEdit}
-                    onOpen={() => setSelectedProjectId(project.id)}
+                    onOpen={() => setSelectedProject(project.id, 'push')}
                   />
                 ))}
               </div>
@@ -5506,18 +6493,31 @@ function NativeProjectsView({ data, refresh, loading, onStateChange, readOnly = 
 
 function TaskRow({
   projectName,
+  projectOptions,
   task,
+  selectionLink,
+  highlighted = false,
+  rowRef = null,
   assigneeLabel,
   assigneeEmail,
   editingTaskId,
   editDraft,
+  editPendingFiles,
   assigneeOptions,
   onEditStart,
   onEditCancel,
   onEditDraftChange,
   onEditSave,
+  editAttachmentInputRef,
+  editAttachmentInputKey,
+  onOpenEditAttachmentPicker,
+  onEditAttachmentAdd,
+  onEditAttachmentRemove,
+  onEditPendingAttachmentRemove,
   onToggle,
   onEmail,
+  onAttachmentDownload,
+  onOpenSelection,
   onDelete,
   saving,
 }) {
@@ -5534,6 +6534,18 @@ function TaskRow({
             onChange={(event) => onEditDraftChange('label', event.target.value)}
             placeholder="Task name"
           />
+          <select
+            className="task-input"
+            value={editDraft.projectId || ''}
+            onChange={(event) => onEditDraftChange('projectId', event.target.value)}
+          >
+            <option value="">No project</option>
+            {projectOptions.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
           <input
             className="task-input"
             type="date"
@@ -5560,14 +6572,77 @@ function TaskRow({
               Cancel
             </button>
           </div>
+          <div className="task-attachment-editor">
+            <div className="task-attachment-editor-header">
+              <strong>Attachments</strong>
+              <button className="button secondary" type="button" onClick={onOpenEditAttachmentPicker} disabled={saving}>
+                Add files
+              </button>
+              <input
+                key={editAttachmentInputKey}
+                ref={editAttachmentInputRef}
+                className="task-attachment-input"
+                type="file"
+                multiple
+                onChange={onEditAttachmentAdd}
+                disabled={saving}
+              />
+            </div>
+            {editDraft.attachments?.length || editPendingFiles.length ? (
+              <div className="task-attachment-list">
+                {(editDraft.attachments || []).map((attachment) => (
+                  <div key={attachment.id} className="task-attachment-chip">
+                    <button
+                      className="task-attachment-link"
+                      type="button"
+                      onClick={() => onAttachmentDownload(attachment)}
+                      disabled={saving}
+                    >
+                      {attachment.originalName || attachment.name || 'Attachment'}
+                    </button>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onEditAttachmentRemove(attachment.id)}
+                      disabled={saving}
+                      title="Remove attachment"
+                      aria-label="Remove attachment"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+                {editPendingFiles.map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
+                    <span>{file.name}</span>
+                    <button
+                      className="button secondary gantt-icon-button"
+                      type="button"
+                      onClick={() => onEditPendingAttachmentRemove(index)}
+                      disabled={saving}
+                      title="Remove pending attachment"
+                      aria-label="Remove pending attachment"
+                    >
+                      <FluentIcon name="delete" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <small className="task-attachment-empty">No attachments yet.</small>
+            )}
+          </div>
         </div>
       </article>
     );
   }
 
   return (
-    <article className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}`}>
-      <label className="task-main">
+    <article
+      ref={rowRef}
+      className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}${highlighted ? ' highlighted' : ''}`}
+    >
+      <div className="task-main">
         <input
           type="checkbox"
           checked={!!task.done}
@@ -5578,19 +6653,50 @@ function TaskRow({
           <strong>{task.label}</strong>
           <small>{projectName || 'No project assigned'}</small>
         </span>
-      </label>
+      </div>
 
       <div className="task-meta">
         <span className="task-assignee-chip">{assigneeLabel || 'Unassigned'}</span>
-        {task.due ? (
-          <span className={`task-due-chip${overdue ? ' overdue' : ''}`}>
-            {overdue ? 'Overdue | ' : ''}
-            {formatShortDate(task.due)}
-          </span>
-        ) : (
-          <span className="task-due-chip">No due date</span>
-        )}
+        <div className="task-date-meta">
+          {task.due ? (
+            <span className={`task-due-chip${overdue ? ' overdue' : ''}`}>
+              {overdue ? 'Overdue | ' : ''}
+              {formatShortDate(task.due)}
+            </span>
+          ) : (
+            <span className="task-due-chip">No due date</span>
+          )}
+          {task.createdAt ? (
+            <small className="task-created-line">Added {formatDateTime(task.createdAt)}</small>
+          ) : null}
+        </div>
       </div>
+      {task.attachments?.length || selectionLink ? (
+        <div className="task-attachment-list task-attachment-list-inline">
+          {task.attachments.map((attachment) => (
+            <button
+              key={attachment.id}
+              className="task-attachment-link-chip"
+              type="button"
+              onClick={() => onAttachmentDownload(attachment)}
+              disabled={saving}
+            >
+              {attachment.originalName || attachment.name || 'Attachment'}
+            </button>
+          ))}
+          {selectionLink ? (
+            <button
+              className="task-attachment-link-chip task-selection-link-chip"
+              type="button"
+              onClick={() => onOpenSelection(task)}
+              disabled={saving}
+              title={`Open ${selectionLink.label || 'selection'}`}
+            >
+              Selection: {selectionLink.label || 'Open'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="task-row-actions">
         <button
@@ -5780,14 +6886,27 @@ function NativeTasksView({
   activeUser = null,
   projectFilter = 'all',
   onProjectFilterChange = () => {},
+  embedded = false,
+  lockedProjectId = '',
+  highlightTaskId = '',
+  highlightToken = '',
+  onOpenSelection = () => {},
 }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
-  const [newTask, setNewTask] = useState({ label: '', projectId: '', due: '', assignee: '' });
+  const [newTask, setNewTask] = useState({ label: '', projectId: lockedProjectId || '', due: '', assignee: '' });
   const [editingTaskId, setEditingTaskId] = useState('');
-  const [editDraft, setEditDraft] = useState({ label: '', due: '', assignee: '' });
+  const [editDraft, setEditDraft] = useState({ label: '', projectId: '', due: '', assignee: '', attachments: [] });
+  const [newTaskFiles, setNewTaskFiles] = useState([]);
+  const [editPendingFiles, setEditPendingFiles] = useState([]);
+  const [createAttachmentInputKey, setCreateAttachmentInputKey] = useState(0);
+  const [editAttachmentInputKey, setEditAttachmentInputKey] = useState(0);
   const [personDraft, setPersonDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
+  const createAttachmentInputRef = useRef(null);
+  const editAttachmentInputRef = useRef(null);
+  const taskRowRefs = useRef({});
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -5798,8 +6917,10 @@ function NativeTasksView({
     () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
     [data.tasks, data.settings, visibleProjects],
   );
+  const effectiveProjectFilter = lockedProjectId || projectFilter;
 
   useEffect(() => {
+    if (lockedProjectId) return;
     if (!visibleProjects.length) {
       onProjectFilterChange('all');
       return;
@@ -5807,7 +6928,12 @@ function NativeTasksView({
     if (projectFilter !== 'all' && !visibleProjects.some((project) => project.id === projectFilter)) {
       onProjectFilterChange('all');
     }
-  }, [onProjectFilterChange, projectFilter, visibleProjects]);
+  }, [lockedProjectId, onProjectFilterChange, projectFilter, visibleProjects]);
+
+  useEffect(() => {
+    if (!lockedProjectId) return;
+    setNewTask((current) => ({ ...current, projectId: lockedProjectId }));
+  }, [lockedProjectId]);
 
   const projectMap = useMemo(
     () => new Map(visibleProjects.map((project) => [project.id, project])),
@@ -5821,10 +6947,28 @@ function NativeTasksView({
     () => buildTaskAssigneeDirectory(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
+  const selectionLinksByTaskId = useMemo(() => {
+    const links = new Map();
+    visibleProjects.forEach((project) => {
+      (project.selections || []).forEach((selection) => {
+        (selection.taskIds || []).forEach((taskId) => {
+          if (!taskId || links.has(taskId)) return;
+          links.set(taskId, {
+            projectId: project.id,
+            selectionId: selection.id,
+            label: selection.itemName || selection.chosenOption || 'Selection',
+          });
+        });
+      });
+    });
+    return links;
+  }, [visibleProjects]);
 
   const filteredTasks = useMemo(() => {
     const tasks =
-      projectFilter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === projectFilter);
+      effectiveProjectFilter === 'all'
+        ? visibleTasks
+        : visibleTasks.filter((task) => task.projectId === effectiveProjectFilter);
     const scopedTasks =
       statusFilter === 'open'
         ? tasks.filter((task) => !task.done)
@@ -5841,11 +6985,14 @@ function NativeTasksView({
       if (aKey !== bKey) return aKey < bKey ? -1 : 1;
       return a.label.localeCompare(b.label);
     });
-  }, [projectFilter, projectMap, statusFilter, visibleTasks]);
+  }, [effectiveProjectFilter, projectMap, statusFilter, visibleTasks]);
 
   const projectScopedTasks = useMemo(
-    () => (projectFilter === 'all' ? visibleTasks : visibleTasks.filter((task) => task.projectId === projectFilter)),
-    [projectFilter, visibleTasks],
+    () =>
+      effectiveProjectFilter === 'all'
+        ? visibleTasks
+        : visibleTasks.filter((task) => task.projectId === effectiveProjectFilter),
+    [effectiveProjectFilter, visibleTasks],
   );
 
   const totals = useMemo(
@@ -5908,12 +7055,81 @@ function NativeTasksView({
     }
   }
 
+  function appendTaskFiles(currentFiles, fileList) {
+    const nextFiles = Array.from(fileList || []);
+    if (!nextFiles.length) return currentFiles;
+    return [...currentFiles, ...nextFiles];
+  }
+
+  async function createTaskAttachmentRecord(projectId, taskId, file) {
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for task attachments.');
+    }
+    const attachmentId = `task-file-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const storageProjectId = projectId || 'unassigned-task';
+    const storageMeta = await uploadProjectFileToStorage(storageProjectId, 'task-attachments', attachmentId, file);
+    return {
+      id: attachmentId,
+      name: '',
+      originalName: file.name,
+      size: file.size,
+      type: file.type,
+      uploadedAt: new Date().toISOString(),
+      ...storageMeta,
+      dataUrl: '',
+    };
+  }
+
+  async function createTaskAttachmentRecords(projectId, taskId, files) {
+    return Promise.all((files || []).map((file) => createTaskAttachmentRecord(projectId, taskId, file)));
+  }
+
+  function openAttachmentPicker(inputRef) {
+    const input = inputRef?.current || null;
+    if (!input) return;
+    input.value = '';
+    input.click();
+  }
+
+  function handleCreateAttachmentAdd(event) {
+    const files = Array.from(event.target.files || []);
+    setNewTaskFiles((current) => appendTaskFiles(current, files));
+    event.target.value = '';
+    setCreateAttachmentInputKey((current) => current + 1);
+  }
+
+  function handleEditAttachmentAdd(event) {
+    const files = Array.from(event.target.files || []);
+    setEditPendingFiles((current) => appendTaskFiles(current, files));
+    event.target.value = '';
+    setEditAttachmentInputKey((current) => current + 1);
+  }
+
+  async function handleDownloadTaskAttachment(attachment) {
+    try {
+      let blob = null;
+      if (attachment?.storagePath && attachment?.storageBucket) {
+        blob = await downloadProjectFileFromStorage(attachment);
+      } else if (attachment?.dataUrl) {
+        blob = await dataUrlToBlob(attachment.dataUrl);
+      } else {
+        return;
+      }
+      await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'attachment');
+    } catch (error) {
+      if (isShareDismissed(error)) return;
+      window.alert(error instanceof Error ? error.message : 'Unable to download attachment.');
+    }
+  }
+
   async function handleCreateTask(event) {
     event.preventDefault();
     if (!newTask.label.trim()) return;
-
-    await runTaskMutation(() => createTask(data, newTask));
+    const taskId = `t${Date.now()}`;
+    const attachments = await createTaskAttachmentRecords(newTask.projectId || '', taskId, newTaskFiles);
+    await runTaskMutation(() => createTask(data, { ...newTask, id: taskId, attachments, createdAt: new Date().toISOString() }));
     setNewTask({ label: '', projectId: '', due: '', assignee: '' });
+    setNewTaskFiles([]);
   }
 
   function startCreateAssignee() {
@@ -5957,21 +7173,72 @@ function NativeTasksView({
 
   function handleEditStart(task) {
     setEditingTaskId(task.id);
-    setEditDraft({ label: task.label, due: task.due || '', assignee: task.assignee || '' });
+    setEditDraft({
+      label: task.label,
+      projectId: task.projectId || '',
+      due: task.due || '',
+      assignee: task.assignee || '',
+      attachments: Array.isArray(task.attachments) ? task.attachments : [],
+    });
+    setEditPendingFiles([]);
   }
+
+  function getTaskSelectionLink(task) {
+    if (task?.sourceSelectionId && task?.sourceSelectionProjectId) {
+      return {
+        projectId: task.sourceSelectionProjectId,
+        selectionId: task.sourceSelectionId,
+        label: task.sourceSelectionLabel || 'Selection',
+      };
+    }
+    return selectionLinksByTaskId.get(task.id) || null;
+  }
+
+  function handleOpenTaskSelection(task) {
+    const link = getTaskSelectionLink(task);
+    if (!link?.projectId || !link?.selectionId) return;
+    onOpenSelection(link);
+  }
+
+  useEffect(() => {
+    if (!highlightTaskId) return;
+    setStatusFilter('all');
+    setActiveHighlightTaskId(highlightTaskId);
+    const scrollTimer = window.setTimeout(() => {
+      taskRowRefs.current[highlightTaskId]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setActiveHighlightTaskId((current) => (current === highlightTaskId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightTaskId, highlightToken]);
 
   function handleEditCancel() {
     setEditingTaskId('');
-    setEditDraft({ label: '', due: '', assignee: '' });
+    setEditDraft({ label: '', projectId: '', due: '', assignee: '', attachments: [] });
+    setEditPendingFiles([]);
+    setEditAttachmentInputKey((current) => current + 1);
   }
 
   async function handleEditSave(task) {
     if (!editDraft.label.trim()) return;
+    const nextAttachments = [
+      ...(editDraft.attachments || []),
+      ...(await createTaskAttachmentRecords(editDraft.projectId || task.projectId || '', task.id, editPendingFiles)),
+    ];
     await runTaskMutation(() =>
       updateTask(data, task.id, {
         label: editDraft.label.trim(),
+        projectId: editDraft.projectId || '',
         due: editDraft.due,
         assignee: editDraft.assignee || '',
+        attachments: nextAttachments,
       }),
     );
     handleEditCancel();
@@ -6008,9 +7275,9 @@ function NativeTasksView({
     const openTasks = openTasksByAssignee.get(assigneeLabel) || [];
     if (!openTasks.length) return;
     const subject =
-      projectFilter === 'all'
+      effectiveProjectFilter === 'all'
         ? `${assigneeLabel} open tasks`
-        : `${projectMap.get(projectFilter)?.name || 'Project'} open tasks`;
+        : `${projectMap.get(effectiveProjectFilter)?.name || 'Project'} open tasks`;
     const body = [
       `Assignee: ${assigneeLabel}`,
       '',
@@ -6024,8 +7291,8 @@ function NativeTasksView({
     window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
 
-  return (
-    <section className="panel native-panel workspace-page">
+  const taskContent = (
+    <>
       <div className="panel-actions task-header-actions">
         <div className="task-toolbar task-toolbar-header">
           <div className="people-view-toggle" role="tablist" aria-label="Task status filter">
@@ -6066,7 +7333,7 @@ function NativeTasksView({
         <div className="project-summary-chip">Open {totals.open}</div>
         <div className="project-summary-chip">Overdue {totals.overdue}</div>
         <div className="project-summary-chip">Assigned {totals.assigned}</div>
-        <div className="project-summary-chip">Projects {visibleProjects.length}</div>
+        {!embedded ? <div className="project-summary-chip">Projects {visibleProjects.length}</div> : null}
       </div>
 
       <div className="workspace-control-grid">
@@ -6079,18 +7346,22 @@ function NativeTasksView({
                 value={newTask.label}
                 onChange={(event) => setNewTask((current) => ({ ...current, label: event.target.value }))}
               />
-              <select
-                className="task-input"
-                value={newTask.projectId}
-                onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
-              >
-                <option value="">Project...</option>
-                {visibleProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
+              {lockedProjectId ? (
+                <div className="task-input task-input-static">{projectMap.get(lockedProjectId)?.name || 'Project'}</div>
+              ) : (
+                <select
+                  className="task-input"
+                  value={newTask.projectId}
+                  onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
+                >
+                  <option value="">Project...</option>
+                  {visibleProjects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 className="task-input"
                 type="date"
@@ -6117,6 +7388,49 @@ function NativeTasksView({
               <button className="button primary" type="submit" disabled={saving}>
                 Add task
               </button>
+              <div className="task-attachment-editor task-create-attachments">
+                <div className="task-attachment-editor-header">
+                  <strong>Attachments</strong>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => openAttachmentPicker(createAttachmentInputRef)}
+                    disabled={saving}
+                  >
+                    Add files
+                  </button>
+                  <input
+                    key={createAttachmentInputKey}
+                    ref={createAttachmentInputRef}
+                    className="task-attachment-input"
+                    type="file"
+                    multiple
+                    onChange={handleCreateAttachmentAdd}
+                    disabled={saving}
+                  />
+                </div>
+                {newTaskFiles.length ? (
+                  <div className="task-attachment-list">
+                    {newTaskFiles.map((file, index) => (
+                      <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
+                        <span>{file.name}</span>
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => setNewTaskFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                          disabled={saving}
+                          title="Remove pending attachment"
+                          aria-label="Remove pending attachment"
+                        >
+                          <FluentIcon name="delete" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <small className="task-attachment-empty">No attachments selected.</small>
+                )}
+              </div>
             </div>
           </form>
         </section>
@@ -6152,21 +7466,47 @@ function NativeTasksView({
                   {group.tasks.map((task) => (
                     <TaskRow
                       key={task.id}
+                      highlighted={activeHighlightTaskId === task.id}
+                      rowRef={(node) => {
+                        if (node) {
+                          taskRowRefs.current[task.id] = node;
+                        } else {
+                          delete taskRowRefs.current[task.id];
+                        }
+                      }}
                       task={task}
                       assigneeLabel={task.assignee || ''}
                       assigneeEmail={assigneeDirectory.get(task.assignee || '')?.email || ''}
                       assigneeOptions={assigneeOptions}
+                      projectOptions={visibleProjects}
                       projectName={projectMap.get(task.projectId)?.name}
+                      selectionLink={getTaskSelectionLink(task)}
                       editingTaskId={editingTaskId}
                       editDraft={editDraft}
+                      editPendingFiles={editPendingFiles}
                       onEditStart={handleEditStart}
                       onEditCancel={handleEditCancel}
                       onEditDraftChange={(field, value) =>
                         setEditDraft((current) => ({ ...current, [field]: value }))
                       }
+                      editAttachmentInputRef={editAttachmentInputRef}
+                      editAttachmentInputKey={editAttachmentInputKey}
+                      onOpenEditAttachmentPicker={() => openAttachmentPicker(editAttachmentInputRef)}
+                      onEditAttachmentAdd={handleEditAttachmentAdd}
+                      onEditAttachmentRemove={(attachmentId) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          attachments: (current.attachments || []).filter((attachment) => attachment.id !== attachmentId),
+                        }))
+                      }
+                      onEditPendingAttachmentRemove={(index) =>
+                        setEditPendingFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))
+                      }
                       onEditSave={handleEditSave}
                       onToggle={handleToggle}
                       onEmail={handleEmailTask}
+                      onAttachmentDownload={handleDownloadTaskAttachment}
+                      onOpenSelection={handleOpenTaskSelection}
                       onDelete={handleDelete}
                       saving={saving}
                     />
@@ -6177,21 +7517,47 @@ function NativeTasksView({
               filteredTasks.map((task) => (
                 <TaskRow
                   key={task.id}
+                  highlighted={activeHighlightTaskId === task.id}
+                  rowRef={(node) => {
+                    if (node) {
+                      taskRowRefs.current[task.id] = node;
+                    } else {
+                      delete taskRowRefs.current[task.id];
+                    }
+                  }}
                   task={task}
                   assigneeLabel={task.assignee || ''}
                   assigneeEmail={assigneeDirectory.get(task.assignee || '')?.email || ''}
                   assigneeOptions={assigneeOptions}
+                  projectOptions={visibleProjects}
                   projectName={projectMap.get(task.projectId)?.name}
+                  selectionLink={getTaskSelectionLink(task)}
                   editingTaskId={editingTaskId}
                   editDraft={editDraft}
+                  editPendingFiles={editPendingFiles}
                   onEditStart={handleEditStart}
                   onEditCancel={handleEditCancel}
                   onEditDraftChange={(field, value) =>
                     setEditDraft((current) => ({ ...current, [field]: value }))
                   }
+                  editAttachmentInputRef={editAttachmentInputRef}
+                  editAttachmentInputKey={editAttachmentInputKey}
+                  onOpenEditAttachmentPicker={() => openAttachmentPicker(editAttachmentInputRef)}
+                  onEditAttachmentAdd={handleEditAttachmentAdd}
+                  onEditAttachmentRemove={(attachmentId) =>
+                    setEditDraft((current) => ({
+                      ...current,
+                      attachments: (current.attachments || []).filter((attachment) => attachment.id !== attachmentId),
+                    }))
+                  }
+                  onEditPendingAttachmentRemove={(index) =>
+                    setEditPendingFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))
+                  }
                   onEditSave={handleEditSave}
                   onToggle={handleToggle}
                   onEmail={handleEmailTask}
+                  onAttachmentDownload={handleDownloadTaskAttachment}
+                  onOpenSelection={handleOpenTaskSelection}
                   onDelete={handleDelete}
                   saving={saving}
                 />
@@ -6200,23 +7566,27 @@ function NativeTasksView({
           ) : (
             <div className="empty-state">
               <h3>No tasks yet</h3>
-              <p>Create a task above or switch the project filter to see more items.</p>
+              <p>{embedded ? 'Create a task above to add the first task for this project.' : 'Create a task above or switch the project filter to see more items.'}</p>
             </div>
           )}
         </div>
       </section>
-      <PageStats settings={data.settings}>
-        <DashboardStat label="All tasks" value={totals.total} tone="brand" />
-        <DashboardStat label="Open" value={totals.open} />
-        <DashboardStat label="Overdue" value={totals.overdue} />
-        <DashboardStat label="Assigned" value={totals.assigned} />
-        <DashboardStat label="Projects" value={visibleProjects.length} />
-      </PageStats>
-      <div className="page-refresh-footer">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-          {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
-        </button>
-      </div>
+      {!embedded ? (
+        <>
+          <PageStats settings={data.settings}>
+            <DashboardStat label="All tasks" value={totals.total} tone="brand" />
+            <DashboardStat label="Open" value={totals.open} />
+            <DashboardStat label="Overdue" value={totals.overdue} />
+            <DashboardStat label="Assigned" value={totals.assigned} />
+            <DashboardStat label="Projects" value={visibleProjects.length} />
+          </PageStats>
+          <div className="page-refresh-footer">
+            <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
+              {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+            </button>
+          </div>
+        </>
+      ) : null}
       {personDraft ? (
         <PersonModal
           draft={personDraft}
@@ -6230,6 +7600,16 @@ function NativeTasksView({
           onDelete={() => {}}
         />
       ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="project-tasks-embedded">{taskContent}</div>;
+  }
+
+  return (
+    <section className="panel native-panel workspace-page">
+      {taskContent}
     </section>
   );
 }
@@ -7777,47 +9157,22 @@ function NativeScheduleView({
     setSubcodeDraft(null);
   }
 
-  function readInspectionFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({
-          id: `inspection-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: '',
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          dataUrl: String(reader.result || ''),
-          storageProvider: 'inline',
-          storageBucket: '',
-          storagePath: '',
-        });
-      reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function createInspectionAttachmentRecord(projectId, kind, file) {
-    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (isSupabaseStorageConfigured()) {
-      try {
-        const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
-        return {
-          id: attachmentId,
-          name: '',
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date().toISOString(),
-          ...storageMeta,
-          dataUrl: '',
-        };
-      } catch {
-        // Fall back to inline storage for inspection attachments.
-      }
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error('Supabase Storage is not configured for inspection attachments.');
     }
-    return readInspectionFileAsDataUrl(file);
+    const attachmentId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const storageMeta = await uploadProjectFileToStorage(projectId, `inspection-${kind}`, attachmentId, file);
+    return {
+      id: attachmentId,
+      name: '',
+      originalName: file.name,
+      size: file.size,
+      type: file.type,
+      uploadedAt: new Date().toISOString(),
+      ...storageMeta,
+      dataUrl: '',
+    };
   }
 
   async function handleSaveInspectionDraft() {
@@ -10944,6 +12299,8 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
 export default function App() {
   const nativeAndroid = isNativeAndroidApp();
   const [activeTab, setActiveTab] = useState(getTabFromLocation);
+  const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
+  const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
   const [authSession, setAuthSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -11044,6 +12401,13 @@ export default function App() {
     const previousTab = previousActiveTabRef.current;
     const shouldPushHistory = isNativeAndroidApp() && previousTab !== activeTab;
     syncTabToLocation(activeTab, { push: shouldPushHistory });
+    if (typeof window !== 'undefined' && validTabIds.has(activeTab)) {
+      try {
+        window.localStorage.setItem(LAST_ACTIVE_TAB_KEY, activeTab);
+      } catch {
+        // Ignore storage issues and keep navigation working.
+      }
+    }
     previousActiveTabRef.current = activeTab;
   }, [activeTab]);
 
@@ -11093,6 +12457,26 @@ export default function App() {
     setShowAndroidNavMenu(false);
     setShowAndroidAccountMenu(false);
   }, [activeTab, authSession]);
+
+  function goToProjectsHome() {
+    setActiveTab('projects');
+    setProjectNavigationTarget(null);
+    setProjectsHomeSignal((current) => current + 1);
+    setShowAndroidNavMenu(false);
+    setShowAndroidAccountMenu(false);
+  }
+
+  function openProjectSelectionLink(selectionLink) {
+    if (!selectionLink?.projectId || !selectionLink?.selectionId) return;
+    setProjectNavigationTarget({
+      ...selectionLink,
+      detailTab: 'selections',
+      token: `${selectionLink.projectId}-${selectionLink.selectionId}-${Date.now()}`,
+    });
+    setActiveTab('projects');
+    setShowAndroidNavMenu(false);
+    setShowAndroidAccountMenu(false);
+  }
 
   async function handleSignIn(email, password) {
     setSigningIn(true);
@@ -11233,6 +12617,8 @@ export default function App() {
           readOnly={!capabilities.canEdit}
           activeUser={activeUser}
           users={users}
+          homeSignal={projectsHomeSignal}
+          navigationTarget={projectNavigationTarget}
         />
       );
     }
@@ -11247,51 +12633,7 @@ export default function App() {
           activeUser={activeUser}
           projectFilter={sessionProjectFilter}
           onProjectFilterChange={setSessionProjectFilter}
-        />
-      );
-    }
-
-    if (activeTab === 'files') {
-      return (
-        <NativeFilesView
-          data={trackerState}
-          onStateChange={setTrackerState}
-          refresh={refreshData}
-          loading={loading}
-          readOnly={!capabilities.canEdit}
-          activeUser={activeUser}
-          projectFilter={sessionProjectFilter}
-          onProjectFilterChange={setSessionProjectFilter}
-        />
-      );
-    }
-
-    if (activeTab === 'photos') {
-      return (
-        <NativePhotosView
-          data={trackerState}
-          onStateChange={setTrackerState}
-          refresh={refreshData}
-          loading={loading}
-          readOnly={!capabilities.canEdit}
-          activeUser={activeUser}
-          projectFilter={sessionProjectFilter}
-          onProjectFilterChange={setSessionProjectFilter}
-        />
-      );
-    }
-
-    if (activeTab === 'inspections') {
-      return (
-        <NativeInspectionsView
-          data={trackerState}
-          onStateChange={setTrackerState}
-          refresh={refreshData}
-          loading={loading}
-          readOnly={!capabilities.canEdit}
-          activeUser={activeUser}
-          projectFilter={sessionProjectFilter}
-          onProjectFilterChange={setSessionProjectFilter}
+          onOpenSelection={openProjectSelectionLink}
         />
       );
     }
@@ -11366,16 +12708,16 @@ export default function App() {
                     setShowAndroidNavMenu((current) => !current);
                   }}
                   aria-expanded={showAndroidNavMenu ? 'true' : 'false'}
-                  aria-label="Open section menu"
+                  aria-label="Open navigation menu"
                 >
                   <span className="android-nav-trigger-copy">
-                    <span className="android-nav-trigger-label">Section</span>
+                    <span className="android-nav-trigger-label">Navigate</span>
                     <strong>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
                   </span>
                   <FluentIcon name="arrowDown" />
                 </button>
                 {showAndroidNavMenu ? (
-                  <div className="android-nav-menu" role="menu" aria-label="Sections">
+                  <div className="android-nav-menu" role="menu" aria-label="Navigation">
                     {visibleTabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -11384,7 +12726,11 @@ export default function App() {
                         role="menuitemradio"
                         aria-checked={activeTab === tab.id ? 'true' : 'false'}
                         onClick={() => {
-                          setActiveTab(tab.id);
+                          if (tab.id === 'projects') {
+                            goToProjectsHome();
+                          } else {
+                            setActiveTab(tab.id);
+                          }
                           setShowAndroidNavMenu(false);
                         }}
                       >
@@ -11464,14 +12810,14 @@ export default function App() {
         <section className="workspace-header">
           <div className="workspace-header-card">
             <div className="workspace-header-main">
-              <div className="workspace-brand">
+              <button className="workspace-brand-button" type="button" onClick={goToProjectsHome}>
                 <div className="hero-logo workspace-logo" aria-hidden="true">
                   <img src="/destiny-logo.png" alt="Destiny Homes logo" />
                 </div>
                 <div className="workspace-brand-copy">
                   <h1>Destiny Project Hub</h1>
                 </div>
-              </div>
+              </button>
               <div className="hero-user-controls workspace-user-controls">
                 <div className="workspace-user-card">
                   <div className="workspace-user-avatar" aria-hidden="true">
@@ -11551,13 +12897,19 @@ export default function App() {
 
       {capabilities.showTabs && !nativeAndroid ? (
         <section className="workspace-shell-bar">
-          <nav className="react-tabs" aria-label="Destiny Project Hub sections">
+          <nav className="react-tabs" aria-label="Destiny Project Hub navigation">
             {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  if (tab.id === 'projects') {
+                    goToProjectsHome();
+                    return;
+                  }
+                  setActiveTab(tab.id);
+                }}
                 title={tab.description}
                 aria-label={`${tab.label}: ${tab.description}`}
               >

@@ -105,7 +105,9 @@ async function refreshAuthSession(session) {
   if (!isSupabaseConfigured() || !session?.refreshToken) return null;
   const response = await fetch(getAuthEndpoint('/token?grant_type=refresh_token'), {
     method: 'POST',
-    headers: buildHeaders(),
+    headers: buildHeaders({
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+    }),
     body: JSON.stringify({ refresh_token: session.refreshToken }),
   });
   if (!response.ok) return null;
@@ -510,10 +512,70 @@ function normalizeProject(project) {
     phases: Array.isArray(project?.phases) ? project.phases.map((phase, index) => normalizeProjectPhase(phase, index)) : [],
     files: normalizeProjectFolders(project?.files),
     photos: Array.isArray(project?.photos) ? project.photos.map((photo, index) => normalizeProjectFile(photo, index)) : [],
+    selections: Array.isArray(project?.selections)
+      ? project.selections.map((selection, index) => normalizeProjectSelection(selection, index))
+      : [],
     inspections: Array.isArray(project?.inspections)
       ? project.inspections.map((inspection, index) => normalizeProjectInspection(inspection, index))
       : [],
   };
+}
+
+function normalizeProjectSelection(selection, index = 0) {
+  const sourceTaskIds = Array.isArray(selection?.taskIds)
+    ? selection.taskIds
+    : Array.isArray(selection?.linkedTaskIds)
+      ? selection.linkedTaskIds
+      : [];
+  return {
+    id: selection?.id || `selection-${Date.now()}-${index}`,
+    category: String(selection?.category || '').trim(),
+    itemName: String(selection?.itemName || selection?.name || '').trim(),
+    chosenOption: String(selection?.chosenOption || '').trim(),
+    status: String(selection?.status || 'needs decision').trim() || 'needs decision',
+    vendor: String(selection?.vendor || '').trim(),
+    allowance: Number(selection?.allowance) || 0,
+    actualCost: Number(selection?.actualCost) || 0,
+    selectionDate: String(selection?.selectionDate || '').trim(),
+    notes: String(selection?.notes || '').trim(),
+    attachments: Array.isArray(selection?.attachments)
+      ? selection.attachments.map((file, fileIndex) => normalizeProjectFile(file, index + fileIndex))
+      : [],
+    photos: Array.isArray(selection?.photos)
+      ? selection.photos.map((file, fileIndex) => normalizeProjectFile(file, index + 500 + fileIndex))
+      : [],
+    taskIds: Array.from(new Set(sourceTaskIds.map((taskId) => String(taskId || '').trim()).filter(Boolean))),
+  };
+}
+
+function getTaskIdTimestamp(taskId) {
+  const match = String(taskId || '').match(/^t(\d{13})$/);
+  if (!match) return null;
+  const timestamp = Number(match[1]);
+  if (!Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function resolveTaskCreatedAt(task = {}) {
+  const rawCreatedAt = String(task?.createdAt || '').trim();
+  const idDate = getTaskIdTimestamp(task?.id);
+  if (!rawCreatedAt) {
+    return idDate ? idDate.toISOString() : '';
+  }
+
+  const createdAtDate = new Date(rawCreatedAt);
+  if (Number.isNaN(createdAtDate.getTime())) {
+    return idDate ? idDate.toISOString() : '';
+  }
+
+  if (!idDate) {
+    return createdAtDate.toISOString();
+  }
+
+  const driftMs = Math.abs(createdAtDate.getTime() - idDate.getTime());
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  return driftMs > sevenDaysMs ? idDate.toISOString() : createdAtDate.toISOString();
 }
 
 function normalizeTask(task = {}) {
@@ -523,7 +585,14 @@ function normalizeTask(task = {}) {
     projectId: String(task?.projectId || '').trim(),
     due: String(task?.due || '').trim(),
     assignee: String(task?.assignee || '').trim(),
+    sourceSelectionId: String(task?.sourceSelectionId || '').trim(),
+    sourceSelectionProjectId: String(task?.sourceSelectionProjectId || '').trim(),
+    sourceSelectionLabel: String(task?.sourceSelectionLabel || '').trim(),
     done: !!task?.done,
+    createdAt: resolveTaskCreatedAt(task),
+    attachments: Array.isArray(task?.attachments)
+      ? task.attachments.map((attachment, index) => normalizeProjectFile(attachment, index))
+      : [],
   };
 }
 
@@ -623,6 +692,82 @@ function encodeStoragePath(path) {
     .join('/');
 }
 
+function ensureNetworkAvailable(action = 'complete this request') {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error(`You appear to be offline. Reconnect to the internet and try again to ${action}.`);
+  }
+}
+
+async function ensureFreshAuthSession() {
+  if (!authSession?.refreshToken) return authSession;
+  if (!authSession?.expiresAt || authSession.expiresAt - Date.now() >= 60_000) {
+    return authSession;
+  }
+  const nextSession = await refreshAuthSession(authSession);
+  if (!nextSession?.accessToken) {
+    throw new Error('Your Supabase session expired. Please sign in again.');
+  }
+  return nextSession;
+}
+
+function applyCurrentAuthHeader(headers) {
+  if (!headers || typeof headers !== 'object') return headers;
+  const nextHeaders = { ...headers };
+  const currentToken = getAuthAccessToken();
+  if (
+    currentToken &&
+    typeof nextHeaders.Authorization === 'string' &&
+    nextHeaders.Authorization.startsWith('Bearer ') &&
+    nextHeaders.Authorization !== `Bearer ${SUPABASE_KEY}`
+  ) {
+    nextHeaders.Authorization = `Bearer ${currentToken}`;
+  }
+  return nextHeaders;
+}
+
+async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs = 12000) {
+  ensureNetworkAvailable(label.toLowerCase());
+  await ensureFreshAuthSession();
+  const runFetch = async (requestOptions) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...requestOptions,
+        headers: applyCurrentAuthHeader(requestOptions?.headers),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`${label} timed out. Check your internet connection and try again.`);
+      }
+      if (error instanceof TypeError) {
+        throw new Error(`${label} failed because the network connection was lost.`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
+  try {
+    let response = await runFetch(options);
+    if (response.status === 401 && authSession?.refreshToken) {
+      const responseText = await response.clone().text().catch(() => '');
+      if (/jwt expired|invalid jwt|expired/i.test(responseText)) {
+        const nextSession = await refreshAuthSession(authSession);
+        if (!nextSession?.accessToken) {
+          throw new Error('Your Supabase session expired. Please sign in again.');
+        }
+        response = await runFetch(options);
+      }
+    }
+    return response;
+  } catch (error) {
+    throw error;
+  }
+}
+
 function buildProjectStoragePath(projectId, folderId, fileId, originalName) {
   const cleanName = String(originalName || 'file')
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
@@ -634,8 +779,9 @@ export async function uploadProjectFileToStorage(projectId, folderId, fileId, fi
   if (!isSupabaseStorageConfigured()) {
     throw new Error('Supabase Storage is not configured.');
   }
+  ensureNetworkAvailable('upload this file');
   const storagePath = buildProjectStoragePath(projectId, folderId, fileId, file.name);
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_FILES_BUCKET)}/${encodeStoragePath(storagePath)}`,
     {
       method: 'POST',
@@ -645,6 +791,7 @@ export async function uploadProjectFileToStorage(projectId, folderId, fileId, fi
       }),
       body: file,
     },
+    'File upload',
   );
 
   if (!response.ok) {
@@ -662,6 +809,7 @@ export async function downloadProjectFileFromStorage(file) {
   if (!file?.storageBucket || !file?.storagePath || !isSupabaseConfigured()) {
     throw new Error('Storage file is missing its bucket or path.');
   }
+  ensureNetworkAvailable('download this file');
   const downloadUrl =
     `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(file.storageBucket)}/${encodeStoragePath(file.storagePath)}`;
   const requestOptions = { method: 'GET' };
@@ -673,10 +821,10 @@ export async function downloadProjectFileFromStorage(file) {
   let lastError = 'File download failed.';
   for (const headers of headerCandidates) {
     try {
-      const response = await fetch(downloadUrl, {
+      const response = await fetchWithTimeout(downloadUrl, {
         ...requestOptions,
         headers,
-      });
+      }, 'File download');
       if (response.ok) {
         return response.blob();
       }
@@ -691,12 +839,14 @@ export async function downloadProjectFileFromStorage(file) {
 
 export async function deleteProjectFileFromStorage(file) {
   if (!file?.storageBucket || !file?.storagePath || !isSupabaseConfigured()) return;
-  const response = await fetch(
+  ensureNetworkAvailable('delete this file');
+  const response = await fetchWithTimeout(
     `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(file.storageBucket)}/${encodeStoragePath(file.storagePath)}`,
     {
       method: 'DELETE',
       headers: storageAuthHeaders(),
     },
+    'File delete',
   );
 
   if (!response.ok) {
@@ -705,11 +855,11 @@ export async function deleteProjectFileFromStorage(file) {
 }
 
 async function upsertCollection(table, items) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
     body: JSON.stringify(items.map((item) => ({ id: item.id, data: item }))),
-  });
+  }, `${table} save`);
 
   if (!response.ok) {
     throw new Error(`${table} upsert failed: ${await response.text()}`);
@@ -717,10 +867,10 @@ async function upsertCollection(table, items) {
 }
 
 async function removeRemoteRow(table, id) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'DELETE',
     headers: buildHeaders(),
-  });
+  }, `${table} delete`);
 
   if (!response.ok) {
     throw new Error(`${table} delete failed: ${await response.text()}`);
@@ -728,9 +878,9 @@ async function removeRemoteRow(table, id) {
 }
 
 async function fetchSupabaseJson(path, label) {
-  const response = await fetch(`${SUPABASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${SUPABASE_URL}${path}`, {
     headers: buildHeaders(),
-  });
+  }, label);
   const text = await response.text();
 
   if (!response.ok) {
@@ -746,29 +896,29 @@ async function fetchSupabaseJson(path, label) {
   }
 }
 
-async function persistCollection(items, storageKey, table, storageMode, deletedId = null) {
-  writeStorage(storageKey, items);
-
+function getRemoteSaveError(storageMode, context = 'save') {
   if (!isSupabaseConfigured()) {
-    return 'local-unconfigured';
+    return new Error('Supabase is not configured for saving in this build.');
   }
-
-  // If the app fell back to local mode because a remote read failed, keep writes
-  // local-only until a fresh Supabase load succeeds again. This avoids overwriting
-  // good remote data with stale fallback snapshots.
+  if (storageMode === 'loading') {
+    return new Error(`Supabase data is still loading. Wait for the current refresh to finish before you ${context}.`);
+  }
   if (storageMode !== 'supabase') {
-    return storageMode;
+    return new Error(`Supabase is unavailable right now. Restore the connection and refresh before you ${context}.`);
   }
+  return null;
+}
 
-  try {
-    if (deletedId) {
-      await removeRemoteRow(table, deletedId);
-    }
-    await upsertCollection(table, items);
-    return 'supabase';
-  } catch {
-    return storageMode === 'supabase' ? 'local' : storageMode;
+async function persistCollection(items, storageKey, table, storageMode, deletedId = null) {
+  const remoteSaveError = getRemoteSaveError(storageMode, 'save');
+  if (remoteSaveError) {
+    throw remoteSaveError;
   }
+  if (deletedId) {
+    await removeRemoteRow(table, deletedId);
+  }
+  await upsertCollection(table, items);
+  return 'supabase';
 }
 
 async function persistTasks(tasks, storageMode, deletedTaskId = null) {
@@ -780,34 +930,24 @@ async function persistProjects(projects, storageMode, deletedProjectId = null) {
 }
 
 async function persistSettings(settings, storageMode, canWriteRemote = false) {
-  writeStorage('cx_settings', settings);
+  const remoteSaveError = getRemoteSaveError(storageMode, 'save settings');
+  if (remoteSaveError) {
+    throw remoteSaveError;
+  }
+  if (!canWriteRemote) {
+    throw new Error('Settings are not ready to save yet. Refresh the app after Supabase finishes loading and try again.');
+  }
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/settings`, {
+    method: 'POST',
+    headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify([{ id: 'app_settings', data: settings }]),
+  }, 'Settings save');
 
-  if (!isSupabaseConfigured()) {
-    return 'local-unconfigured';
+  if (!response.ok) {
+    throw new Error(`settings upsert failed: ${await response.text()}`);
   }
 
-  // Only push settings remotely after the current session has successfully loaded
-  // from Supabase. This prevents fallback/default settings from clobbering the
-  // remote app_settings row after a transient read/auth failure.
-  if (storageMode !== 'supabase' || !canWriteRemote) {
-    return storageMode;
-  }
-
-  try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/settings`, {
-      method: 'POST',
-      headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
-      body: JSON.stringify([{ id: 'app_settings', data: settings }]),
-    });
-
-    if (!response.ok) {
-      throw new Error(`settings upsert failed: ${await response.text()}`);
-    }
-
-    return 'supabase';
-  } catch {
-    return storageMode === 'supabase' ? 'local' : storageMode;
-  }
+  return 'supabase';
 }
 
 export async function loadTrackerData() {
@@ -872,12 +1012,17 @@ export async function loadTrackerData() {
 
 export async function createTask(currentState, payload) {
   const task = normalizeTask({
-    id: `t${Date.now()}`,
+    id: payload.id || `t${Date.now()}`,
     label: payload.label.trim(),
     projectId: payload.projectId || '',
     done: false,
     due: payload.due || '',
     assignee: payload.assignee || '',
+    sourceSelectionId: payload.sourceSelectionId || '',
+    sourceSelectionProjectId: payload.sourceSelectionProjectId || '',
+    sourceSelectionLabel: payload.sourceSelectionLabel || '',
+    createdAt: payload.createdAt || new Date().toISOString(),
+    attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   });
   const tasks = [...currentState.tasks, task];
   const storageMode = await persistTasks(tasks, currentState.storageMode);
@@ -885,14 +1030,33 @@ export async function createTask(currentState, payload) {
 }
 
 export async function updateTask(currentState, taskId, updates) {
+  const existingTask = currentState.tasks.find((task) => task.id === taskId) || null;
   const tasks = currentState.tasks.map((task) =>
     task.id === taskId ? normalizeTask({ ...task, ...updates }) : normalizeTask(task),
   );
+  const nextTask = tasks.find((task) => task.id === taskId) || null;
+
+  if (existingTask) {
+    const nextAttachmentIds = new Set((nextTask?.attachments || []).map((attachment) => attachment.id));
+    const removedAttachments = (existingTask.attachments || []).filter(
+      (attachment) => attachment?.storagePath && !nextAttachmentIds.has(attachment.id),
+    );
+    for (const attachment of removedAttachments) {
+      await deleteProjectFileFromStorage(attachment);
+    }
+  }
+
   const storageMode = await persistTasks(tasks, currentState.storageMode);
   return { ...currentState, tasks, storageMode };
 }
 
 export async function deleteTask(currentState, taskId) {
+  const existingTask = currentState.tasks.find((task) => task.id === taskId) || null;
+  if (existingTask?.attachments?.length) {
+    for (const attachment of existingTask.attachments) {
+      await deleteProjectFileFromStorage(attachment);
+    }
+  }
   const tasks = currentState.tasks.filter((task) => task.id !== taskId);
   const storageMode = await persistTasks(tasks, currentState.storageMode, taskId);
   return { ...currentState, tasks, storageMode };
@@ -923,6 +1087,7 @@ export async function createProject(currentState, payload) {
     phases: payload.phases || [],
     files: payload.files,
     photos: payload.photos || [],
+    selections: payload.selections || [],
   });
   const projects = [...currentState.projects, project];
   const storageMode = await persistProjects(projects, currentState.storageMode);
@@ -961,33 +1126,24 @@ export async function updateProjectAndTasks(currentState, projectId, projectUpda
   const projects = currentState.projects.map((project) =>
     project.id === projectId ? normalizeProject({ ...project, ...projectUpdates }) : project,
   );
-  writeStorage('cx_t', nextTasks);
-
-  let storageMode = await persistProjects(projects, currentState.storageMode);
-  if (isSupabaseConfigured()) {
-    try {
-      await upsertCollection('tasks', nextTasks);
-    } catch {
-      storageMode = storageMode === 'supabase' ? 'local' : storageMode;
-    }
+  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'save project changes');
+  if (remoteSaveError) {
+    throw remoteSaveError;
   }
-
+  const storageMode = await persistProjects(projects, currentState.storageMode);
+  await upsertCollection('tasks', nextTasks);
   return { ...currentState, projects, tasks: nextTasks, storageMode };
 }
 
 export async function deleteProject(currentState, projectId) {
   const projects = currentState.projects.filter((project) => project.id !== projectId);
   const tasks = currentState.tasks.filter((task) => task.projectId !== projectId);
-  writeStorage('cx_t', tasks);
-
-  let storageMode = await persistProjects(projects, currentState.storageMode, projectId);
-  if (isSupabaseConfigured()) {
-    try {
-      await upsertCollection('tasks', tasks);
-    } catch {
-      storageMode = storageMode === 'supabase' ? 'local' : storageMode;
-    }
+  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'delete this project');
+  if (remoteSaveError) {
+    throw remoteSaveError;
   }
+  const storageMode = await persistProjects(projects, currentState.storageMode, projectId);
+  await upsertCollection('tasks', tasks);
   return { ...currentState, projects, tasks, storageMode };
 }
 
@@ -1159,9 +1315,9 @@ export async function testSupabaseConnection() {
   }
 
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=id&limit=1`, {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/settings?select=id&limit=1`, {
       headers: buildHeaders(),
-    });
+    }, 'Supabase connection test');
     const text = await response.text();
 
     if (!response.ok) {
