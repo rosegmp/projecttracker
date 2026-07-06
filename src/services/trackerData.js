@@ -728,6 +728,7 @@ function applyCurrentAuthHeader(headers) {
 async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs = 12000) {
   ensureNetworkAvailable(label.toLowerCase());
   await ensureFreshAuthSession();
+  const requestMethod = String(options?.method || 'GET').toUpperCase();
   const runFetch = async (requestOptions) => {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -750,6 +751,8 @@ async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs 
     }
   };
 
+  const shouldRetryRead = requestMethod === 'GET' || requestMethod === 'HEAD';
+
   try {
     let response = await runFetch(options);
     if (response.status === 401 && authSession?.refreshToken) {
@@ -764,6 +767,11 @@ async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs 
     }
     return response;
   } catch (error) {
+    const message = String(error?.message || error || '');
+    if (shouldRetryRead && /timed out|network connection was lost|offline/i.test(message)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
+      return runFetch(options);
+    }
     throw error;
   }
 }
@@ -1003,10 +1011,9 @@ export async function loadTrackerData() {
       storageIssue: '',
     });
   } catch (error) {
-    const storageIssue =
-      error instanceof Error ? error.message : 'Unknown Supabase load error.';
-    console.error('Supabase load failed; falling back to local storage.', error);
-    return getFallbackData({ storageIssue });
+    const storageIssue = error instanceof Error ? error.message : 'Unknown Supabase load error.';
+    console.error('Supabase load failed.', error);
+    throw new Error(storageIssue);
   }
 }
 
