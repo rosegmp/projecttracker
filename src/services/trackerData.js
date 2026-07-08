@@ -673,7 +673,12 @@ export function getSupabaseDiagnosticsInfo() {
 }
 
 function storageAuthHeaders(extraHeaders = {}) {
-  return buildHeaders(extraHeaders);
+  const accessToken = getAuthAccessToken();
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${accessToken || SUPABASE_KEY}`,
+    ...extraHeaders,
+  };
 }
 
 function storageAnonHeaders(extraHeaders = {}) {

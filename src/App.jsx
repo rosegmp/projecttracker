@@ -361,6 +361,98 @@ function renderModalPortal(content) {
   return createPortal(content, document.body);
 }
 
+let appDialogHandler = null;
+
+function registerAppDialogHandler(handler) {
+  appDialogHandler = handler;
+  return () => {
+    if (appDialogHandler === handler) {
+      appDialogHandler = null;
+    }
+  };
+}
+
+function showAppAlert(message, title = 'Notice') {
+  if (!appDialogHandler) {
+    window.alert(message);
+    return Promise.resolve();
+  }
+  return appDialogHandler({
+    type: 'alert',
+    title,
+    message: String(message || ''),
+    confirmLabel: 'OK',
+  });
+}
+
+function showAppConfirm(message, options = {}) {
+  const payload = {
+    type: 'confirm',
+    title: options.title || 'Confirm action',
+    message: String(message || ''),
+    confirmLabel: options.confirmLabel || 'Confirm',
+    cancelLabel: options.cancelLabel || 'Cancel',
+    tone: options.tone || 'default',
+  };
+  if (!appDialogHandler) {
+    return Promise.resolve(window.confirm(payload.message));
+  }
+  return appDialogHandler(payload);
+}
+
+function AppDialogHost() {
+  const [dialog, setDialog] = useState(null);
+  const resolverRef = useRef(null);
+
+  useEffect(() => {
+    return registerAppDialogHandler((nextDialog) =>
+      new Promise((resolve) => {
+        resolverRef.current = resolve;
+        setDialog(nextDialog);
+      }),
+    );
+  }, []);
+
+  function closeDialog(result) {
+    const resolver = resolverRef.current;
+    resolverRef.current = null;
+    setDialog(null);
+    resolver?.(result);
+  }
+
+  if (!dialog) return null;
+
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={() => closeDialog(false)}>
+      <div className="modal-card compact-modal-card app-dialog-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">{dialog.type === 'confirm' ? 'Confirm' : 'Message'}</p>
+            <h2>{dialog.title}</h2>
+          </div>
+        </div>
+        <div className="app-dialog-copy">
+          <p>{dialog.message}</p>
+        </div>
+        <div className="modal-actions">
+          {dialog.type === 'confirm' ? (
+            <button className="button secondary" type="button" onClick={() => closeDialog(false)}>
+              {dialog.cancelLabel || 'Cancel'}
+            </button>
+          ) : null}
+          <button
+            className={`button ${dialog.tone === 'danger' ? 'secondary danger' : 'primary'}`}
+            type="button"
+            onClick={() => closeDialog(true)}
+          >
+            {dialog.confirmLabel || 'OK'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -683,7 +775,7 @@ function buildTaskAssigneeOptions(subs = [], employees = []) {
 
 function buildTaskAssigneeDirectory(subs = [], employees = []) {
   const directory = new Map();
-  [...subs, ...employees].forEach((person) => {
+  [...subs.map((person) => ({ ...person, directoryType: 'sub' })), ...employees.map((person) => ({ ...person, directoryType: person.peopleType || 'emp' }))].forEach((person) => {
     const label = personAssignmentLabel(person).trim();
     if (!label) return;
     const existing = directory.get(label);
@@ -1260,7 +1352,7 @@ function ProjectModal({ draft, users, onChange, onClose, onSave, onDelete, savin
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save project'}
           </button>
         </div>
@@ -1590,7 +1682,6 @@ function ProjectFilesManager({
   const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
   const [expandedFolders, setExpandedFolders] = useState({});
   const fileInputRefs = useRef({});
-  const replaceFileInputRefs = useRef({});
 
   const folders = project?.files?.folders || [];
   const flatFiles = useMemo(
@@ -1648,7 +1739,7 @@ function ProjectFilesManager({
     if (!trimmed) return;
     const duplicate = folders.some((folder) => folder.name.toLowerCase() === trimmed.toLowerCase());
     if (duplicate) {
-      window.alert('A folder with that name already exists for this project.');
+      void showAppAlert('A folder with that name already exists for this project.', 'Folder already exists');
       return;
     }
     if (folderNameDraft.mode === 'create') {
@@ -1673,7 +1764,7 @@ function ProjectFilesManager({
       (item) => item.id !== folderId && item.name.toLowerCase() === trimmed.toLowerCase(),
     );
     if (duplicateRename) {
-      window.alert('A folder with that name already exists for this project.');
+      void showAppAlert('A folder with that name already exists for this project.', 'Folder already exists');
       return;
     }
     await runFilesMutation((currentProject) => ({
@@ -1714,10 +1805,11 @@ function ProjectFilesManager({
     const folder = folders.find((item) => item.id === folderId);
     if (!folder) return;
     const fileCountInFolder = folder.files?.length || 0;
-    const confirmed = window.confirm(
+    const confirmed = await showAppConfirm(
       fileCountInFolder
         ? `Delete folder "${folder.name}" and its ${fileCountInFolder} file(s)? This cannot be undone.`
         : `Delete folder "${folder.name}"?`,
+      { title: 'Delete folder', confirmLabel: 'Delete', tone: 'danger' },
     );
     if (!confirmed) return;
 
@@ -1739,7 +1831,7 @@ function ProjectFilesManager({
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to delete folder.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to delete folder.', 'Delete failed');
     } finally {
       setSaving(false);
     }
@@ -1874,10 +1966,6 @@ function ProjectFilesManager({
     fileInputRefs.current[folderId]?.click();
   }
 
-  function triggerReplaceFile(fileId) {
-    replaceFileInputRefs.current[fileId]?.click();
-  }
-
   async function createProjectFileRecord(folderId, file) {
     if (!project?.id) throw new Error('Project not found.');
     if (!isSupabaseStorageConfigured()) {
@@ -1925,54 +2013,9 @@ function ProjectFilesManager({
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to upload file.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to upload file.', 'Upload failed');
     } finally {
       const input = fileInputRefs.current[folderId];
-      if (input) input.value = '';
-      setSaving(false);
-    }
-  }
-
-  async function handleReplaceFile(folderId, existingFile, fileList) {
-    const replacement = Array.from(fileList || [])[0];
-    if (!replacement || !existingFile || !project?.id) return;
-
-    setSaving(true);
-    try {
-      const uploadResult = await createProjectFileRecord(folderId, replacement);
-      const nextFile = {
-        ...existingFile,
-        ...uploadResult.fileRecord,
-        id: existingFile.id,
-        name: existingFile.name || uploadResult.fileRecord.name,
-      };
-
-      if (existingFile?.storagePath) {
-        await deleteProjectFileFromStorage(existingFile);
-      }
-
-      const currentProject = data.projects.find((item) => item.id === project.id);
-      if (!currentProject) return;
-      const nextProject = {
-        ...currentProject,
-        files: {
-          folders: (currentProject.files?.folders || []).map((folder) =>
-            folder.id === folderId
-              ? {
-                  ...folder,
-                  files: (folder.files || []).map((file) => (file.id === existingFile.id ? nextFile : file)),
-                }
-              : folder,
-          ),
-        },
-      };
-      const nextState = await updateProject(data, project.id, nextProject);
-      onStateChange(nextState);
-      setStorageNotice('');
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to replace file.');
-    } finally {
-      const input = replaceFileInputRefs.current[existingFile.id];
       if (input) input.value = '';
       setSaving(false);
     }
@@ -1993,7 +2036,7 @@ function ProjectFilesManager({
         await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'download');
       } catch (error) {
         if (isShareDismissed(error)) return;
-        window.alert(error instanceof Error ? error.message : 'Failed to open file.');
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to open file.', 'Open failed');
       }
     })();
   }
@@ -2079,9 +2122,13 @@ function ProjectFilesManager({
     });
   }
 
-  function deleteProjectFile(folderId, fileId) {
+  async function deleteProjectFile(folderId, fileId) {
     if (!project?.id) return;
-    const confirmed = window.confirm('Delete this file?');
+    const confirmed = await showAppConfirm('Delete this file?', {
+      title: 'Delete file',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     void (async () => {
       setSaving(true);
@@ -2109,7 +2156,7 @@ function ProjectFilesManager({
         const nextState = await updateProject(data, project.id, nextProject);
         onStateChange(nextState);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Failed to delete file.');
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to delete file.', 'Delete failed');
       } finally {
         setSaving(false);
       }
@@ -2253,33 +2300,6 @@ function ProjectFilesManager({
   function renderFileActions(file, folderId, includeDragHandle = true) {
     return (
       <div className="files-list-actions">
-        <input
-          ref={(node) => {
-            if (node) replaceFileInputRefs.current[file.id] = node;
-          }}
-          className="visually-hidden"
-          type="file"
-          onChange={(event) => handleReplaceFile(folderId, file, event.target.files)}
-        />
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => downloadProjectFile(file)}
-          title="Download file"
-          aria-label={`Download ${getDisplayFileName(file)}`}
-        >
-          <FluentIcon name="download" />
-        </button>
-        <button
-          className="button secondary gantt-icon-button"
-          type="button"
-          onClick={() => triggerReplaceFile(file.id)}
-          disabled={saving}
-          title="Replace file"
-          aria-label={`Replace ${getDisplayFileName(file)}`}
-        >
-          <FluentIcon name="replace" />
-        </button>
         <button
           className="button secondary gantt-icon-button"
           type="button"
@@ -2424,7 +2444,14 @@ function ProjectFilesManager({
                                     />
                                   </form>
                                 ) : (
-                                  <strong>{getDisplayFileName(file)}</strong>
+                                  <button
+                                    className="files-name-button"
+                                    type="button"
+                                    onClick={() => downloadProjectFile(file)}
+                                    disabled={saving}
+                                  >
+                                    {getDisplayFileName(file)}
+                                  </button>
                                 )}
                               </div>
                             </div>
@@ -2514,7 +2541,14 @@ function ProjectFilesManager({
                         <span className="files-tree-leading-icon" aria-hidden="true">
                           <FluentIcon name="document" />
                         </span>
-                        <strong>{getDisplayFileName(file)}</strong>
+                        <button
+                          className="files-name-button"
+                          type="button"
+                          onClick={() => downloadProjectFile(file)}
+                          disabled={saving}
+                        >
+                          {getDisplayFileName(file)}
+                        </button>
                         <small>
                           {file.size ? `${formatFileSize(file.size)}` : ''}
                           {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
@@ -2697,7 +2731,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to upload photo.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to upload photo.', 'Upload failed');
     } finally {
       if (uploadInputRef.current) uploadInputRef.current.value = '';
       setSaving(false);
@@ -2734,7 +2768,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
         '',
       );
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to replace photo.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to replace photo.', 'Replace failed');
     } finally {
       const input = replacePhotoInputRefs.current[existingPhoto.id];
       if (input) input.value = '';
@@ -2819,9 +2853,13 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
     });
   }
 
-  function deletePhoto(photoId) {
+  async function deletePhoto(photoId) {
     if (!project?.id) return;
-    const confirmed = window.confirm('Delete this photo?');
+    const confirmed = await showAppConfirm('Delete this photo?', {
+      title: 'Delete photo',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     void (async () => {
       setSaving(true);
@@ -2839,7 +2877,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
         const nextState = await updateProject(data, project.id, nextProject);
         onStateChange(nextState);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Failed to delete photo.');
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to delete photo.', 'Delete failed');
       } finally {
         setSaving(false);
       }
@@ -2861,7 +2899,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
         await downloadBlobForCurrentPlatform(blob, photo.originalName || photo.name || 'photo');
       } catch (error) {
         if (isShareDismissed(error)) return;
-        window.alert(error instanceof Error ? error.message : 'Failed to download photo.');
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to download photo.', 'Download failed');
       }
     })();
   }
@@ -2885,7 +2923,7 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
           setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
         }
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Failed to open photo.');
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to open photo.', 'Open failed');
       }
     })();
   }
@@ -3221,7 +3259,7 @@ function SelectionModal({
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving || !draft.itemName.trim()}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving || !draft.itemName.trim()}>
             {saving ? 'Saving...' : 'Save selection'}
           </button>
         </div>
@@ -3556,7 +3594,7 @@ function ProjectSelectionsManager({
       onStateChange(nextState);
       setSelectionDraft(null);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to save selection.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save selection.', 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -3564,7 +3602,11 @@ function ProjectSelectionsManager({
 
   async function deleteSelection() {
     if (!project?.id || !selectionDraft?.id) return;
-    const confirmed = window.confirm('Delete this selection?');
+    const confirmed = await showAppConfirm('Delete this selection?', {
+      title: 'Delete selection',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     setSaving(true);
     try {
@@ -3602,7 +3644,7 @@ function ProjectSelectionsManager({
         await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'selection-file');
       } catch (error) {
         if (isShareDismissed(error)) return;
-        window.alert(error instanceof Error ? error.message : 'Unable to download selection file.');
+        await showAppAlert(error instanceof Error ? error.message : 'Unable to download selection file.', 'Download failed');
       }
     })();
   }
@@ -3629,7 +3671,7 @@ function ProjectSelectionsManager({
           window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
         }
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Unable to open selection photo.');
+        await showAppAlert(error instanceof Error ? error.message : 'Unable to open selection photo.', 'Open failed');
       }
     })();
   }
@@ -3667,7 +3709,7 @@ function ProjectSelectionsManager({
       const finalState = await updateProject(nextStateWithTask, project.id, nextProject);
       onStateChange(finalState);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to create task from selection.');
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to create task from selection.', 'Task creation failed');
     } finally {
       setSaving(false);
     }
@@ -4300,7 +4342,7 @@ function TaskModal({ draft, projects, assigneeOptions, saving, onChange, onAddPe
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save task'}
           </button>
         </div>
@@ -4420,7 +4462,7 @@ function InspectionModal({ draft, project, projects, subcodes, saving, onChange,
             </button>
           ) : null}
           <button
-            className="button primary"
+            className={`button primary${saving ? ' is-loading' : ''}`}
             type="button"
             onClick={onSave}
             disabled={saving || !draft.subcode.trim() || !draft.inspectionType.trim()}
@@ -4711,7 +4753,7 @@ function InspectionImageEditorModal({ draft, saving, onClose, onSave }) {
           <button className="button secondary" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={handleSave} disabled={saving || !imageElement}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={handleSave} disabled={saving || !imageElement}>
             {saving ? 'Saving...' : 'Save image'}
           </button>
         </div>
@@ -4974,7 +5016,7 @@ function NativeInspectionsView({
         revokeOnClose,
       });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to open image.');
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
     }
   }
 
@@ -4996,7 +5038,7 @@ function NativeInspectionsView({
           window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
         }
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Unable to open image.');
+        await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
       }
     })();
   }
@@ -5018,7 +5060,7 @@ function NativeInspectionsView({
         await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'download');
       } catch (error) {
         if (isShareDismissed(error)) return;
-        window.alert(error instanceof Error ? error.message : 'Unable to download attachment.');
+        await showAppAlert(error instanceof Error ? error.message : 'Unable to download attachment.', 'Download failed');
       }
     })();
   }
@@ -5146,7 +5188,11 @@ function NativeInspectionsView({
 
   async function deleteInspection() {
     if (!inspectionDraft?.projectId || !inspectionDraft?.id) return;
-    const confirmed = window.confirm('Delete this inspection?');
+    const confirmed = await showAppConfirm('Delete this inspection?', {
+      title: 'Delete inspection',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     setSaving(true);
     try {
@@ -5558,11 +5604,11 @@ function ScheduleItemModal({
             Cancel
           </button>
           {type === 'step' ? (
-            <button className="button secondary" type="button" onClick={onSaveAndNew} disabled={saving}>
+            <button className={`button secondary${saving ? ' is-loading' : ''}`} type="button" onClick={onSaveAndNew} disabled={saving}>
               {saving ? 'Saving...' : 'Save and new'}
             </button>
           ) : null}
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
             {saving ? 'Saving...' : type === 'phase' ? 'Save phase' : 'Save step'}
           </button>
         </div>
@@ -5635,7 +5681,7 @@ function DelayModal({ draft, saving, onChange, onClose, onSave, onDelete }) {
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
             {saving ? 'Saving...' : isEditing ? 'Save delay' : 'Apply delay'}
           </button>
         </div>
@@ -5701,7 +5747,7 @@ function DependencyModal({ draft, saving, onTogglePred, onLagChange, onClose, on
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save and recalculate'}
           </button>
         </div>
@@ -5914,7 +5960,11 @@ function NativeProjectsView({
 
   async function handleDeleteProject() {
     if (!projectDraft?.id) return;
-    const confirmed = window.confirm(`Delete "${projectDraft.name}" and its tasks?`);
+    const confirmed = await showAppConfirm(`Delete "${projectDraft.name}" and its tasks?`, {
+      title: 'Delete project',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     await runProjectMutation(() => deleteProject(data, projectDraft.id));
   }
@@ -6179,7 +6229,7 @@ function NativeProjectsView({
   async function handleSaveProjectDetailStep(nextAction = 'close') {
     if (!stepDraft?.name.trim()) return;
     if (!stepDraft.projectId || !stepDraft.phaseId) {
-      window.alert('Choose a project and phase before saving the step.');
+      await showAppAlert('Choose a project and phase before saving the step.', 'Missing project or phase');
       return;
     }
 
@@ -6190,7 +6240,7 @@ function NativeProjectsView({
       if (!project) return;
       const targetPhase = project.phases?.find((phase) => phase.id === stepDraft.phaseId);
       if (!targetPhase) {
-        window.alert('The selected phase no longer exists.');
+        await showAppAlert('The selected phase no longer exists.', 'Phase unavailable');
         return;
       }
       const existingStep =
@@ -6325,7 +6375,7 @@ function NativeProjectsView({
         setStepDraft(null);
       }
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to save the step.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save the step.', 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -6333,7 +6383,11 @@ function NativeProjectsView({
 
   async function handleDeleteProjectDetailStep() {
     if (!stepDraft || stepDraft.mode === 'create') return;
-    const confirmed = window.confirm(`Delete "${stepDraft.name}"?`);
+    const confirmed = await showAppConfirm(`Delete "${stepDraft.name}"?`, {
+      title: 'Delete step',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     setSaving(true);
@@ -6565,8 +6619,13 @@ function TaskRow({
             ))}
           </select>
           <div className="task-row-actions">
-            <button className="button primary" type="button" onClick={() => onEditSave(task)} disabled={saving}>
-              Save
+            <button
+              className={`button primary${saving ? ' is-loading' : ''}`}
+              type="button"
+              onClick={() => onEditSave(task)}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : 'Save'}
             </button>
             <button className="button secondary" type="button" onClick={onEditCancel} disabled={saving}>
               Cancel
@@ -6703,9 +6762,9 @@ function TaskRow({
           className="button secondary gantt-icon-button"
           type="button"
           onClick={() => onEmail(task)}
-          disabled={saving || !assigneeEmail}
-          title={assigneeEmail ? 'Email task to assignee' : 'Assignee does not have an email'}
-          aria-label={assigneeEmail ? `Email ${task.label} to assignee` : `No email available for ${task.label} assignee`}
+          disabled={saving}
+          title={assigneeEmail ? 'Email task to assignee' : 'Add an email or continue without a recipient'}
+          aria-label={`Email ${task.label} to assignee`}
         >
           <FluentIcon name="mail" />
         </button>
@@ -6892,9 +6951,10 @@ function NativeTasksView({
   highlightToken = '',
   onOpenSelection = () => {},
 }) {
+  const defaultTaskProjectId = lockedProjectId || (projectFilter !== 'all' ? projectFilter : '');
   const [statusFilter, setStatusFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
-  const [newTask, setNewTask] = useState({ label: '', projectId: lockedProjectId || '', due: '', assignee: '' });
+  const [newTask, setNewTask] = useState({ label: '', projectId: defaultTaskProjectId, due: '', assignee: '' });
   const [editingTaskId, setEditingTaskId] = useState('');
   const [editDraft, setEditDraft] = useState({ label: '', projectId: '', due: '', assignee: '', attachments: [] });
   const [newTaskFiles, setNewTaskFiles] = useState([]);
@@ -6902,11 +6962,26 @@ function NativeTasksView({
   const [createAttachmentInputKey, setCreateAttachmentInputKey] = useState(0);
   const [editAttachmentInputKey, setEditAttachmentInputKey] = useState(0);
   const [personDraft, setPersonDraft] = useState(null);
+  const [emailDraft, setEmailDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [taskSaveMessage, setTaskSaveMessage] = useState('');
   const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
   const createAttachmentInputRef = useRef(null);
   const editAttachmentInputRef = useRef(null);
+  const createTaskNameInputRef = useRef(null);
   const taskRowRefs = useRef({});
+  const dataRef = useRef(data);
+  const taskSaveMessageTimerRef = useRef(0);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => () => {
+    if (taskSaveMessageTimerRef.current) {
+      window.clearTimeout(taskSaveMessageTimerRef.current);
+    }
+  }, []);
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -6931,9 +7006,12 @@ function NativeTasksView({
   }, [lockedProjectId, onProjectFilterChange, projectFilter, visibleProjects]);
 
   useEffect(() => {
-    if (!lockedProjectId) return;
-    setNewTask((current) => ({ ...current, projectId: lockedProjectId }));
-  }, [lockedProjectId]);
+    setNewTask((current) => {
+      if (current.projectId === defaultTaskProjectId) return current;
+      if (current.projectId && current.projectId !== lockedProjectId && current.projectId !== projectFilter) return current;
+      return { ...current, projectId: defaultTaskProjectId };
+    });
+  }, [defaultTaskProjectId, lockedProjectId, projectFilter]);
 
   const projectMap = useMemo(
     () => new Map(visibleProjects.map((project) => [project.id, project])),
@@ -7045,11 +7123,46 @@ function NativeTasksView({
     return groups;
   }, [projectMap, projectScopedTasks]);
 
+  function commitTaskState(nextState) {
+    dataRef.current = nextState;
+    onStateChange(nextState);
+  }
+
+  function showTaskSaveMessage(message) {
+    if (taskSaveMessageTimerRef.current) {
+      window.clearTimeout(taskSaveMessageTimerRef.current);
+    }
+    setTaskSaveMessage(message);
+    taskSaveMessageTimerRef.current = window.setTimeout(() => {
+      setTaskSaveMessage('');
+      taskSaveMessageTimerRef.current = 0;
+    }, 1800);
+  }
+
+  function openMailto(email, subject, body) {
+    window.location.href = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function startEmailDraft({ title, description, email = '', person = null, subject, body }) {
+    setEmailDraft({
+      title,
+      description,
+      email,
+      subject,
+      body,
+      saveToPerson: false,
+      canSave: !!person?.id,
+      personId: person?.id || '',
+      personType: person?.directoryType || person?.peopleType || 'emp',
+      personLabel: person ? personAssignmentLabel(person) : '',
+    });
+  }
+
   async function runTaskMutation(mutation) {
     setSaving(true);
     try {
-      const nextState = await mutation();
-      onStateChange(nextState);
+      const nextState = await mutation(dataRef.current);
+      commitTaskState(nextState);
     } finally {
       setSaving(false);
     }
@@ -7118,18 +7231,38 @@ function NativeTasksView({
       await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'attachment');
     } catch (error) {
       if (isShareDismissed(error)) return;
-      window.alert(error instanceof Error ? error.message : 'Unable to download attachment.');
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to download attachment.', 'Download failed');
     }
   }
 
   async function handleCreateTask(event) {
     event.preventDefault();
-    if (!newTask.label.trim()) return;
-    const taskId = `t${Date.now()}`;
-    const attachments = await createTaskAttachmentRecords(newTask.projectId || '', taskId, newTaskFiles);
-    await runTaskMutation(() => createTask(data, { ...newTask, id: taskId, attachments, createdAt: new Date().toISOString() }));
-    setNewTask({ label: '', projectId: '', due: '', assignee: '' });
-    setNewTaskFiles([]);
+    if (saving || !newTask.label.trim()) return;
+    setSaving(true);
+    try {
+      const targetProjectId = newTask.projectId || defaultTaskProjectId;
+      const taskId = `t${Date.now()}`;
+      const attachments = await createTaskAttachmentRecords(targetProjectId, taskId, newTaskFiles);
+      const nextState = await createTask(dataRef.current, {
+        ...newTask,
+        projectId: targetProjectId,
+        id: taskId,
+        attachments,
+        createdAt: new Date().toISOString(),
+      });
+      commitTaskState(nextState);
+      setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignee: '' });
+      setNewTaskFiles([]);
+      setCreateAttachmentInputKey((current) => current + 1);
+      showTaskSaveMessage('Task saved');
+      window.requestAnimationFrame(() => {
+        createTaskNameInputRef.current?.focus();
+      });
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to add task.', 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function startCreateAssignee() {
@@ -7153,10 +7286,10 @@ function NativeTasksView({
     if (!personDraft.first.trim() && !personDraft.last.trim() && !personDraft.company.trim()) return;
     setSaving(true);
     try {
-      const nextState = await createPerson(data, personDraft.type, personDraft);
+      const nextState = await createPerson(dataRef.current, personDraft.type, personDraft);
       const createdPerson = (personDraft.type === 'sub' ? nextState.subs : nextState.employees)?.at(-1);
       const nextAssignee = createdPerson ? personAssignmentLabel(createdPerson) : '';
-      onStateChange(nextState);
+      commitTaskState(nextState);
       if (nextAssignee) {
         setNewTask((current) => ({ ...current, assignee: nextAssignee }));
         setEditDraft((current) => ({ ...current, assignee: editingTaskId ? nextAssignee : current.assignee }));
@@ -7168,7 +7301,7 @@ function NativeTasksView({
   }
 
   async function handleToggle(task, done) {
-    await runTaskMutation(() => updateTask(data, task.id, { done }));
+    await runTaskMutation((currentState) => updateTask(currentState, task.id, { done }));
   }
 
   function handleEditStart(task) {
@@ -7227,34 +7360,63 @@ function NativeTasksView({
   }
 
   async function handleEditSave(task) {
-    if (!editDraft.label.trim()) return;
-    const nextAttachments = [
-      ...(editDraft.attachments || []),
-      ...(await createTaskAttachmentRecords(editDraft.projectId || task.projectId || '', task.id, editPendingFiles)),
-    ];
-    await runTaskMutation(() =>
-      updateTask(data, task.id, {
+    if (saving || !editDraft.label.trim()) return;
+    setSaving(true);
+    try {
+      const nextAttachments = [
+        ...(editDraft.attachments || []),
+        ...(await createTaskAttachmentRecords(editDraft.projectId || task.projectId || '', task.id, editPendingFiles)),
+      ];
+      const nextState = await updateTask(dataRef.current, task.id, {
         label: editDraft.label.trim(),
         projectId: editDraft.projectId || '',
         due: editDraft.due,
         assignee: editDraft.assignee || '',
         attachments: nextAttachments,
-      }),
-    );
-    handleEditCancel();
+      });
+      commitTaskState(nextState);
+      handleEditCancel();
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save task.', 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDelete(task) {
-    const confirmed = window.confirm(`Delete "${task.label}"?`);
+    const confirmed = await showAppConfirm(`Delete "${task.label}"?`, {
+      title: 'Delete task',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
-    await runTaskMutation(() => deleteTask(data, task.id));
+    await runTaskMutation((currentState) => deleteTask(currentState, task.id));
     if (editingTaskId === task.id) handleEditCancel();
+  }
+
+  async function continueEmailDraft() {
+    if (!emailDraft) return;
+    const nextEmail = String(emailDraft.email || '').trim();
+    setSaving(true);
+    try {
+      if (nextEmail && emailDraft.saveToPerson && emailDraft.personId) {
+        const nextState = await updatePerson(dataRef.current, emailDraft.personType, emailDraft.personId, {
+          email: nextEmail,
+        });
+        commitTaskState(nextState);
+      }
+      openMailto(nextEmail, emailDraft.subject || '', emailDraft.body || '');
+      setEmailDraft(null);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save email address.', 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleEmailTask(task) {
     const assignee = assigneeDirectory.get(task.assignee || '');
     const email = assignee?.email || '';
-    if (!email) return;
     const projectName = projectMap.get(task.projectId)?.name || 'Task details';
     const subject = projectName;
     const body = [
@@ -7264,14 +7426,24 @@ function NativeTasksView({
       `Due date: ${task.due ? formatShortDate(task.due) : 'No due date'}`,
       `Status: ${task.done ? 'Completed' : 'Open'}`,
     ].join('\n');
-    window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (email) {
+      openMailto(email, subject, body);
+      return;
+    }
+    startEmailDraft({
+      title: `Email ${task.label}`,
+      description: task.assignee
+        ? `No email is saved for ${task.assignee}. Add one now, or continue without a recipient.`
+        : 'No assignee email is saved for this task. Add one now, or continue without a recipient.',
+      person: assignee || null,
+      subject,
+      body,
+    });
   }
 
   function handleEmailAssigneeGroup(assigneeLabel) {
-    if (!assigneeLabel || assigneeLabel === 'Unassigned') return;
     const assignee = assigneeDirectory.get(assigneeLabel);
     const email = assignee?.email || '';
-    if (!email) return;
     const openTasks = openTasksByAssignee.get(assigneeLabel) || [];
     if (!openTasks.length) return;
     const subject =
@@ -7288,7 +7460,19 @@ function NativeTasksView({
         return `${index + 1}. [${projectName}] ${task.label} - ${dueText}`;
       }),
     ].join('\n');
-    window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (email) {
+      openMailto(email, subject, body);
+      return;
+    }
+    startEmailDraft({
+      title: `Email ${assigneeLabel || 'assignee'} tasks`,
+      description: assigneeLabel && assigneeLabel !== 'Unassigned'
+        ? `No email is saved for ${assigneeLabel}. Add one now, or continue without a recipient.`
+        : 'No email is saved for this task group. Add one now, or continue without a recipient.',
+      person: assignee || null,
+      subject,
+      body,
+    });
   }
 
   const taskContent = (
@@ -7341,6 +7525,7 @@ function NativeTasksView({
           <form className="task-create-panel workspace-plain-card" onSubmit={handleCreateTask}>
             <div className="task-create-grid">
               <input
+                ref={createTaskNameInputRef}
                 className="task-input"
                 placeholder="Task name"
                 value={newTask.label}
@@ -7385,9 +7570,12 @@ function NativeTasksView({
                   Add person
                 </button>
               </div>
-              <button className="button primary" type="submit" disabled={saving}>
-                Add task
+              <button className={`button primary${saving ? ' is-loading' : ''}`} type="submit" disabled={saving}>
+                {saving ? 'Saving...' : 'Add task'}
               </button>
+              <div className={`task-save-notice${taskSaveMessage ? ' visible' : ''}`} aria-live="polite">
+                {taskSaveMessage || '\u00A0'}
+              </div>
               <div className="task-attachment-editor task-create-attachments">
                 <div className="task-attachment-editor-header">
                   <strong>Attachments</strong>
@@ -7451,11 +7639,11 @@ function NativeTasksView({
                         className="button secondary gantt-icon-button"
                         type="button"
                         onClick={() => handleEmailAssigneeGroup(group.label)}
-                        disabled={!assigneeDirectory.get(group.label)?.email || !(openTasksByAssignee.get(group.label)?.length)}
+                        disabled={saving || !(openTasksByAssignee.get(group.label)?.length)}
                         title={
                           assigneeDirectory.get(group.label)?.email
                             ? 'Email all open tasks to assignee'
-                            : 'Assignee does not have an email'
+                            : 'Add an email or continue without a recipient'
                         }
                         aria-label={`Email open tasks for ${group.label}`}
                       >
@@ -7600,6 +7788,17 @@ function NativeTasksView({
           onDelete={() => {}}
         />
       ) : null}
+      <EmailAddressModal
+        draft={emailDraft}
+        saving={saving}
+        onChange={(value) => setEmailDraft((current) => (current ? { ...current, email: value } : current))}
+        onToggleSave={(checked) => setEmailDraft((current) => (current ? { ...current, saveToPerson: checked } : current))}
+        onClose={() => {
+          if (saving) return;
+          setEmailDraft(null);
+        }}
+        onSave={continueEmailDraft}
+      />
     </>
   );
 
@@ -8081,7 +8280,11 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
 
   async function handleDeletePerson(person) {
     const label = personDisplayName(person);
-    const confirmed = window.confirm(`Delete "${label}"?`);
+    const confirmed = await showAppConfirm(`Delete "${label}"?`, {
+      title: 'Delete person',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     await runPeopleMutation(() => deletePerson(data, personType, person.id));
   }
@@ -8089,7 +8292,11 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   async function handleDeleteDraft() {
     if (!personDraft?.id) return;
     const label = personDisplayName(personDraft);
-    const confirmed = window.confirm(`Delete "${label}"?`);
+    const confirmed = await showAppConfirm(`Delete "${label}"?`, {
+      title: 'Delete person',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     await runPeopleMutation(() => deletePerson(data, personDraft.type, personDraft.id));
   }
@@ -8125,7 +8332,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
       const text = await file.text();
       const rows = parseCsv(text);
       if (!rows.length) {
-        window.alert('The selected file is empty.');
+        await showAppAlert('The selected file is empty.', 'Import failed');
         return;
       }
 
@@ -8152,7 +8359,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
         .filter((person) => person.first || person.last || person.company);
 
       if (!imported.length) {
-        window.alert('No valid people rows were found in that file.');
+        await showAppAlert('No valid people rows were found in that file.', 'Import failed');
         return;
       }
 
@@ -9242,7 +9449,11 @@ function NativeScheduleView({
 
   async function handleDeleteInspectionDraft() {
     if (!inspectionDraft?.projectId || !inspectionDraft?.id) return;
-    const confirmed = window.confirm(`Delete inspection "${inspectionDraft.subcode || inspectionDraft.inspectionType}"?`);
+    const confirmed = await showAppConfirm(`Delete inspection "${inspectionDraft.subcode || inspectionDraft.inspectionType}"?`, {
+      title: 'Delete inspection',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     setSaving(true);
     try {
@@ -9317,7 +9528,11 @@ function NativeScheduleView({
 
   async function handleDeleteTaskDraft() {
     if (!taskDraft?.id) return;
-    const confirmed = window.confirm(`Delete "${taskDraft.label}"?`);
+    const confirmed = await showAppConfirm(`Delete "${taskDraft.label}"?`, {
+      title: 'Delete task',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     setSaving(true);
@@ -9526,7 +9741,7 @@ function NativeScheduleView({
   async function saveDependencyConnection(source, target, lag = 0) {
     if (!source || !target) return;
     if (source.projectId !== target.projectId || source.phaseId !== target.phaseId) {
-      window.alert('Dependencies can only connect steps within the same phase.');
+      await showAppAlert('Dependencies can only connect steps within the same phase.', 'Dependency unavailable');
       return;
     }
     if (source.fromStepId === target.stepId) return;
@@ -9576,7 +9791,7 @@ function NativeScheduleView({
       const nextState = await updateProjectAndTasks(data, project.id, syncedProject, nextTasks);
       onStateChange(nextState);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to create dependency.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to create dependency.', 'Dependency failed');
     } finally {
       setSaving(false);
     }
@@ -9637,7 +9852,7 @@ function NativeScheduleView({
   async function handleSaveEditor(nextAction = 'close') {
     if (!editorDraft?.name.trim()) return;
     if (editorDraft.type === 'step' && (!editorDraft.projectId || !editorDraft.phaseId)) {
-      window.alert('Choose a project and phase before saving the step.');
+      await showAppAlert('Choose a project and phase before saving the step.', 'Missing project or phase');
       return;
     }
 
@@ -9705,7 +9920,7 @@ function NativeScheduleView({
       if (!targetProject) return;
       const targetPhase = targetProject.phases?.find((phase) => phase.id === targetPhaseId);
       if (!targetPhase) {
-        window.alert('The selected phase no longer exists.');
+        await showAppAlert('The selected phase no longer exists.', 'Phase unavailable');
         return;
       }
 
@@ -9848,7 +10063,7 @@ function NativeScheduleView({
         setEditorDraft(null);
       }
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to save schedule item.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save schedule item.', 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -9882,7 +10097,11 @@ function NativeScheduleView({
   }
 
   async function deleteStepFromRow(row) {
-    const confirmed = window.confirm(`Delete "${row.label}"?`);
+    const confirmed = await showAppConfirm(`Delete "${row.label}"?`, {
+      title: 'Delete item',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     setSaving(true);
@@ -9904,7 +10123,11 @@ function NativeScheduleView({
   }
 
   async function deleteDelayFromRow(row) {
-    const confirmed = window.confirm('Remove this delay and reverse its effect on the step?');
+    const confirmed = await showAppConfirm('Remove this delay and reverse its effect on the step?', {
+      title: 'Remove delay',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     setSaving(true);
@@ -9952,8 +10175,9 @@ function NativeScheduleView({
       await deleteStepFromRow(editorDraft);
       return;
     }
-    const confirmed = window.confirm(
+    const confirmed = await showAppConfirm(
       `Delete "${editorDraft.name}"${editorDraft.type === 'phase' ? ' and its steps' : ''}?`,
+      { title: `Delete ${editorDraft.type}`, confirmLabel: 'Delete', tone: 'danger' },
     );
     if (!confirmed) return;
 
@@ -10118,7 +10342,7 @@ function NativeScheduleView({
       onStateChange(nextState);
       setDependencyDraft(null);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to save dependencies.');
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save dependencies.', 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -10997,6 +11221,63 @@ function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
   );
 }
 
+function EmailAddressModal({ draft, saving, onChange, onToggleSave, onClose, onSave }) {
+  if (!draft) return null;
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card compact-modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Email</p>
+            <h2>{draft.title || 'Enter email address'}</h2>
+            <p className="panel-copy">
+              {draft.description || 'Add an email address now, or continue without a recipient.'}
+            </p>
+          </div>
+        </div>
+
+        <form
+          className="project-form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (saving) return;
+            onSave();
+          }}
+        >
+          <label className="full">
+            <span>Email address</span>
+            <input
+              autoFocus
+              type="email"
+              value={draft.email}
+              placeholder="name@example.com"
+              onChange={(event) => onChange(event.target.value)}
+              disabled={saving}
+            />
+          </label>
+          {draft.canSave ? (
+            <label className="settings-toggle compact settings-inline-checkbox full">
+              <input type="checkbox" checked={draft.saveToPerson} onChange={(event) => onToggleSave(event.target.checked)} disabled={saving} />
+              <span>
+                Save this email to {draft.personLabel || 'this person'}
+              </span>
+            </label>
+          ) : null}
+        </form>
+
+        <div className="modal-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Continue to email'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
 function SignInView({ loading, recoveryLoading, error, recoveryMessage, onSignIn, onSendPasswordEmail }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -11419,9 +11700,10 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     runSettingsMutation({ holidays });
   }
 
-  function handleAddStandardLegalHolidays() {
-    const confirmed = window.confirm(
+  async function handleAddStandardLegalHolidays() {
+    const confirmed = await showAppConfirm(
       'Add the standard U.S. legal holidays for the next 12 months? Existing matching holidays will be kept and not duplicated.',
+      { title: 'Add legal holidays', confirmLabel: 'Add holidays' },
     );
     if (!confirmed) return;
     const generated = buildNextTwelveMonthsLegalHolidays(new Date());
@@ -11440,9 +11722,10 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     runSettingsMutation({ holidays });
   }
 
-  function handleAddJewishHolidays() {
-    const confirmed = window.confirm(
+  async function handleAddJewishHolidays() {
+    const confirmed = await showAppConfirm(
       'Add the major Jewish holidays for the next 12 months? Existing matching holidays will be kept and not duplicated.',
+      { title: 'Add Jewish holidays', confirmLabel: 'Add holidays' },
     );
     if (!confirmed) return;
     const generated = buildNextTwelveMonthsJewishHolidays(new Date());
@@ -11510,7 +11793,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     const draft = inspectionSubcodeDrafts.find((item) => item.id === draftId);
     const nextValue = String(draft?.value || '').trim();
     if (!draft || !nextValue) {
-      window.alert('Enter an inspection subcode before saving.');
+      await showAppAlert('Enter an inspection subcode before saving.', 'Subcode required');
       return;
     }
     const inspectionSubcodes = inspectionSubcodeDrafts
@@ -11724,7 +12007,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
     ]);
   }
 
-  function handleRemoveUser(userId) {
+  async function handleRemoveUser(userId) {
     const draftUser = userDrafts.find((item) => item.id === userId);
     if (!draftUser) return;
     if (!draftUser.persisted) {
@@ -11732,10 +12015,14 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
       return;
     }
     if (settings.users.length <= 1) {
-      window.alert('Keep at least one user in the app.');
+      await showAppAlert('Keep at least one user in the app.', 'User required');
       return;
     }
-    const confirmed = window.confirm(`Remove ${draftUser?.savedName || draftUser?.name || 'this user'}?`);
+    const confirmed = await showAppConfirm(`Remove ${draftUser?.savedName || draftUser?.name || 'this user'}?`, {
+      title: 'Remove user',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
     if (!confirmed) return;
     const users = settings.users.filter((item) => item.id !== userId);
     const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
@@ -12441,6 +12728,14 @@ export default function App() {
     sessionProjectFilter === 'all'
       ? null
       : visibleProjects.find((project) => project.id === sessionProjectFilter) || null;
+  const initialWorkspaceLoading =
+    !!authSession &&
+    loading &&
+    trackerState.storageMode === 'loading' &&
+    !trackerState.projects.length &&
+    !trackerState.tasks.length &&
+    !trackerState.subs.length &&
+    !trackerState.employees.length;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -12577,7 +12872,10 @@ export default function App() {
           </div>
         </section>
         <section className="auth-panel">
-          <h2>Loading sign-in...</h2>
+          <div className="loading-panel">
+            <span className="loading-spinner" aria-hidden="true" />
+            <h2>Loading sign-in...</h2>
+          </div>
         </section>
       </main>
     );
@@ -12604,6 +12902,29 @@ export default function App() {
         onSavePassword={(password) => void handleSaveRecoveredPassword(password)}
         onSignOut={() => void handleSignOut()}
       />
+    );
+  }
+
+  if (initialWorkspaceLoading) {
+    return (
+      <main className="app-shell auth-shell">
+        <section className="hero hero-compact">
+          <div className="hero-copy auth-hero-copy">
+            <div className="hero-brand">
+              <div className="hero-logo" aria-hidden="true">
+                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+              </div>
+              <h1>Destiny Project Hub</h1>
+            </div>
+          </div>
+        </section>
+        <section className="auth-panel">
+          <div className="loading-panel">
+            <span className="loading-spinner" aria-hidden="true" />
+            <h2>Loading workspace...</h2>
+          </div>
+        </section>
+      </main>
     );
   }
   const activeView = (() => {
@@ -12695,6 +13016,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <AppDialogHost />
       {nativeAndroid ? (
         <section className="workspace-shell-bar android-shell-bar">
           <div className="android-shell-main">

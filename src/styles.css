@@ -345,6 +345,7 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 42px;
   padding: 0 16px;
   border-radius: 999px;
@@ -354,6 +355,20 @@ a {
   background: transparent;
   cursor: pointer;
   transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.button.is-loading {
+  cursor: progress;
+}
+
+.button.is-loading::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: button-spin 0.7s linear infinite;
 }
 
 .button:hover {
@@ -373,6 +388,12 @@ a {
   background: var(--surface-alt);
   border-color: var(--border);
   color: var(--text);
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status-list {
@@ -772,6 +793,23 @@ a {
 .task-create-grid > *,
 .task-edit-grid > * {
   min-width: 0;
+}
+
+.task-save-notice {
+  min-height: 20px;
+  color: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 160ms ease, transform 160ms ease, color 160ms ease;
+}
+
+.task-save-notice.visible {
+  color: var(--success, #1f7a4d);
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .inline-action-field {
@@ -2052,6 +2090,26 @@ button.calendar-chip {
   box-shadow: var(--shadow);
 }
 
+.loading-panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.loading-panel h2 {
+  margin: 0;
+}
+
+.loading-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(61, 66, 120, 0.18);
+  border-right-color: var(--brand);
+  border-radius: 999px;
+  animation: button-spin 0.8s linear infinite;
+}
+
 .auth-form {
   display: grid;
   gap: 14px;
@@ -2532,6 +2590,24 @@ button.calendar-chip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files-name-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-name-button:hover {
+  color: var(--brand);
 }
 
 .files-name-input {
@@ -3241,6 +3317,16 @@ button.calendar-chip {
 
 .compact-modal-card {
   width: min(520px, 100%);
+}
+
+.app-dialog-modal {
+  width: min(480px, 100%);
+}
+
+.app-dialog-copy p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
 }
 
 .project-form-grid {
