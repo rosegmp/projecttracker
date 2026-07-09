@@ -1673,8 +1673,7 @@ function ProjectFilesManager({
 }) {
   const [viewMode, setViewMode] = useState(forcedViewMode || 'cards');
   const [saving, setSaving] = useState(false);
-  const [fileNameDrafts, setFileNameDrafts] = useState({});
-  const [editingFileNames, setEditingFileNames] = useState({});
+  const [fileNameDraft, setFileNameDraft] = useState(null);
   const [storageNotice, setStorageNotice] = useState('');
   const [moveFileDraft, setMoveFileDraft] = useState(null);
   const [folderNameDraft, setFolderNameDraft] = useState(null);
@@ -1682,6 +1681,11 @@ function ProjectFilesManager({
   const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
   const [expandedFolders, setExpandedFolders] = useState({});
   const fileInputRefs = useRef({});
+  const dataRef = useRef(data);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const folders = project?.files?.folders || [];
   const flatFiles = useMemo(
@@ -1708,10 +1712,12 @@ function ProjectFilesManager({
     if (!project?.id) return;
     setSaving(true);
     try {
-      const currentProject = data.projects.find((item) => item.id === project.id);
+      const currentState = dataRef.current;
+      const currentProject = currentState.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
       const nextProject = buildNextProject(currentProject);
-      const nextState = await updateProject(data, project.id, nextProject);
+      const nextState = await updateProject(currentState, project.id, nextProject);
+      dataRef.current = nextState;
       onStateChange(nextState);
     } finally {
       setSaving(false);
@@ -2041,64 +2047,39 @@ function ProjectFilesManager({
     })();
   }
 
-  function updateFileNameDraft(fileId, value) {
-    setFileNameDrafts((current) => ({
-      ...current,
-      [fileId]: value,
-    }));
-  }
-
   function getDisplayFileName(file) {
     return String(file.name || file.originalName || 'Untitled file');
   }
-
-  function getPendingFileName(file) {
-    return String(fileNameDrafts[file.id] ?? file.name ?? file.originalName ?? '');
-  }
-
-  function hasPendingFileName(file) {
-    return getPendingFileName(file).trim() !== getDisplayFileName(file).trim();
-  }
-
-  function isEditingFileName(fileId) {
-    return editingFileNames[fileId] === true;
-  }
-
-  function beginFileRename(file) {
-    setEditingFileNames((current) => ({
-      ...current,
-      [file.id]: true,
-    }));
-    setFileNameDrafts((current) => ({
-      ...current,
-      [file.id]: current[file.id] ?? getDisplayFileName(file),
-    }));
-  }
-
-  function cancelFileRename(fileId) {
-    setEditingFileNames((current) => {
-      const next = { ...current };
-      delete next[fileId];
-      return next;
-    });
-    setFileNameDrafts((current) => {
-      const next = { ...current };
-      delete next[fileId];
-      return next;
+  
+  function openRenameFileModal(folderId, file) {
+    setFileNameDraft({
+      folderId,
+      fileId: file.id,
+      eyebrow: 'File',
+      title: 'Rename file',
+      description: `Update the file name for ${getDisplayFileName(file)}.`,
+      label: 'File name',
+      placeholder: 'File name',
+      value: getDisplayFileName(file),
+      saveLabel: 'Save name',
     });
   }
 
-  function persistFileName(folderId, fileId, fallbackValue = '') {
-    const nextName = String(fileNameDrafts[fileId] ?? fallbackValue ?? '').trim();
-    void runFilesMutation((currentProject) => ({
+  async function saveFileNameDraft() {
+    if (!fileNameDraft) return;
+    const draft = fileNameDraft;
+    const nextName = String(draft.value || '').trim();
+    if (!nextName) return;
+    setFileNameDraft(null);
+    await runFilesMutation((currentProject) => ({
       ...currentProject,
       files: {
         folders: (currentProject.files?.folders || []).map((folder) =>
-          folder.id === folderId
+          folder.id === draft.folderId
             ? {
                 ...folder,
                 files: (folder.files || []).map((file) =>
-                  file.id === fileId
+                  file.id === draft.fileId
                     ? {
                         ...file,
                         name: nextName,
@@ -2110,16 +2091,6 @@ function ProjectFilesManager({
         ),
       },
     }));
-    setFileNameDrafts((current) => {
-      const next = { ...current };
-      delete next[fileId];
-      return next;
-    });
-    setEditingFileNames((current) => {
-      const next = { ...current };
-      delete next[fileId];
-      return next;
-    });
   }
 
   async function deleteProjectFile(folderId, fileId) {
@@ -2303,12 +2274,12 @@ function ProjectFilesManager({
         <button
           className="button secondary gantt-icon-button"
           type="button"
-          onClick={() => (isEditingFileName(file.id) ? cancelFileRename(file.id) : beginFileRename(file))}
+          onClick={() => openRenameFileModal(folderId, file)}
           disabled={saving}
-          title={isEditingFileName(file.id) ? 'Cancel rename' : 'Rename file'}
-          aria-label={`${isEditingFileName(file.id) ? 'Cancel rename for' : 'Rename'} ${getDisplayFileName(file)}`}
+          title="Rename file"
+          aria-label={`Rename ${getDisplayFileName(file)}`}
         >
-          <FluentIcon name="replace" />
+          <FluentIcon name="edit" />
         </button>
         <button
           className="button secondary gantt-icon-button"
@@ -2426,33 +2397,14 @@ function ProjectFilesManager({
                           <div className="files-list-copy">
                             <div className="files-card-title">
                               <div className="files-card-title-copy">
-                                {isEditingFileName(file.id) ? (
-                                  <form
-                                    className="inline-save-row"
-                                    onSubmit={(event) => {
-                                      event.preventDefault();
-                                      if (saving || !hasPendingFileName(file)) return;
-                                      persistFileName(folder.id, file.id, getDisplayFileName(file));
-                                    }}
-                                  >
-                                    <input
-                                      className="files-name-input"
-                                      type="text"
-                                      value={getPendingFileName(file)}
-                                      placeholder="Enter file name"
-                                      onChange={(event) => updateFileNameDraft(file.id, event.target.value)}
-                                    />
-                                  </form>
-                                ) : (
-                                  <button
-                                    className="files-name-button"
-                                    type="button"
-                                    onClick={() => downloadProjectFile(file)}
-                                    disabled={saving}
-                                  >
-                                    {getDisplayFileName(file)}
-                                  </button>
-                                )}
+                                <button
+                                  className="files-name-button"
+                                  type="button"
+                                  onClick={() => downloadProjectFile(file)}
+                                  disabled={saving}
+                                >
+                                  {getDisplayFileName(file)}
+                                </button>
                               </div>
                             </div>
                             <small>
@@ -2581,6 +2533,15 @@ function ProjectFilesManager({
           onChange={updateMoveFileDraft}
           onClose={() => setMoveFileDraft(null)}
           onSave={saveMoveFile}
+        />
+      ) : null}
+      {!readOnly ? (
+        <TextEntryModal
+          draft={fileNameDraft}
+          saving={saving}
+          onChange={(value) => setFileNameDraft((current) => (current ? { ...current, value } : current))}
+          onClose={() => setFileNameDraft(null)}
+          onSave={saveFileNameDraft}
         />
       ) : null}
       {!readOnly ? (
