@@ -111,14 +111,18 @@ const tabs = [
   },
 ];
 
-const GANTT_ROW_MIN_HEIGHT = 48;
+const GANTT_ROW_MIN_HEIGHT = 38;
 const CALENDAR_VISIBLE_RANGE_LANES = 3;
 const CALENDAR_COLLAPSED_WEEK_HEIGHT = 244;
 const CALENDAR_COLLAPSED_BODY_MIN_HEIGHT = 32;
-const GANTT_ZOOM_MIN = 0;
-const GANTT_ZOOM_MAX = 100;
-const GANTT_ZOOM_MIN_PIXELS_PER_DAY = 2;
-const GANTT_ZOOM_MAX_PIXELS_PER_DAY = 48;
+const GANTT_ZOOM_OPTIONS = [
+  { label: '2 weeks', visibleDays: 14 },
+  { label: '1 month', visibleDays: 30 },
+  { label: '2 months', visibleDays: 60 },
+  { label: '3 months', visibleDays: 90 },
+];
+const GANTT_ZOOM_REFERENCE_WIDTH = 760;
+const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 const SELECTION_STATUS_OPTIONS = ['needs decision', 'selected', 'ordered', 'installed'];
 const SELECTION_CATEGORY_OPTIONS = [
@@ -601,6 +605,8 @@ function splitStepBarAroundBlockedDays(item, weekCells) {
         startCol: currentStart,
         endCol: column - 1,
         segmentKey: `${item.id}-${currentStart}-${column - 1}`,
+        continuesBefore: (item.continuesBefore && currentStart === item.startCol) || currentStart > item.startCol,
+        continuesAfter: true,
       });
       currentStart = null;
     }
@@ -612,6 +618,8 @@ function splitStepBarAroundBlockedDays(item, weekCells) {
       startCol: currentStart,
       endCol: item.endCol,
       segmentKey: `${item.id}-${currentStart}-${item.endCol}`,
+      continuesBefore: (item.continuesBefore && currentStart === item.startCol) || currentStart > item.startCol,
+      continuesAfter: item.continuesAfter,
     });
   }
 
@@ -1081,8 +1089,18 @@ function getTimelineStyle(row, minDate, maxDate) {
   const duration = Math.max(1, diffInDays(start, safeEnd) + 1);
   return {
     left: `${(offset / totalDays) * 100}%`,
-    width: row.isMilestone ? '16px' : `${Math.max((duration / totalDays) * 100, 1.2)}%`,
+    width: row.isMilestone ? '16px' : `${(duration / totalDays) * 100}%`,
+    ...(row.type === 'step' && row.color ? { backgroundColor: row.color } : {}),
   };
+}
+
+function getNextTaskColor(projects = []) {
+  const taskCount = projects.reduce(
+    (projectTotal, project) =>
+      projectTotal + (project.phases || []).reduce((phaseTotal, phase) => phaseTotal + (phase.steps || []).length, 0),
+    0,
+  );
+  return TASK_COLOR_PALETTE[taskCount % TASK_COLOR_PALETTE.length];
 }
 
 function getTimelineMetrics(row, minDate, maxDate) {
@@ -1095,7 +1113,7 @@ function getTimelineMetrics(row, minDate, maxDate) {
   const duration = Math.max(1, diffInDays(start, safeEnd) + 1);
   return {
     leftPct: (offset / totalDays) * 100,
-    widthPct: Math.max((duration / totalDays) * 100, 1.2),
+    widthPct: (duration / totalDays) * 100,
   };
 }
 
@@ -1469,9 +1487,6 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
   return (
     <section className="project-detail-section project-detail-calendar-card">
       <div className="panel-header">
-        <div>
-          <h3>Project calendar</h3>
-        </div>
         <div className="panel-actions">
           <button
             className="button secondary"
@@ -1489,6 +1504,16 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
             onClick={goToNextMonth}
           >
             Next
+          </button>
+          <button
+            className="button secondary calendar-today-button"
+            type="button"
+            onClick={() => {
+              const today = new Date();
+              setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+            }}
+          >
+            Today
           </button>
         </div>
       </div>
@@ -1566,11 +1591,12 @@ function ProjectDetailCalendar({ project, tasks, settings, onDateClick, onItemCl
                         <Tag
                           key={`${week.key}-${item.segmentKey || item.id}`}
                           type={isClickable ? 'button' : undefined}
-                          className={`calendar-span-bar ${item.type} status-${item.status || 'planning'}`}
+                          className={`calendar-span-bar ${item.type} status-${item.status || 'planning'}${['phase', 'step'].includes(item.type) && item.continuesBefore ? ' continues-before' : ''}${['phase', 'step'].includes(item.type) && item.continuesAfter ? ' continues-after' : ''}`}
                           style={{
                             gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
                             gridRow: `${item.lane + 1}`,
-                            borderColor: getProjectAccentColor(item.projectId || item.projectName),
+                            borderColor: item.color || getProjectAccentColor(item.projectId || item.projectName),
+                            ...(item.color ? { backgroundColor: item.color, color: '#fff' } : {}),
                           }}
                           title={`${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`}
                           onClick={
@@ -5559,6 +5585,15 @@ function ScheduleItemModal({
               </label>
 
               <label>
+                <span>Task color</span>
+                <input
+                  type="color"
+                  value={draft.color || TASK_COLOR_PALETTE[0]}
+                  onChange={(event) => onChange('color', event.target.value)}
+                />
+              </label>
+
+              <label>
                 <span>End date</span>
                 <input type="text" value={draft.endPreview ? formatTooltipDate(draft.endPreview) : 'Not set'} readOnly />
               </label>
@@ -6048,6 +6083,7 @@ function NativeProjectsView({
       name: '',
       assign: '',
       status: 'planning',
+      color: getNextTaskColor(state.projects),
       start,
       duration: 1,
       endPreview: start ? computeStepEndDate(start, 1, state.settings) : '',
@@ -6069,6 +6105,7 @@ function NativeProjectsView({
       name: step.name || '',
       assign: step.assign || '',
       status: step.status || (step.done ? 'done' : 'planning'),
+      color: step.color || TASK_COLOR_PALETTE[0],
       start: step.start || '',
       duration,
       endPreview: step.start ? computeStepEndDate(step.start, duration, state.settings) : '',
@@ -6286,6 +6323,7 @@ function NativeProjectsView({
         name: stepDraft.name.trim(),
         assign: stepDraft.assign.trim(),
         status: stepDraft.status,
+        color: stepDraft.color || TASK_COLOR_PALETTE[0],
         done: stepDraft.status === 'done',
         start: stepDraft.start || '',
         duration: Math.max(1, Number(stepDraft.duration) || 1),
@@ -8566,7 +8604,7 @@ function NativeScheduleView({
   const ganttLabelRowRefs = useRef([]);
   const ganttTimelineRowRefs = useRef([]);
   const lastAutoScrollKeyRef = useRef('');
-  const [ganttZoomValue, setGanttZoomValue] = useState(28);
+  const [ganttZoomValue, setGanttZoomValue] = useState(1);
   const [expandedProjects, setExpandedProjects] = useState({});
   const [expandedPhases, setExpandedPhases] = useState({});
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -8707,26 +8745,64 @@ function NativeScheduleView({
     () => Math.max(1, diffInDays(timeline.minDate, timeline.maxDate) + 1),
     [timeline],
   );
-  const ganttPixelsPerDay = useMemo(
-    () =>
-      GANTT_ZOOM_MIN_PIXELS_PER_DAY +
-      ((GANTT_ZOOM_MAX_PIXELS_PER_DAY - GANTT_ZOOM_MIN_PIXELS_PER_DAY) * ganttZoomValue) /
-        GANTT_ZOOM_MAX,
-    [ganttZoomValue],
-  );
-  const ganttZoomLabel = useMemo(() => {
-    const visibleDays = Math.max(1, Math.round(760 / ganttPixelsPerDay));
-    if (visibleDays >= 365) return '1 year';
-    if (visibleDays >= 180) return '6 months';
-    if (visibleDays >= 90) return '3 months';
-    if (visibleDays >= 30) return '1 month';
-    if (visibleDays >= 14) return '2 weeks';
-    return 'Days';
-  }, [ganttPixelsPerDay]);
+  const ganttZoomOption = GANTT_ZOOM_OPTIONS[ganttZoomValue] || GANTT_ZOOM_OPTIONS[1];
+  const ganttPixelsPerDay = GANTT_ZOOM_REFERENCE_WIDTH / ganttZoomOption.visibleDays;
+  const ganttZoomLabel = ganttZoomOption.label;
   const timelineCanvasWidth = useMemo(
     () => Math.max(760, timelineTotalDays * ganttPixelsPerDay),
     [ganttPixelsPerDay, timelineTotalDays],
   );
+  const timelineWeeks = useMemo(() => {
+    const weeks = [];
+    for (let weekStart = startOfWeek(timeline.minDate); weekStart <= timeline.maxDate; weekStart = addDays(weekStart, 7)) {
+      const weekEnd = endOfWeek(weekStart);
+      const visibleStart = weekStart < timeline.minDate ? timeline.minDate : weekStart;
+      const visibleEnd = weekEnd > timeline.maxDate ? timeline.maxDate : weekEnd;
+      const offset = diffInDays(timeline.minDate, visibleStart);
+      const widthDays = diffInDays(visibleStart, visibleEnd) + 1;
+      const startLabel = weekStart.toLocaleString('default', { month: 'short', day: 'numeric' });
+      const endLabel = weekEnd.toLocaleString('default', {
+        month: weekStart.getMonth() === weekEnd.getMonth() ? undefined : 'short',
+        day: 'numeric',
+      });
+      weeks.push({
+        key: toIsoDate(weekStart),
+        label: `${startLabel}–${endLabel}`,
+        left: (offset / timelineTotalDays) * 100,
+        width: (widthDays / timelineTotalDays) * 100,
+      });
+    }
+    return weeks;
+  }, [timeline.maxDate, timeline.minDate, timelineTotalDays]);
+  const timelineDays = useMemo(() => {
+    const days = [];
+    for (let date = new Date(timeline.minDate); date <= timeline.maxDate; date = addDays(date, 1)) {
+      const offset = diffInDays(timeline.minDate, date);
+      const dateKey = toIsoDate(date);
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      const isNonWorkdayHoliday = (data.settings?.holidays || []).some((holiday) => {
+        if (holiday.nonWorkday === false || !holiday.date) return false;
+        const holidayEnd = holiday.endDate || holiday.date;
+        return dateKey >= holiday.date && dateKey <= holidayEnd;
+      });
+      days.push({
+        key: dateKey,
+        label:
+          ganttZoomOption.visibleDays > 30
+            ? `${date.getDate()}`
+            : `${date.toLocaleString('default', { weekday: 'narrow' })} ${date.getDate()}`,
+        left: (offset / timelineTotalDays) * 100,
+        width: 100 / timelineTotalDays,
+        isNonWorkday: (data.settings?.weekdaysOnly && isWeekend) || isNonWorkdayHoliday,
+      });
+    }
+    return days;
+  }, [data.settings?.holidays, data.settings?.weekdaysOnly, ganttZoomOption.visibleDays, timeline.maxDate, timeline.minDate, timelineTotalDays]);
+  const ganttTodayPosition = useMemo(() => {
+    const today = new Date();
+    if (today < timeline.minDate || today > timeline.maxDate) return null;
+    return ((diffInDays(timeline.minDate, today) + 0.5) / timelineTotalDays) * 100;
+  }, [timeline.maxDate, timeline.minDate, timelineTotalDays]);
 
   const resolvedRowHeights = useMemo(
     () => rows.map((_, index) => Math.max(GANTT_ROW_MIN_HEIGHT, rowHeights[index] || GANTT_ROW_MIN_HEIGHT)),
@@ -8783,13 +8859,22 @@ function NativeScheduleView({
           const toX = toMetrics.leftPct;
           const fromY = (rowTopOffsets[fromIndex] || 0) + (resolvedRowHeights[fromIndex] || GANTT_ROW_MIN_HEIGHT) / 2;
           const toY = (rowTopOffsets[toIndex] || 0) + (resolvedRowHeights[toIndex] || GANTT_ROW_MIN_HEIGHT) / 2;
-          const midX = (fromX + toX) / 2;
-          const coords = [fromX, toX, fromY, toY, midX];
+          const connectorClearance = (10 / timelineCanvasWidth) * 100;
+          const hasForwardGap = toX > fromX + connectorClearance * 2;
+          const rightX = Math.min(99.5, hasForwardGap ? fromX + connectorClearance : Math.max(fromX, toX) + connectorClearance);
+          const leftX = Math.max(0, toX - connectorClearance);
+          const midY = (fromY + toY) / 2;
+          const coords = [fromX, toX, fromY, toY, rightX, leftX, midY];
           if (!coords.every((value) => Number.isFinite(value))) return;
 
           arrows.push({
             key: `${pred.id}-${row.entityId}`,
-            d: `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`,
+            d: hasForwardGap
+              ? `M ${fromX} ${fromY} H ${rightX} V ${toY} H ${toX}`
+              : `M ${fromX} ${fromY} H ${rightX} V ${midY} H ${leftX} V ${toY} H ${toX}`,
+            endX: toX,
+            endY: toY,
+            direction: 'right',
           });
         });
       });
@@ -8798,7 +8883,7 @@ function NativeScheduleView({
     } catch {
       return [];
     }
-  }, [datedRows, hasScheduledRows, resolvedRowHeights, rowTopOffsets, rows, timeline]);
+  }, [datedRows, hasScheduledRows, resolvedRowHeights, rowTopOffsets, rows, timeline, timelineCanvasWidth]);
 
   const stepRows = useMemo(
     () =>
@@ -8838,14 +8923,20 @@ function NativeScheduleView({
     const endX = clamp(((dragDependency.currentClientX - gridRect.left) / gridRect.width) * 100, 0, 100);
     const viewHeight = timelineViewHeight || GANTT_ROW_MIN_HEIGHT;
     const endY = clamp(((dragDependency.currentClientY - gridRect.top) / gridRect.height) * viewHeight, 0, viewHeight);
-    const midX = (startX + endX) / 2;
-    const coords = [startX, startY, endX, endY, midX];
+    const connectorClearance = (10 / timelineCanvasWidth) * 100;
+    const hasForwardGap = endX > startX + connectorClearance * 2;
+    const rightX = Math.min(99.5, hasForwardGap ? startX + connectorClearance : Math.max(startX, endX) + connectorClearance);
+    const leftX = Math.max(0, endX - connectorClearance);
+    const midY = (startY + endY) / 2;
+    const coords = [startX, startY, endX, endY, rightX, leftX, midY];
     if (!coords.every((value) => Number.isFinite(value))) return null;
 
     return {
-      d: `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`,
+      d: hasForwardGap
+        ? `M ${startX} ${startY} H ${rightX} V ${endY} H ${endX}`
+        : `M ${startX} ${startY} H ${rightX} V ${midY} H ${leftX} V ${endY} H ${endX}`,
     };
-  }, [dragDependency, hasScheduledRows, resolvedRowHeights, rowTopOffsets, stepRowById, stepRowIndexById, timeline, timelineViewHeight]);
+  }, [dragDependency, hasScheduledRows, resolvedRowHeights, rowTopOffsets, stepRowById, stepRowIndexById, timeline, timelineCanvasWidth, timelineViewHeight]);
 
   const stats = useMemo(() => {
     const phases = filteredProjects.reduce((sum, project) => sum + (project.phases?.length || 0), 0);
@@ -9002,6 +9093,7 @@ function NativeScheduleView({
       name: row.label,
       assign: row.assign || '',
       status: row.status || 'planning',
+      color: step?.color || TASK_COLOR_PALETTE[0],
       start: row.start || '',
       end: row.end || '',
       predecessorOptions: buildPhaseDependencyOptions(row.parentProjectId, row.entityId, phase?.predecessors || []),
@@ -9107,6 +9199,7 @@ function NativeScheduleView({
       name: '',
       assign: '',
       status: 'planning',
+      color: getNextTaskColor(state.projects),
       start,
       duration: 1,
       endPreview: start ? computeStepEndDate(start, 1, state.settings) : '',
@@ -9429,6 +9522,20 @@ function NativeScheduleView({
       ...storageMeta,
       dataUrl: '',
     };
+  }
+
+  function scrollGanttToToday() {
+    const wrap = ganttTimelineWrapRef.current;
+    if (!wrap) return;
+    const today = new Date();
+    const todayKey = toIsoDate(today);
+    if (todayKey < toIsoDate(timeline.minDate) || todayKey > toIsoDate(timeline.maxDate)) return;
+    const offsetDays = diffInDays(timeline.minDate, today);
+    const todayCenterX = (offsetDays + 0.5) * ganttPixelsPerDay;
+    wrap.scrollTo({
+      left: Math.max(0, Math.min(todayCenterX - wrap.clientWidth / 2, wrap.scrollWidth - wrap.clientWidth)),
+      behavior: 'smooth',
+    });
   }
 
   async function handleSaveInspectionDraft() {
@@ -9987,6 +10094,7 @@ function NativeScheduleView({
         name: editorDraft.name.trim(),
         assign: editorDraft.assign.trim(),
         status: editorDraft.status,
+        color: editorDraft.color || TASK_COLOR_PALETTE[0],
         done: editorDraft.status === 'done',
         start: editorDraft.start || '',
         duration: Math.max(1, Number(editorDraft.duration) || 1),
@@ -10402,24 +10510,34 @@ function NativeScheduleView({
       <div className="panel-actions header-scope-actions">
         <div className="schedule-toolbar header-scope-toolbar">
           {isScheduleView ? (
-            <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
-              <span>Zoom</span>
-              <input
-                className="gantt-zoom-slider"
-                type="range"
-                min={GANTT_ZOOM_MIN}
-                max={GANTT_ZOOM_MAX}
-                step="1"
-                value={ganttZoomValue}
-                onChange={(event) => setGanttZoomValue(Number(event.target.value))}
-              />
-              <strong>{ganttZoomLabel}</strong>
+            <div className="schedule-toolbar-summary">
+              <strong>Schedule</strong>
+              <span>{rows.length} visible items</span>
             </div>
           ) : null}
           {isScheduleView ? (
-            <button className="button secondary" type="button" onClick={toggleAllExpanded}>
-              {allExpanded ? 'Collapse all' : 'Expand all'}
-            </button>
+            <div className="schedule-toolbar-actions">
+              <button className="button secondary schedule-today-button" type="button" onClick={scrollGanttToToday}>
+                Today
+              </button>
+              <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
+                <span>Zoom</span>
+                <input
+                  className="gantt-zoom-slider"
+                  type="range"
+                  min="0"
+                  max={GANTT_ZOOM_OPTIONS.length - 1}
+                  step="1"
+                  value={ganttZoomValue}
+                  onChange={(event) => setGanttZoomValue(Number(event.target.value))}
+                  aria-valuetext={ganttZoomLabel}
+                />
+                <strong>{ganttZoomLabel}</strong>
+              </div>
+              <button className="button secondary" type="button" onClick={toggleAllExpanded}>
+                {allExpanded ? 'Collapse all' : 'Expand all'}
+              </button>
+            </div>
           ) : null}
         </div>
       </div>
@@ -10430,6 +10548,7 @@ function NativeScheduleView({
         <div className="gantt-shell">
           <div className="gantt-table">
             <div className="gantt-header gantt-label-header">
+              <span>#</span>
               <span>Item</span>
               <span>Dates</span>
             </div>
@@ -10443,6 +10562,7 @@ function NativeScheduleView({
                 className={`gantt-row-label gantt-row-label-${row.type}`}
                 style={rowHeights[index] ? { minHeight: `${rowHeights[index]}px` } : undefined}
               >
+                <span className="gantt-row-index">{index + 1}</span>
                 <div className="gantt-row-title" style={{ paddingLeft: `${16 + row.depth * 18}px` }}>
                   <div className="gantt-row-title-line">
                     {row.type === 'project' ? (
@@ -10470,10 +10590,10 @@ function NativeScheduleView({
                       {row.label}
                     </strong>
                   </div>
-                  {row.subtitle ? <small>{row.subtitle}</small> : null}
+                  {row.type !== 'project' && row.subtitle ? <small>{row.subtitle}</small> : null}
                 </div>
                 <div className="gantt-row-meta">
-                  {row.type !== 'step' && row.type !== 'phase' && row.type !== 'delay' ? (
+                  {row.type === 'task' ? (
                     <span className="gantt-row-dates">
                       {formatShortDate(row.start)}
                       {row.end && row.end !== row.start ? ` - ${formatShortDate(row.end)}` : ''}
@@ -10589,32 +10709,61 @@ function NativeScheduleView({
           </div>
 
           <div ref={ganttTimelineWrapRef} className="gantt-timeline-wrap">
-            <div className="gantt-months" style={{ width: `${timelineCanvasWidth}px` }}>
-              {timeline.months.map((month) => {
-                const monthStart = month > timeline.minDate ? month : timeline.minDate;
-                const monthEnd = endOfMonth(month) < timeline.maxDate ? endOfMonth(month) : timeline.maxDate;
-                const offset = diffInDays(timeline.minDate, monthStart);
-                const width = Math.max(1, diffInDays(monthStart, monthEnd) + 1);
-                return (
+            <div
+              className={`gantt-timeline-header${ganttZoomOption.visibleDays === 90 ? ' gantt-weekly-grid' : ''}`}
+              style={{ width: `${timelineCanvasWidth}px` }}
+            >
+              <div className="gantt-weeks">
+                {timelineWeeks.map((week) => (
                   <div
-                    key={month.toISOString()}
-                    className="gantt-month"
-                    style={{
-                      left: `${(offset / timelineTotalDays) * 100}%`,
-                      width: `${(width / timelineTotalDays) * 100}%`,
-                    }}
+                    key={week.key}
+                    className="gantt-week"
+                    style={{ left: `${week.left}%`, width: `${week.width}%` }}
                   >
-                    {month.toLocaleString('default', { month: 'short', year: 'numeric' })}
+                    {week.label}
                   </div>
-                );
-              })}
+                ))}
+              </div>
+              <div className="gantt-ticks">
+                {timelineDays.map((tick) => (
+                  <div
+                    key={tick.key}
+                    className={`gantt-tick${tick.isNonWorkday ? ' non-workday' : ''}`}
+                    style={{ left: `${tick.left}%`, width: `${tick.width}%` }}
+                  >
+                    {tick.label}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div
               ref={ganttGridRef}
-              className={`gantt-grid${dragDependency ? ' connecting' : ''}`}
+              className={`gantt-grid${dragDependency ? ' connecting' : ''}${ganttZoomOption.visibleDays === 90 ? ' gantt-weekly-grid' : ''}`}
               style={{ width: `${timelineCanvasWidth}px` }}
             >
+              <div className="gantt-non-workdays" aria-hidden="true">
+                {timelineDays
+                  .filter((day) => day.isNonWorkday)
+                  .map((day) => (
+                    <span
+                      key={day.key}
+                      style={{ left: `${day.left}%`, width: `${day.width}%` }}
+                    />
+                  ))}
+              </div>
+              <div className="gantt-grid-dividers" aria-hidden="true">
+                {(ganttZoomOption.visibleDays === 90 ? timelineWeeks : timelineDays)
+                  .filter((divider) => divider.left > 0)
+                  .map((divider) => (
+                    <span key={divider.key} style={{ left: `${divider.left}%` }} />
+                  ))}
+              </div>
+              {ganttTodayPosition !== null ? (
+                <div className="gantt-today-line" style={{ left: `${ganttTodayPosition}%` }} aria-hidden="true">
+                  <span>Today</span>
+                </div>
+              ) : null}
               {dependencyArrows.length || dragPreview ? (
                 <svg
                   className="gantt-arrows"
@@ -10625,20 +10774,16 @@ function NativeScheduleView({
                   <defs>
                     <marker
                       id="gantt-arrowhead"
-                      viewBox="0 0 8 8"
-                      refX="7"
-                      refY="4"
-                      markerWidth="5"
-                      markerHeight="5"
+                      viewBox="0 0 6 6"
+                      refX="5.5"
+                      refY="3"
+                      markerWidth="4"
+                      markerHeight="4"
                       orient="auto-start-reverse"
                     >
                       <path
-                        d="M1 1L7 4L1 7"
-                        fill="none"
-                        stroke="#c7cae3"
-                        strokeWidth="1.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                        d="M0 0L6 3L0 6Z"
+                        fill="#767b80"
                       />
                     </marker>
                   </defs>
@@ -10647,10 +10792,11 @@ function NativeScheduleView({
                       key={arrow.key}
                       d={arrow.d}
                       fill="none"
-                      stroke="#c7cae3"
-                      strokeWidth="0.25"
-                      opacity="0.7"
-                      markerEnd="url(#gantt-arrowhead)"
+                      stroke="#767b80"
+                      strokeWidth="1.25"
+                      vectorEffect="non-scaling-stroke"
+                      strokeLinejoin="miter"
+                      opacity="0.9"
                     />
                   ))}
                   {dragPreview ? (
@@ -10658,13 +10804,25 @@ function NativeScheduleView({
                       d={dragPreview.d}
                       fill="none"
                       stroke="#4d58b7"
-                      strokeWidth="2"
+                      strokeWidth="1.5"
+                      vectorEffect="non-scaling-stroke"
                       strokeDasharray="6 4"
                       opacity="0.95"
                       markerEnd="url(#gantt-arrowhead)"
                     />
                   ) : null}
                 </svg>
+              ) : null}
+              {dependencyArrows.length ? (
+                <div className="gantt-dependency-arrowheads" aria-hidden="true">
+                  {dependencyArrows.map((arrow) => (
+                    <span
+                      key={arrow.key}
+                      className={arrow.direction}
+                      style={{ left: `${arrow.endX}%`, top: `${arrow.endY}px` }}
+                    />
+                  ))}
+                </div>
               ) : null}
               {rows.map((row, index) => {
                 const style = getTimelineStyle(row, timeline.minDate, timeline.maxDate);
@@ -10701,16 +10859,6 @@ function NativeScheduleView({
                     ) : null}
                     {row.type === 'step' && style ? (
                       <>
-                        <button
-                          type="button"
-                          className={`gantt-connect-handle input${dragDependency?.fromStepId === row.entityId ? ' active' : ''}`}
-                          style={{ left: style.left }}
-                          title={`Use "${row.label}" as dependency target`}
-                          data-connect-target="true"
-                          data-project-id={row.parentProjectId}
-                          data-phase-id={row.parentPhaseId}
-                          data-step-id={row.entityId}
-                        />
                         <button
                           type="button"
                           className={`gantt-connect-handle output${dragDependency?.fromStepId === row.entityId ? ' active' : ''}`}
@@ -10775,6 +10923,16 @@ function NativeScheduleView({
               onClick={goToNextCalendarMonth}
             >
               Next
+            </button>
+            <button
+              className="button secondary calendar-today-button"
+              type="button"
+              onClick={() => {
+                const today = new Date();
+                setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+              }}
+            >
+              Today
             </button>
           </div>
         </div>
@@ -10852,11 +11010,12 @@ function NativeScheduleView({
                         spanColumns >= 2 &&
                         `${item.label} - ${item.projectName}`.length <= estimatedCharCapacity;
                       const commonProps = {
-                        className: `calendar-span-bar ${item.type} status-${item.status || 'planning'}`,
+                        className: `calendar-span-bar ${item.type} status-${item.status || 'planning'}${['phase', 'step'].includes(item.type) && item.continuesBefore ? ' continues-before' : ''}${['phase', 'step'].includes(item.type) && item.continuesAfter ? ' continues-after' : ''}`,
                         style: {
                           gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
                           gridRow: `${item.lane + 1}`,
-                          borderColor: getProjectAccentColor(item.projectId || item.projectName),
+                          borderColor: item.color || getProjectAccentColor(item.projectId || item.projectName),
+                          ...(item.color ? { backgroundColor: item.color, color: '#fff' } : {}),
                         },
                         title: `${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`,
                       };

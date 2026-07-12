@@ -1710,7 +1710,7 @@ a {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  min-width: 10px;
+  min-width: 1px;
   height: 20px;
   border-radius: 999px;
   border: 1px solid rgba(33, 38, 84, 0.14);
@@ -1778,11 +1778,6 @@ a {
   background: #4d58b7;
   box-shadow: 0 4px 10px rgba(32, 37, 79, 0.18);
   transform: translate(-50%, -50%);
-}
-
-.gantt-connect-handle.input {
-  background: #fff;
-  border-color: #4d58b7;
 }
 
 .gantt-connect-handle.output {
@@ -2040,12 +2035,26 @@ button.calendar-span-bar {
   background: rgba(61, 66, 120, 0.14);
   border-color: rgba(61, 66, 120, 0.18);
   color: var(--brand);
+  font-weight: 800;
+}
+
+.calendar-span-bar.continues-after {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.calendar-span-bar.continues-before {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .calendar-span-bar.step {
   background: rgba(127, 141, 230, 0.24);
   border-color: rgba(95, 107, 191, 0.24);
   color: #2f376b;
+  font-size: 9px;
 }
 
 .calendar-span-bar.delay {
@@ -2092,7 +2101,7 @@ button.calendar-span-bar {
 
 .calendar-cell.holiday,
 .calendar-cell.weekend {
-  background: linear-gradient(180deg, rgba(250, 238, 218, 0.65) 0%, #fff 48%);
+  background: #eceff1;
 }
 
 .calendar-day-number {
@@ -2182,10 +2191,19 @@ button.calendar-chip {
   color: var(--brand);
 }
 
+.calendar-chip.phase span {
+  font-weight: 800;
+}
+
 .calendar-chip.step {
   background: rgba(167, 176, 238, 0.28);
   border-color: rgba(95, 107, 191, 0.22);
   color: #394173;
+}
+
+.calendar-chip.step span,
+.calendar-chip.task span {
+  font-size: 10px;
 }
 
 .calendar-chip.task {
@@ -4693,6 +4711,64 @@ button.calendar-chip {
   border-radius: 0;
 }
 
+/* Keep calendar controls shallow so the month grid stays in view. */
+.top-level-calendar-page .schedule-calendar-card {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.top-level-calendar-page .schedule-calendar-header {
+  margin-bottom: 2px;
+}
+
+:where(.top-level-calendar-page, .project-detail-page) .calendar-nav,
+.project-detail-page .project-detail-calendar-card .panel-actions {
+  position: relative;
+  gap: 6px;
+}
+
+:where(.top-level-calendar-page, .project-detail-page) .calendar-today-button {
+  position: absolute;
+  right: 0;
+}
+
+:where(.top-level-calendar-page, .project-detail-page) .calendar-nav .button,
+.project-detail-page .project-detail-calendar-card .panel-actions .button {
+  min-height: 26px;
+  padding: 2px 9px;
+  font-size: 12px;
+}
+
+.top-level-calendar-page .calendar-month-label,
+.project-detail-page .project-calendar-month {
+  min-width: 130px;
+  flex-basis: 150px;
+  font-size: 14px;
+}
+
+.project-detail-page .project-detail-calendar-card .panel-header {
+  margin-bottom: 2px;
+  gap: 8px;
+  justify-content: center;
+}
+
+.project-detail-page .project-detail-calendar-card {
+  padding-top: 2px;
+}
+
+.project-detail-page .project-detail-calendar-card .panel-actions {
+  width: 100%;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+}
+
+:where(.top-level-calendar-page, .project-detail-page) .calendar-dow {
+  padding: 3px 8px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .top-level-people-page .people-grid {
   gap: 0 20px;
 }
@@ -5666,6 +5742,402 @@ textarea:focus-visible {
     flex-direction: row;
     align-items: center;
     text-align: left;
+  }
+}
+
+/* Dense split-pane schedule inspired by traditional construction Gantt tools. */
+.top-level-schedule-page > .panel-actions {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.top-level-schedule-page .schedule-toolbar {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 8px;
+  align-items: center;
+  border-top: 4px solid #0f5d84;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface-alt);
+}
+
+.schedule-toolbar-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.schedule-toolbar-summary strong {
+  color: #0f5d84;
+  font-size: 14px;
+}
+
+.schedule-toolbar-summary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.schedule-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.top-level-schedule-page .gantt-zoom-controls {
+  min-height: 32px;
+  padding: 3px 8px;
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.top-level-schedule-page .gantt-zoom-slider {
+  width: 136px;
+}
+
+.top-level-schedule-page .workspace-section {
+  padding: 0;
+  border: 0;
+}
+
+.top-level-schedule-page .gantt-shell {
+  grid-template-columns: 340px minmax(0, 1fr);
+  border: 1px solid rgba(63, 79, 103, 0.28);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.top-level-schedule-page .gantt-table {
+  border-right-color: rgba(63, 79, 103, 0.34);
+  background: var(--surface);
+}
+
+.top-level-schedule-page .gantt-header {
+  min-height: 56px;
+  padding: 0 8px;
+  background: #eef1f4;
+  color: #566474;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.top-level-schedule-page .gantt-label-header,
+.top-level-schedule-page .gantt-row-label {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.top-level-schedule-page .gantt-row-label {
+  min-height: 38px;
+  padding: 4px 8px;
+  border-bottom-color: rgba(63, 79, 103, 0.14);
+}
+
+.gantt-row-index {
+  color: #7c8793;
+  font-size: 10px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-level-schedule-page .gantt-row-title {
+  gap: 1px;
+  min-width: 0;
+}
+
+.top-level-schedule-page .gantt-row-title-line {
+  gap: 5px;
+}
+
+.top-level-schedule-page .gantt-row-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #263645;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-level-schedule-page .gantt-row-title small,
+.top-level-schedule-page .gantt-row-dates {
+  font-size: 10px;
+}
+
+.top-level-schedule-page .gantt-row-meta {
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.top-level-schedule-page .gantt-expand-button,
+.top-level-schedule-page .gantt-expand-spacer {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+
+.top-level-schedule-page .gantt-expand-button {
+  border-radius: 2px;
+  font-size: 13px;
+}
+
+.top-level-schedule-page .gantt-edit-button,
+.top-level-schedule-page .gantt-icon-button {
+  min-height: 24px;
+}
+
+.top-level-schedule-page .gantt-icon-button {
+  width: 24px;
+  min-width: 24px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.top-level-schedule-page .gantt-row-label:hover .gantt-icon-button,
+.top-level-schedule-page .gantt-row-label:focus-within .gantt-icon-button {
+  opacity: 1;
+}
+
+.top-level-schedule-page .gantt-row-label-project {
+  background: #e8f1f3;
+}
+
+.top-level-schedule-page .gantt-row-label-phase {
+  background: #f2f5f7;
+}
+
+.top-level-schedule-page .gantt-row-label-delay {
+  background: #fff7ef;
+}
+
+.gantt-timeline-header {
+  position: relative;
+  min-width: 760px;
+  height: 56px;
+  border-bottom: 1px solid rgba(63, 79, 103, 0.28);
+  background: #eef1f4;
+}
+
+.top-level-schedule-page .gantt-weeks {
+  position: relative;
+  min-width: 0;
+  min-height: 31px;
+  height: 31px;
+  border-bottom: 1px solid rgba(63, 79, 103, 0.18);
+  background: transparent;
+}
+
+.top-level-schedule-page .gantt-week {
+  position: absolute;
+  inset-block: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  overflow: hidden;
+  border-right: 1px solid rgba(63, 79, 103, 0.16);
+  color: #435566;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.gantt-ticks {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 24px;
+}
+
+.gantt-tick {
+  position: absolute;
+  inset-block: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-right: 1px solid rgba(63, 79, 103, 0.16);
+  color: #65717d;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.gantt-tick.non-workday {
+  background: #e4e6e8;
+  color: #7a8086;
+}
+
+.gantt-timeline-header.gantt-weekly-grid .gantt-tick {
+  border-right-color: transparent;
+}
+
+.gantt-timeline-header.gantt-weekly-grid .gantt-week {
+  overflow: visible;
+}
+
+.gantt-dependency-arrowheads {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.gantt-dependency-arrowheads span {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform: translateY(-50%);
+}
+
+.gantt-dependency-arrowheads span.right {
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid #767b80;
+  transform: translate(-6px, -50%);
+}
+
+.gantt-dependency-arrowheads span.left {
+  border-top: 4px solid transparent;
+  border-right: 6px solid #767b80;
+  border-bottom: 4px solid transparent;
+}
+
+.gantt-timeline-header.gantt-weekly-grid .gantt-week::after {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  width: 1px;
+  height: 55px;
+  background: rgba(63, 79, 103, 0.2);
+  content: '';
+}
+
+.top-level-schedule-page .gantt-grid {
+  background: #fff;
+}
+
+.top-level-schedule-page .gantt-grid.gantt-weekly-grid {
+  background: #fff;
+}
+
+.gantt-grid-dividers {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.gantt-non-workdays {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.gantt-non-workdays span {
+  position: absolute;
+  inset-block: 0;
+  background: rgba(91, 99, 108, 0.1);
+}
+
+.gantt-grid-dividers span {
+  position: absolute;
+  inset-block: 0;
+  width: 1px;
+  background: rgba(63, 79, 103, 0.1);
+}
+
+.gantt-grid.gantt-weekly-grid .gantt-grid-dividers span {
+  background: rgba(63, 79, 103, 0.16);
+}
+
+.top-level-schedule-page .gantt-grid-row {
+  min-height: 38px;
+  border-bottom-color: rgba(63, 79, 103, 0.14);
+}
+
+.top-level-schedule-page .gantt-bar {
+  height: 16px;
+  border-radius: 1px;
+  border-color: rgba(30, 39, 51, 0.24);
+  box-shadow: none;
+}
+
+.top-level-schedule-page .gantt-bar-project {
+  height: 18px;
+  background: #315a70;
+}
+
+.top-level-schedule-page .gantt-bar-phase {
+  background: #2f7e9f;
+}
+
+.top-level-schedule-page .gantt-bar-step {
+  background: #e34491;
+}
+
+.top-level-schedule-page .gantt-bar-delay {
+  height: 12px;
+  background: #c56b2d;
+}
+
+.top-level-schedule-page .gantt-bar-task {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  background: #8aae30;
+}
+
+.top-level-schedule-page .gantt-connect-handle {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: #315a70;
+}
+
+.gantt-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 2px;
+  background: rgba(197, 55, 78, 0.72);
+  pointer-events: none;
+}
+
+.gantt-today-line span {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  padding: 1px 4px;
+  background: #c5374e;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 960px) {
+  .top-level-schedule-page .gantt-shell {
+    grid-template-columns: 310px minmax(590px, 1fr);
+    min-width: 900px;
+  }
+}
+
+@media (max-width: 720px) {
+  .top-level-schedule-page .schedule-toolbar {
+    align-items: flex-start;
+  }
+
+  .schedule-toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .top-level-schedule-page .gantt-shell {
+    grid-template-columns: 280px minmax(620px, 1fr);
   }
 }
 

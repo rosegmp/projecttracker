@@ -97,6 +97,7 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
             start: step.start || '',
             end: step.end || '',
             duration: step.duration || 1,
+            color: step.color || '',
             assign: step.assign || '',
             predecessors: normalizePreds(step.predecessors),
             status: step.done ? 'done' : phase.status || project.status || 'planning',
@@ -254,6 +255,7 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
             start: step.start || '',
             end: step.end || '',
             duration: step.duration || 1,
+            color: step.color || '',
           });
         }
 
@@ -373,7 +375,14 @@ export function buildCalendarWeeks(calendarCells, rangeItems, maxVisibleLanes = 
       let lane = 0;
       while (laneEnds[lane] !== undefined && laneEnds[lane] >= startCol) lane += 1;
       laneEnds[lane] = endCol;
-      targetBars.push({ ...item, startCol, endCol, lane });
+      targetBars.push({
+        ...item,
+        startCol,
+        endCol,
+        lane,
+        continuesBefore: item.start < weekStart,
+        continuesAfter: item.end > weekEnd,
+      });
     });
 
     const laneCount = Math.max(scheduledBars.length ? Math.max(...scheduledBars.map((bar) => bar.lane)) + 1 : 0, 0);
