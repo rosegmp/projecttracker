@@ -356,9 +356,40 @@ async function downloadBlobForCurrentPlatform(blob, fileName = 'download') {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
-function renderModalPortal(content) {
+const modalEscapeStack = [];
+
+function ModalPortal({ content }) {
+  const closeFromBackdrop = content?.props?.onClick;
+  const escapeIdRef = useRef(Symbol('modal-escape'));
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof closeFromBackdrop !== 'function') return undefined;
+
+    const escapeEntry = { id: escapeIdRef.current, close: closeFromBackdrop };
+    modalEscapeStack.push(escapeEntry);
+
+    const handleEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      if (modalEscapeStack.at(-1)?.id !== escapeEntry.id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      escapeEntry.close(event);
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      const stackIndex = modalEscapeStack.findIndex((entry) => entry.id === escapeEntry.id);
+      if (stackIndex >= 0) modalEscapeStack.splice(stackIndex, 1);
+    };
+  }, [closeFromBackdrop]);
+
   if (typeof document === 'undefined') return content;
   return createPortal(content, document.body);
+}
+
+function renderModalPortal(content) {
+  return <ModalPortal content={content} />;
 }
 
 let appDialogHandler = null;
@@ -3955,9 +3986,6 @@ function ProjectDetailView({
   const [activeDetailTab, setActiveDetailTab] = useState('overview');
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
-  const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
-  const selectionCount = project.selections?.length || 0;
-  const photoCount = project.photos?.length || 0;
   const blockLotLabel =
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
@@ -3976,66 +4004,106 @@ function ProjectDetailView({
 
   return (
     <div className="project-detail-page">
-      <div className="project-detail-tabs" role="tablist" aria-label={`${project.name} sections`}>
+      <div
+        className="project-detail-tabs"
+        role="tablist"
+        aria-label={`${project.name} sections`}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
+          const currentIndex = tabs.indexOf(event.target);
+          if (currentIndex < 0) return;
+          event.preventDefault();
+          const nextIndex =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? tabs.length - 1
+                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          tabs[nextIndex]?.focus();
+          tabs[nextIndex]?.click();
+        }}
+      >
         <button
+          id="project-tab-overview"
           className={`react-tab${activeDetailTab === 'overview' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'overview' ? 'true' : 'false'}
+          aria-controls="project-panel-overview"
+          tabIndex={activeDetailTab === 'overview' ? 0 : -1}
           onClick={() => setActiveDetailTab('overview')}
         >
           Overview
         </button>
         <button
+          id="project-tab-tasks"
           className={`react-tab${activeDetailTab === 'tasks' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'tasks' ? 'true' : 'false'}
+          aria-controls="project-panel-tasks"
+          tabIndex={activeDetailTab === 'tasks' ? 0 : -1}
           onClick={() => setActiveDetailTab('tasks')}
         >
           Tasks
         </button>
         <button
+          id="project-tab-calendar"
           className={`react-tab${activeDetailTab === 'calendar' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'calendar' ? 'true' : 'false'}
+          aria-controls="project-panel-calendar"
+          tabIndex={activeDetailTab === 'calendar' ? 0 : -1}
           onClick={() => setActiveDetailTab('calendar')}
         >
           Calendar
         </button>
         <button
+          id="project-tab-inspections"
           className={`react-tab${activeDetailTab === 'inspections' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'inspections' ? 'true' : 'false'}
+          aria-controls="project-panel-inspections"
+          tabIndex={activeDetailTab === 'inspections' ? 0 : -1}
           onClick={() => setActiveDetailTab('inspections')}
         >
           Inspections
         </button>
         <button
+          id="project-tab-selections"
           className={`react-tab${activeDetailTab === 'selections' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'selections' ? 'true' : 'false'}
+          aria-controls="project-panel-selections"
+          tabIndex={activeDetailTab === 'selections' ? 0 : -1}
           onClick={() => setActiveDetailTab('selections')}
         >
           Selections
         </button>
         <button
+          id="project-tab-files"
           className={`react-tab${activeDetailTab === 'files' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'files' ? 'true' : 'false'}
+          aria-controls="project-panel-files"
+          tabIndex={activeDetailTab === 'files' ? 0 : -1}
           onClick={() => setActiveDetailTab('files')}
         >
           Files
         </button>
         <button
+          id="project-tab-photos"
           className={`react-tab${activeDetailTab === 'photos' ? ' active' : ''}`}
           type="button"
           role="tab"
           aria-selected={activeDetailTab === 'photos' ? 'true' : 'false'}
+          aria-controls="project-panel-photos"
+          tabIndex={activeDetailTab === 'photos' ? 0 : -1}
           onClick={() => setActiveDetailTab('photos')}
         >
           Photos
@@ -4043,7 +4111,7 @@ function ProjectDetailView({
       </div>
 
       {activeDetailTab === 'overview' ? (
-        <section className="project-detail-section project-detail-overview project-detail-overview-full">
+        <section id="project-panel-overview" className="project-detail-section project-detail-overview project-detail-overview-full" role="tabpanel" aria-labelledby="project-tab-overview">
           <div className="panel-header">
             <div>
               <h3>Project Details</h3>
@@ -4112,7 +4180,7 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'tasks' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-tasks" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-tasks">
           <NativeTasksView
             data={data}
             onStateChange={onStateChange}
@@ -4137,7 +4205,7 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'calendar' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-calendar" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-calendar">
           <ProjectDetailCalendar
             project={project}
             tasks={tasks}
@@ -4149,7 +4217,7 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'inspections' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-inspections" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-inspections">
           <NativeInspectionsView
             data={data}
             refresh={() => {}}
@@ -4165,7 +4233,7 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'selections' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-selections" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-selections">
           <ProjectSelectionsManager
             data={data}
             project={project}
@@ -4185,7 +4253,7 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'files' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-files" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-files">
           <ProjectFilesManager
             data={data}
             project={project}
@@ -4198,19 +4266,11 @@ function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'photos' ? (
-        <section className="project-detail-section project-detail-subtab-panel">
+        <section id="project-panel-photos" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-photos">
           <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
         </section>
       ) : null}
 
-      <PageStats settings={settings}>
-        <DashboardStat label="Status" value={project.status || 'planning'} tone="brand" />
-        <DashboardStat label="Phases" value={project.phases?.length || 0} />
-        <DashboardStat label="Inspections" value={project.inspections?.length || 0} />
-        <DashboardStat label="Selections" value={selectionCount} />
-        <DashboardStat label="Files" value={allFiles.length} />
-        <DashboardStat label="Photos" value={photoCount} />
-      </PageStats>
     </div>
   );
 }
@@ -7543,31 +7603,28 @@ function NativeTasksView({
               <button className={`button primary${saving ? ' is-loading' : ''}`} type="submit" disabled={saving}>
                 {saving ? 'Saving...' : 'Add task'}
               </button>
-              <div className={`task-save-notice${taskSaveMessage ? ' visible' : ''}`} aria-live="polite">
-                {taskSaveMessage || '\u00A0'}
-              </div>
-              <div className="task-attachment-editor task-create-attachments">
-                <div className="task-attachment-editor-header">
-                  <strong>Attachments</strong>
-                  <button
-                    className="button secondary"
-                    type="button"
-                    onClick={() => openAttachmentPicker(createAttachmentInputRef)}
-                    disabled={saving}
-                  >
-                    Add files
-                  </button>
-                  <input
-                    key={createAttachmentInputKey}
-                    ref={createAttachmentInputRef}
-                    className="task-attachment-input"
-                    type="file"
-                    multiple
-                    onChange={handleCreateAttachmentAdd}
-                    disabled={saving}
-                  />
-                </div>
-                {newTaskFiles.length ? (
+              <input
+                key={createAttachmentInputKey}
+                ref={createAttachmentInputRef}
+                className="task-attachment-input"
+                type="file"
+                multiple
+                onChange={handleCreateAttachmentAdd}
+                disabled={saving}
+              />
+              {newTaskFiles.length ? (
+                <div className="task-attachment-editor task-create-attachments">
+                  <div className="task-attachment-editor-header">
+                    <strong>Attachments</strong>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => openAttachmentPicker(createAttachmentInputRef)}
+                      disabled={saving}
+                    >
+                      Add more files
+                    </button>
+                  </div>
                   <div className="task-attachment-list">
                     {newTaskFiles.map((file, index) => (
                       <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
@@ -7585,9 +7642,19 @@ function NativeTasksView({
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <small className="task-attachment-empty">No attachments selected.</small>
-                )}
+                </div>
+              ) : (
+                  <button
+                    className="button secondary task-add-attachment-button"
+                    type="button"
+                    onClick={() => openAttachmentPicker(createAttachmentInputRef)}
+                    disabled={saving}
+                  >
+                    Add attachment
+                  </button>
+              )}
+              <div className={`task-save-notice${taskSaveMessage ? ' visible' : ''}`} aria-live="polite">
+                {taskSaveMessage || '\u00A0'}
               </div>
             </div>
           </form>
@@ -7777,7 +7844,7 @@ function NativeTasksView({
   }
 
   return (
-    <section className="panel native-panel workspace-page">
+    <section className="panel native-panel workspace-page top-level-tasks-page">
       {taskContent}
     </section>
   );
@@ -8340,7 +8407,7 @@ function NativePeopleView({ data, onStateChange, refresh, loading }) {
   }
 
   return (
-    <section className="panel native-panel workspace-page">
+    <section className="panel native-panel workspace-page top-level-people-page">
       <div className="panel-actions people-page-actions">
         <button className="button secondary" type="button" onClick={triggerImport} disabled={saving}>
           Import CSV
@@ -10319,7 +10386,7 @@ function NativeScheduleView({
   }
 
   return (
-    <section className="panel native-panel workspace-page">
+    <section className={`panel native-panel workspace-page ${isScheduleView ? 'top-level-schedule-page' : 'top-level-calendar-page'}`}>
       <div className="panel-actions header-scope-actions">
         <div className="schedule-toolbar header-scope-toolbar">
           {isScheduleView ? (
@@ -10773,7 +10840,6 @@ function NativeScheduleView({
                         spanColumns >= 2 &&
                         `${item.label} - ${item.projectName}`.length <= estimatedCharCapacity;
                       const commonProps = {
-                        key: `${week.key}-${item.segmentKey || item.id}`,
                         className: `calendar-span-bar ${item.type} status-${item.status || 'planning'}`,
                         style: {
                           gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
@@ -10784,6 +10850,7 @@ function NativeScheduleView({
                       };
                       return (
                         <button
+                          key={`${week.key}-${item.segmentKey || item.id}`}
                           {...commonProps}
                           type="button"
                           onClick={(event) => openCalendarItem(item, event)}
@@ -12012,7 +12079,7 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   }
 
   return (
-    <section className="panel native-panel">
+    <section className="panel native-panel top-level-settings-page">
       <div className="panel-header">
         <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
           {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
@@ -12698,6 +12765,13 @@ export default function App() {
     return counts;
   }, [trackerState.tasks, visibleProjectIds]);
   const railSelectedProjectId = getProjectIdFromLocation();
+  const railActiveProjectId =
+    activeTab === 'projects'
+      ? railSelectedProjectId
+      : PROJECT_SCOPED_TAB_IDS.has(activeTab) && sessionProjectFilter !== 'all'
+        ? sessionProjectFilter
+        : '';
+  const railAllProjectsActive = !railActiveProjectId;
   const signedInUserName =
     String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
   const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
@@ -13208,6 +13282,7 @@ export default function App() {
                   }}
                   title={tab.description}
                   aria-label={`${tab.label}: ${tab.description}`}
+                  aria-current={activeTab === tab.id ? 'page' : undefined}
                 >
                   {tab.label}
                 </button>
@@ -13264,13 +13339,14 @@ export default function App() {
             </div>
             <div className="projects-rail-list" role="list" aria-label="All projects">
               <button
-                className={`projects-rail-item projects-rail-all${activeTab === 'projects' && !railSelectedProjectId ? ' active' : ''}`}
+                className={`projects-rail-item projects-rail-all${railAllProjectsActive ? ' active' : ''}`}
                 type="button"
                 onClick={() => {
                   setSessionProjectFilter('all');
                   goToProjectsHome();
                 }}
-                aria-pressed={activeTab === 'projects' && !railSelectedProjectId}
+                aria-pressed={railAllProjectsActive}
+                aria-current={railAllProjectsActive ? 'page' : undefined}
               >
                 <span className="projects-rail-item-title">All Projects</span>
                 <span className="projects-rail-item-meta">Portfolio overview</span>
@@ -13278,7 +13354,7 @@ export default function App() {
               {visibleProjects.map((project) => {
                 const taskCount = railTaskCountByProject.get(project.id) || 0;
                 const health = getProjectHealth(project);
-                const isActive = project.id === railSelectedProjectId || project.id === sessionProjectFilter;
+                const isActive = project.id === railActiveProjectId;
                 return (
                   <button
                     key={project.id}
@@ -13295,6 +13371,7 @@ export default function App() {
                       syncProjectToLocation(project.id, { push: true });
                     }}
                     aria-pressed={isActive}
+                    aria-current={isActive ? 'page' : undefined}
                   >
                     <span className="projects-rail-item-title">{project.name}</span>
                     <span className="projects-rail-item-meta">

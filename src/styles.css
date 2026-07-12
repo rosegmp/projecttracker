@@ -10,6 +10,9 @@
   --brand-light: #576985;
   --brand-soft: rgba(63, 79, 103, 0.08);
   --border: rgba(30, 39, 51, 0.11);
+  --divider: rgba(30, 39, 51, 0.14);
+  --control-height: 38px;
+  --control-radius: 10px;
   --shadow: 0 12px 28px rgba(17, 24, 39, 0.06);
   --success: #1d9e75;
   --warning: #9f6c16;
@@ -348,9 +351,9 @@ a {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 0 12px;
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   border: 1px solid transparent;
   text-decoration: none;
   font-weight: 700;
@@ -899,7 +902,9 @@ a {
   gap: 0;
   max-height: calc(100vh - 180px);
   overflow: auto;
-  padding-right: 2px;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 79, 103, 0.28) transparent;
 }
 
 .projects-rail-item {
@@ -1093,6 +1098,10 @@ a {
   transform: translateY(0);
 }
 
+.task-add-attachment-button {
+  justify-self: start;
+}
+
 .inline-action-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1156,7 +1165,7 @@ a {
 }
 
 .people-toggle-button {
-  min-height: 40px;
+  min-height: var(--control-height);
   padding: 0 14px;
   border: 0;
   border-radius: 12px;
@@ -1195,12 +1204,19 @@ a {
   font-weight: 600;
 }
 
+.task-filter > span {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
 .task-filter select,
 .task-input {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  min-height: 42px;
+  min-height: var(--control-height);
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -4048,18 +4064,6 @@ button.calendar-chip {
     padding: 8px;
   }
 
-  .projects-rail {
-    position: static;
-  }
-
-  .projects-rail-list {
-    max-height: none;
-  }
-
-  .workspace-content-shell.has-project-rail {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .projects-overview-header {
     padding: 12px;
   }
@@ -4258,6 +4262,29 @@ button.calendar-chip {
   flex-wrap: wrap;
 }
 
+@media (min-width: 961px) {
+  .project-detail-tabs {
+    position: sticky;
+    top: 72px;
+    z-index: 7;
+    padding: 6px 0 8px;
+    border-bottom: 1px solid var(--divider);
+    background: rgba(233, 237, 242, 0.96);
+    backdrop-filter: blur(8px);
+  }
+}
+
+@media (max-width: 720px) {
+  .project-detail-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(63, 79, 103, 0.28) transparent;
+  }
+
+}
+
 .task-summary-strip {
   display: flex;
   flex-wrap: wrap;
@@ -4316,7 +4343,7 @@ button.calendar-chip {
 .workspace-section {
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--control-radius);
   background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
 }
 
@@ -4414,7 +4441,8 @@ button.calendar-chip {
 }
 
 /* Keep every project subpage visually consistent with the flat overview. */
-.project-detail-page .workspace-section {
+.project-detail-page .workspace-section,
+.top-level-tasks-page .workspace-section {
   padding: 10px 0;
   border: 0;
   border-bottom: 1px solid var(--border);
@@ -4422,7 +4450,8 @@ button.calendar-chip {
   background: transparent;
 }
 
-.project-detail-page .task-create-panel {
+.project-detail-page .task-create-panel,
+.top-level-tasks-page .task-create-panel {
   margin-bottom: 0;
   padding: 10px 0 14px;
   border: 0;
@@ -4431,7 +4460,8 @@ button.calendar-chip {
   background: transparent;
 }
 
-.project-detail-page .task-attachment-editor {
+.project-detail-page .task-attachment-editor,
+.top-level-tasks-page .task-attachment-editor {
   padding: 10px 0 0;
   border: 0;
   border-top: 1px dashed rgba(63, 79, 103, 0.2);
@@ -4440,12 +4470,14 @@ button.calendar-chip {
 }
 
 .project-detail-page .task-list,
+.top-level-tasks-page .task-list,
 .project-detail-page .inspection-grid,
 .project-detail-page .selection-grid {
   gap: 0;
 }
 
 .project-detail-page .task-row-card,
+.top-level-tasks-page .task-row-card,
 .project-detail-page .inspection-card,
 .project-detail-page .selection-card {
   padding: 12px 0;
@@ -4457,6 +4489,7 @@ button.calendar-chip {
 }
 
 .project-detail-page .task-row-card.done,
+.top-level-tasks-page .task-row-card.done,
 .project-detail-page .inspection-card.inspection-passed,
 .project-detail-page .inspection-card.inspection-failed,
 .project-detail-page .inspection-card.inspection-follow-up {
@@ -4464,9 +4497,32 @@ button.calendar-chip {
 }
 
 .project-detail-page .task-row-card.overdue,
+.top-level-tasks-page .task-row-card.overdue,
 .project-detail-page .inspection-card.inspection-failed,
 .project-detail-page .inspection-card.inspection-follow-up {
   border-bottom-color: rgba(176, 59, 59, 0.32);
+}
+
+.top-level-tasks-page .metrics-grid {
+  gap: 0;
+  margin: 8px 0 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.top-level-tasks-page .metric-card {
+  padding: 4px 12px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.top-level-tasks-page .metric-card:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
 .project-detail-page .inspection-card.inspection-passed {
@@ -4494,6 +4550,175 @@ button.calendar-chip {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* Flat layouts for the remaining top-level workspaces. */
+.top-level-people-page .workspace-section,
+.top-level-schedule-page .workspace-section,
+.top-level-calendar-page .workspace-section {
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.top-level-schedule-page .gantt-shell {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.top-level-schedule-page .gantt-table {
+  background: transparent;
+}
+
+.top-level-calendar-page .calendar-dow-grid,
+.top-level-calendar-page .calendar-grid,
+.project-detail-page .calendar-dow-grid,
+.project-detail-page .calendar-grid {
+  border-radius: 0;
+}
+
+.top-level-people-page .people-grid {
+  gap: 0 20px;
+}
+
+.top-level-people-page .person-card {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.top-level-people-page .person-details {
+  gap: 8px 14px;
+}
+
+.top-level-people-page .person-details div {
+  padding: 4px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.top-level-people-page .people-list {
+  border-radius: 0;
+  background: transparent;
+}
+
+.top-level-people-page .people-list-row,
+.top-level-people-page .people-list-actions-cell {
+  background: transparent;
+}
+
+.top-level-settings-page .settings-sections {
+  gap: 22px;
+}
+
+.top-level-settings-page .settings-section {
+  gap: 12px;
+  padding: 0 0 18px;
+  border: 0;
+  border-bottom: 2px solid rgba(63, 79, 103, 0.24);
+  border-radius: 0;
+  background: transparent;
+}
+
+.top-level-settings-page .settings-grid {
+  gap: 0 24px;
+}
+
+.top-level-settings-page .settings-card {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.top-level-settings-page .settings-toggle,
+.top-level-settings-page .user-role-card,
+.top-level-settings-page .settings-order-row,
+.top-level-settings-page .holiday-row,
+.top-level-settings-page .inspection-subcode-row {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.top-level-settings-page .settings-toggle {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(30, 39, 51, 0.08);
+}
+
+.top-level-settings-page .user-role-card,
+.top-level-settings-page .settings-order-row,
+.top-level-settings-page .holiday-row,
+.top-level-settings-page .inspection-subcode-row {
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.top-level-tasks-page > .panel-actions,
+.top-level-people-page > .panel-actions,
+.top-level-schedule-page > .panel-actions,
+.top-level-calendar-page > .panel-actions,
+.top-level-settings-page > .panel-header {
+  min-height: var(--control-height);
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.top-level-tasks-page .workspace-control-card,
+.top-level-people-page .workspace-control-card {
+  padding-top: 10px;
+}
+
+.top-level-people-page .people-toolbar {
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+:where(
+  .top-level-tasks-page,
+  .top-level-people-page,
+  .top-level-schedule-page,
+  .top-level-calendar-page,
+  .top-level-settings-page
+) :where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), select) {
+  min-height: var(--control-height) !important;
+  border-radius: var(--control-radius) !important;
+}
+
+.workspace-content-main .empty-state {
+  padding: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.workspace-content-main .empty-state p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.button:focus-visible,
+.react-tab:focus-visible,
+.people-toggle-button:focus-visible,
+.projects-rail-item:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(63, 79, 103, 0.48);
+  outline-offset: 2px;
 }
 
 .selection-linked-tasks {
@@ -5068,8 +5293,6 @@ button.calendar-chip {
   .modal-card {
     width: min(760px, 100%);
     max-height: calc(100vh - 24px);
-    padding: 18px;
-    border-radius: 18px;
   }
 }
 
@@ -5291,9 +5514,299 @@ button.calendar-chip {
     padding: 0 5px;
   }
 
+}
+
+@media (max-width: 720px) {
+  .top-level-schedule-page .workspace-section {
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(63, 79, 103, 0.28) transparent;
+  }
+
+  .top-level-schedule-page .gantt-shell {
+    grid-template-columns: 280px minmax(620px, 1fr);
+    min-width: 900px;
+  }
+
+  .top-level-schedule-page .gantt-table {
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+  }
+
+  .top-level-calendar-page .workspace-section,
+  .project-detail-page .project-detail-calendar-card {
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(63, 79, 103, 0.28) transparent;
+  }
+
+  .top-level-calendar-page .calendar-dow-grid,
+  .top-level-calendar-page .calendar-grid,
+  .project-detail-page .calendar-dow-grid,
+  .project-detail-page .calendar-grid {
+    min-width: 700px;
+  }
+
+  .top-level-people-page .person-card-header {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+  }
+}
+
+@media (max-width: 960px) {
+  .workspace-content-shell.has-project-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .projects-rail {
+    position: static;
+    gap: 6px;
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .projects-rail-list {
+    display: flex;
+    gap: 6px;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 6px;
+    scroll-snap-type: x proximity;
+  }
+
+  .projects-rail-item {
+    flex: 0 0 184px;
+    min-width: 184px;
+    min-height: 66px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--control-radius);
+    scroll-snap-align: start;
+  }
+
+  .projects-rail-item.active {
+    border-left: 1px solid var(--border);
+    border-bottom: 3px solid var(--brand);
+  }
+
+  .projects-rail-all {
+    flex-basis: 150px;
+    min-width: 150px;
+    margin-bottom: 0;
+  }
+
+  .projects-rail-create {
+    flex: 0 0 150px;
+    width: auto;
+    min-width: 150px;
+    margin-top: 0;
+    scroll-snap-align: start;
+  }
+
+  .top-level-calendar-page .calendar-grid,
+  .project-detail-page .calendar-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .top-level-calendar-page .calendar-dow,
+  .project-detail-page .calendar-dow {
+    display: block;
+  }
+}
+
+/* Consistent scanning and interaction feedback for flat data rows. */
+:where(
+  .project-detail-page .task-row-card,
+  .top-level-tasks-page .task-row-card,
+  .project-detail-page .inspection-card,
+  .project-detail-page .selection-card,
+  .top-level-people-page .person-card,
+  .top-level-people-page .people-list-row,
+  .top-level-settings-page .settings-toggle,
+  .top-level-settings-page .user-role-card,
+  .top-level-settings-page .settings-order-row,
+  .top-level-settings-page .holiday-row,
+  .top-level-settings-page .inspection-subcode-row,
+  .project-detail-page .files-hierarchy-folder-row,
+  .project-file-row
+) {
+  border-bottom-color: rgba(63, 79, 103, 0.2);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+:where(
+  .project-detail-page .task-row-card,
+  .top-level-tasks-page .task-row-card,
+  .project-detail-page .inspection-card,
+  .project-detail-page .selection-card,
+  .top-level-people-page .person-card,
+  .top-level-people-page .people-list-row,
+  .top-level-settings-page .settings-toggle,
+  .top-level-settings-page .user-role-card,
+  .top-level-settings-page .settings-order-row,
+  .top-level-settings-page .holiday-row,
+  .top-level-settings-page .inspection-subcode-row,
+  .project-detail-page .files-hierarchy-folder-row,
+  .project-file-row
+):hover {
+  background-color: rgba(63, 79, 103, 0.035);
+}
+
+:where(
+  .project-detail-page .task-row-card,
+  .top-level-tasks-page .task-row-card,
+  .project-detail-page .inspection-card,
+  .project-detail-page .selection-card,
+  .top-level-people-page .person-card,
+  .top-level-people-page .people-list-row,
+  .top-level-settings-page .settings-toggle,
+  .top-level-settings-page .user-role-card,
+  .top-level-settings-page .settings-order-row,
+  .top-level-settings-page .holiday-row,
+  .top-level-settings-page .inspection-subcode-row,
+  .project-detail-page .files-hierarchy-folder-row,
+  .project-file-row
+):focus-within {
+  background-color: rgba(63, 79, 103, 0.055);
+  box-shadow: inset 3px 0 0 rgba(63, 79, 103, 0.42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(
+    .task-row-card,
+    .inspection-card,
+    .selection-card,
+    .person-card,
+    .people-list-row,
+    .settings-toggle,
+    .user-role-card,
+    .settings-order-row,
+    .holiday-row,
+    .inspection-subcode-row,
+    .files-hierarchy-folder-row,
+    .project-file-row
+  ) {
+    transition: none;
+  }
+}
+
+/* Keep the desktop workspace chrome compact so the working view starts sooner. */
+@media (min-width: 761px) {
+  .workspace-shell-bar:not(.android-shell-bar):has(.workspace-scope-bar) {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+    align-items: center;
+    gap: 12px;
+    padding: 6px 8px;
+  }
+
+  .workspace-shell-bar:not(.android-shell-bar) .workspace-scope-bar {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border-top: 0;
+  }
+
+  .workspace-shell-bar:not(.android-shell-bar) .workspace-scope-meta {
+    display: none;
+  }
+
+  .workspace-shell-bar:not(.android-shell-bar) .workspace-scope-filter {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .workspace-shell-bar:not(.android-shell-bar) .workspace-scope-filter > span {
+    margin-bottom: 3px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+  }
+
+  .workspace-shell-bar:not(.android-shell-bar) .workspace-scope-filter select {
+    min-height: 34px;
+  }
+}
+
+@media (max-width: 720px) {
+  .project-detail-tabs .react-tab {
+    width: auto;
+    min-width: 84px;
+    flex: 0 0 auto;
+  }
+}
+
+/* Flat dialog and form treatment. */
+.modal-card {
+  padding: 20px;
+  border: 1px solid rgba(63, 79, 103, 0.24);
+  border-radius: 0;
+  box-shadow: 0 20px 48px rgba(22, 27, 53, 0.2);
+}
+
+.modal-card > .panel-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.modal-card .modal-actions {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.modal-card :where(
+  .project-form-grid,
+  .inspection-form-grid
+) :where(input:not([type='checkbox']):not([type='radio']):not([type='file']), select, textarea),
+.modal-card .files-name-input {
+  border-radius: 0 !important;
+  background: var(--surface);
+}
+
+.modal-card .project-form-section {
+  margin: 8px 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.modal-card .project-access-panel {
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+@media (max-width: 560px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
   .modal-card {
-    padding: 14px;
-    border-radius: 16px;
+    width: 100%;
+    max-height: 92vh;
+    padding: 16px;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .modal-card .modal-actions {
+    position: sticky;
+    bottom: -16px;
+    margin-right: -16px;
+    margin-left: -16px;
+    padding: 12px 16px 16px;
+    background: var(--surface);
   }
 }
 
