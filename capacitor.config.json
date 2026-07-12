@@ -4,6 +4,6 @@
   "webDir": "dist",
   "bundledWebRuntime": false,
   "android": {
-    "backgroundColor": "#edf1f6"
+    "backgroundColor": "#0f5d84"
   }
 }

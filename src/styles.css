@@ -2375,6 +2375,119 @@ button.calendar-chip {
   width: min(720px, calc(100vw - 32px));
 }
 
+.app-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+  overflow: hidden;
+  background: #0f5d84;
+  color: #fff;
+}
+
+.app-splash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 0 49.9%, rgba(255, 255, 255, 0.035) 50%, transparent 50.1%),
+    linear-gradient(0deg, transparent 0 49.9%, rgba(255, 255, 255, 0.035) 50%, transparent 50.1%);
+  background-size: 88px 88px;
+  pointer-events: none;
+}
+
+.app-splash-content {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 22px;
+  width: min(360px, 100%);
+  text-align: center;
+}
+
+.app-splash-logo {
+  width: 76px;
+  height: 76px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.app-splash-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.app-splash-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.app-splash-copy span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.app-splash-copy h1 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.app-splash-copy p {
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+}
+
+.app-splash-progress {
+  position: relative;
+  display: block;
+  width: 160px;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.app-splash-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  transform: translateX(-100%);
+  animation: splash-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes splash-progress {
+  50% {
+    transform: translateX(45%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-splash-progress::after {
+    animation: none;
+    transform: translateX(0);
+  }
+}
+
 .auth-hero-copy .hero-brand {
   justify-content: center;
 }
@@ -5554,6 +5667,31 @@ textarea:focus-visible {
     align-items: center;
     text-align: left;
   }
+}
+
+/* Skip layout and paint work for long-list rows until they near the viewport. */
+:where(
+  .top-level-tasks-page .task-row-card,
+  .project-detail-page .task-row-card,
+  .project-detail-page .inspection-card,
+  .project-detail-page .selection-card,
+  .top-level-people-page .person-card,
+  .photo-card
+) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+
+.project-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+}
+
+.project-detail-page .inspection-card,
+.project-detail-page .selection-card,
+.top-level-people-page .person-card,
+.photo-card {
+  contain-intrinsic-size: auto 180px;
 }
 
 @media (max-width: 960px) {

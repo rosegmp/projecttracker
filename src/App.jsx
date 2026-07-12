@@ -2970,7 +2970,13 @@ function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }
             <article key={photo.id} className="photo-card">
               <button className="photo-thumb-button" type="button" onClick={() => void openPhoto(photo)}>
                 {getPhotoPreview(photo) ? (
-                  <img className="photo-thumb" src={getPhotoPreview(photo)} alt={getDisplayPhotoName(photo)} />
+                  <img
+                    className="photo-thumb"
+                    src={getPhotoPreview(photo)}
+                    alt={getDisplayPhotoName(photo)}
+                    loading="lazy"
+                    decoding="async"
+                  />
                 ) : (
                   <div className="photo-placeholder">
                     <FluentIcon name="camera" size={28} />
@@ -3824,6 +3830,8 @@ function ProjectSelectionsManager({
                           className="selection-photo-thumb"
                           src={getSelectionPhotoPreview(photo)}
                           alt={photo.originalName || photo.name || 'Selection photo'}
+                          loading="lazy"
+                          decoding="async"
                         />
                       ) : (
                         <div className="selection-photo-placeholder">
@@ -5281,6 +5289,8 @@ function NativeInspectionsView({
                                   className="inspection-thumbnail-image"
                                   src={getInspectionAttachmentPreview(inspection.stickerFile)}
                                   alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
+                                  loading="lazy"
+                                  decoding="async"
                                 />
                                 <span>Sticker</span>
                               </button>
@@ -5319,6 +5329,8 @@ function NativeInspectionsView({
                                   className="inspection-thumbnail-image"
                                   src={getInspectionAttachmentPreview(inspection.reportFile)}
                                   alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
+                                  loading="lazy"
+                                  decoding="async"
                                 />
                                 <span>Report</span>
                               </button>
@@ -12620,6 +12632,24 @@ function NativeSettingsView({ data, onStateChange, refresh, loading }) {
   );
 }
 
+function WorkspaceSplash({ message }) {
+  return (
+    <main className="app-splash" aria-live="polite" aria-busy="true">
+      <div className="app-splash-content">
+        <div className="app-splash-logo" aria-hidden="true">
+          <img src="/destiny-logo.png" alt="" />
+        </div>
+        <div className="app-splash-copy">
+          <span>Destiny Homes</span>
+          <h1>Project Hub</h1>
+          <p>{message}</p>
+        </div>
+        <span className="app-splash-progress" aria-hidden="true" />
+      </div>
+    </main>
+  );
+}
+
 export default function App() {
   const nativeAndroid = isNativeAndroidApp();
   const [activeTab, setActiveTab] = useState(getTabFromLocation);
@@ -12749,12 +12779,19 @@ export default function App() {
     trackerState.storageIssue,
   );
   const supabaseDiagnostics = getSupabaseDiagnosticsInfo();
-  const users = Array.isArray(trackerState.settings?.users) && trackerState.settings.users.length
-    ? trackerState.settings.users
-    : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }];
-  const activeUser = getActiveUserForAuthSession(users, authSession);
-  const capabilities = getUserCapabilities(activeUser?.role);
-  const visibleProjects = getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser);
+  const users = useMemo(
+    () =>
+      Array.isArray(trackerState.settings?.users) && trackerState.settings.users.length
+        ? trackerState.settings.users
+        : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
+    [trackerState.settings?.users],
+  );
+  const activeUser = useMemo(() => getActiveUserForAuthSession(users, authSession), [users, authSession]);
+  const capabilities = useMemo(() => getUserCapabilities(activeUser?.role), [activeUser?.role]);
+  const visibleProjects = useMemo(
+    () => getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser),
+    [trackerState.projects, trackerState.settings, activeUser],
+  );
   const visibleProjectIds = useMemo(() => new Set(visibleProjects.map((project) => project.id)), [visibleProjects]);
   const railTaskCountByProject = useMemo(() => {
     const counts = new Map();
@@ -12775,13 +12812,22 @@ export default function App() {
   const signedInUserName =
     String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
   const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
-  const visibleTabs = tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id));
-  const activeTabMeta = visibleTabs.find((tab) => tab.id === activeTab) || tabs.find((tab) => tab.id === activeTab) || tabs[0];
+  const visibleTabs = useMemo(
+    () => tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id)),
+    [capabilities.allowedTabs],
+  );
+  const activeTabMeta = useMemo(
+    () => visibleTabs.find((tab) => tab.id === activeTab) || tabs.find((tab) => tab.id === activeTab) || tabs[0],
+    [visibleTabs, activeTab],
+  );
   const sharedScopeEnabled = PROJECT_SCOPED_TAB_IDS.has(activeTab) && visibleProjects.length > 0;
-  const sharedScopeProject =
-    sessionProjectFilter === 'all'
-      ? null
-      : visibleProjects.find((project) => project.id === sessionProjectFilter) || null;
+  const sharedScopeProject = useMemo(
+    () =>
+      sessionProjectFilter === 'all'
+        ? null
+        : visibleProjects.find((project) => project.id === sessionProjectFilter) || null,
+    [sessionProjectFilter, visibleProjects],
+  );
   const initialWorkspaceLoading =
     !!authSession &&
     loading &&
@@ -12931,26 +12977,7 @@ export default function App() {
   }
 
   if (authLoading) {
-    return (
-      <main className="app-shell auth-shell">
-        <section className="hero hero-compact">
-          <div className="hero-copy auth-hero-copy">
-            <div className="hero-brand">
-              <div className="hero-logo" aria-hidden="true">
-                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-              </div>
-              <h1>Destiny Project Hub</h1>
-            </div>
-          </div>
-        </section>
-        <section className="auth-panel">
-          <div className="loading-panel">
-            <span className="loading-spinner" aria-hidden="true" />
-            <h2>Loading sign-in...</h2>
-          </div>
-        </section>
-      </main>
-    );
+    return <WorkspaceSplash message="Preparing sign-in" />;
   }
 
   if (!authSession) {
@@ -12978,26 +13005,7 @@ export default function App() {
   }
 
   if (initialWorkspaceLoading) {
-    return (
-      <main className="app-shell auth-shell">
-        <section className="hero hero-compact">
-          <div className="hero-copy auth-hero-copy">
-            <div className="hero-brand">
-              <div className="hero-logo" aria-hidden="true">
-                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-              </div>
-              <h1>Destiny Project Hub</h1>
-            </div>
-          </div>
-        </section>
-        <section className="auth-panel">
-          <div className="loading-panel">
-            <span className="loading-spinner" aria-hidden="true" />
-            <h2>Loading workspace...</h2>
-          </div>
-        </section>
-      </main>
-    );
+    return <WorkspaceSplash message="Loading workspace" />;
   }
   const activeView = (() => {
     if (activeTab === 'projects') {
