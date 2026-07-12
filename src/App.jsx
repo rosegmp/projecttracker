@@ -1132,59 +1132,68 @@ function ProjectCard({ project, taskCount, onEdit, onOpen }) {
   const nextAction = getProjectDashboardNextAction(project, taskCount);
   const blockLotLabel =
     project.block || project.lot
-      ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
+      ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' | ')
       : 'Not set';
   const drLabel = project.drNumber || 'Not set';
+  const startLabel = project.start ? formatShortDate(project.start) : 'No start date';
+  const endLabel = project.end ? formatShortDate(project.end) : 'No end date';
+  const dueLabel =
+    remaining === null
+      ? 'No deadline'
+      : remaining >= 0
+        ? `${remaining} day${remaining === 1 ? '' : 's'} left`
+        : `${Math.abs(remaining)} day${remaining === -1 ? '' : 's'} overdue`;
 
   return (
     <article className="project-card">
       <div className="project-card-header">
-        <div>
-          <p className="project-status">{health.label}</p>
+        <div className="project-card-heading">
+          <div className="project-card-status-row">
+            <p className="project-status">{health.label}</p>
+            <span className={`status-pill status-${project.status || 'planning'}`}>
+              {project.status || 'planning'}
+            </span>
+          </div>
           <h3>
             <button className="project-title-button" type="button" onClick={() => onOpen(project)}>
               {project.name}
             </button>
           </h3>
-          <p className="project-meta">{metaParts.length ? metaParts.join(' • ') : 'No project details yet'}</p>
+          <p className="project-meta">{metaParts.length ? metaParts.join(' | ') : 'No project details yet'}</p>
         </div>
-        <span className={`status-pill status-${project.status || 'planning'}`}>
-          {project.status || 'planning'}
-        </span>
+        <div className="project-card-deadline">
+          <span>Due</span>
+          <strong>{dueLabel}</strong>
+        </div>
       </div>
 
-      <div className="project-card-timeline">
-        <div className="project-timeline-item">
-          <span>Start</span>
-          <strong>{project.start ? formatShortDate(project.start) : 'Not set'}</strong>
+      <div className="project-card-metrics">
+        <div className="project-metric-tile">
+          <span>Progress</span>
+          <strong>{completion}%</strong>
         </div>
-        <div className="project-timeline-item">
-          <span>Target end</span>
-          <strong>{project.end ? formatShortDate(project.end) : 'Not set'}</strong>
+        <div className="project-metric-tile">
+          <span>Tasks</span>
+          <strong>{taskCount}</strong>
+        </div>
+        <div className="project-metric-tile">
+          <span>Inspections</span>
+          <strong>{inspectionCount}</strong>
+        </div>
+        <div className="project-metric-tile">
+          <span>Phases / steps</span>
+          <strong>{phaseCount} / {stepCount}</strong>
         </div>
       </div>
 
       <div className="progress-block">
         <div className="progress-row">
-          <span>{completion}% complete</span>
-          <span>
-            {remaining === null
-              ? 'No deadline'
-              : remaining >= 0
-                ? `${remaining} day${remaining === 1 ? '' : 's'} left`
-                : `${Math.abs(remaining)} day${remaining === -1 ? '' : 's'} overdue`}
-          </span>
+          <span>Start {startLabel}</span>
+          <span>Finish {endLabel}</span>
         </div>
         <div className="progress-bar">
           <div style={{ width: `${Math.max(0, Math.min(100, completion))}%` }} />
         </div>
-      </div>
-
-      <div className="project-summary-chips">
-        <span className="project-summary-chip">Phases {phaseCount}</span>
-        <span className="project-summary-chip">Steps {stepCount}</span>
-        <span className="project-summary-chip">Tasks {taskCount}</span>
-        <span className="project-summary-chip">Inspections {inspectionCount}</span>
       </div>
 
       <dl className="project-facts">
@@ -1205,17 +1214,22 @@ function ProjectCard({ project, taskCount, onEdit, onOpen }) {
           <dd>{customerLabel}</dd>
         </div>
       </dl>
-      <div className="project-next-action">
-        <span>Next action</span>
-        <p>{nextAction}</p>
-      </div>
-      {onEdit ? (
-        <div className="project-card-actions">
-          <button className="button secondary" type="button" onClick={() => onEdit(project)}>
-            Edit project
-          </button>
+      <div className="project-card-footer">
+        <div className="project-next-action">
+          <span>Next action</span>
+          <p>{nextAction}</p>
         </div>
-      ) : null}
+        <div className="project-card-actions">
+          <button className="button primary" type="button" onClick={() => onOpen(project)}>
+            Open project
+          </button>
+          {onEdit ? (
+            <button className="button secondary" type="button" onClick={() => onEdit(project)}>
+              Edit project
+            </button>
+          ) : null}
+        </div>
+      </div>
     </article>
   );
 }
@@ -3933,7 +3947,6 @@ function ProjectDetailView({
   canEdit = true,
   activeUser = null,
   selectionNavigationRequest = null,
-  onBack,
   onEdit,
   onDateClick,
   onCalendarItemClick,
@@ -3942,11 +3955,9 @@ function ProjectDetailView({
   const [activeDetailTab, setActiveDetailTab] = useState('overview');
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
-  const health = getProjectHealth(project);
   const allFiles = (project.files?.folders || []).flatMap((folder) => folder.files || []);
   const selectionCount = project.selections?.length || 0;
   const photoCount = project.photos?.length || 0;
-  const stepCount = getProjectStepCount(project);
   const blockLotLabel =
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
@@ -3957,7 +3968,7 @@ function ProjectDetailView({
   }, [project.id]);
 
   useEffect(() => {
-    if (!selectionNavigationRequest) return;
+    if (selectionNavigationRequest?.detailTab !== 'selections' || !selectionNavigationRequest?.selectionId) return;
     if (selectionNavigationRequest.projectId !== project.id) return;
     setActiveDetailTab('selections');
     setSelectionHighlightRequest(selectionNavigationRequest);
@@ -3965,39 +3976,6 @@ function ProjectDetailView({
 
   return (
     <div className="project-detail-page">
-      <div className="panel-header project-detail-header">
-        <div>
-          <p className="project-status">{health.label}</p>
-          <h2>{project.name}</h2>
-          <p className="project-meta">
-            {[project.address].filter(Boolean).join(' • ') || 'No project details yet'}
-          </p>
-        </div>
-        <div className="panel-actions project-detail-header-actions">
-          <span className={`status-pill status-${project.status || 'planning'}`}>
-            {project.status || 'planning'}
-          </span>
-          <button className="button secondary" type="button" onClick={onBack}>
-            Back to projects
-          </button>
-          {canEdit ? (
-            <button className="button primary" type="button" onClick={() => onEdit(project)}>
-              Edit project
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="project-detail-summary">
-        <div className="project-summary-chip">Phases {project.phases?.length || 0}</div>
-        <div className="project-summary-chip">Steps {stepCount}</div>
-        <div className="project-summary-chip">Tasks {tasks.length || 0}</div>
-        <div className="project-summary-chip">Inspections {project.inspections?.length || 0}</div>
-        <div className="project-summary-chip">Selections {selectionCount}</div>
-        <div className="project-summary-chip">Files {allFiles.length}</div>
-        <div className="project-summary-chip">Photos {photoCount}</div>
-      </div>
-
       <div className="project-detail-tabs" role="tablist" aria-label={`${project.name} sections`}>
         <button
           className={`react-tab${activeDetailTab === 'overview' ? ' active' : ''}`}
@@ -4070,6 +4048,11 @@ function ProjectDetailView({
             <div>
               <h3>Project Details</h3>
             </div>
+            {canEdit ? (
+              <button className="button primary" type="button" onClick={() => onEdit(project)}>
+                Edit project
+              </button>
+            ) : null}
           </div>
           <dl className="project-facts project-detail-facts">
             <div>
@@ -5779,7 +5762,11 @@ function NativeProjectsView({
       0,
     );
     const tasks = [...taskCountByProject.values()].reduce((sum, count) => sum + count, 0);
-    return { phases, steps, tasks };
+    const inspections = visibleProjects.reduce(
+      (sum, project) => sum + (project.inspections?.length || 0),
+      0,
+    );
+    return { phases, steps, tasks, inspections };
   }, [taskCountByProject, visibleProjects]);
 
   function setSelectedProject(projectId, history = 'push') {
@@ -5798,7 +5785,7 @@ function NativeProjectsView({
       initializedHomeSignalRef.current = true;
       return;
     }
-    setSelectedProject('', 'push');
+    setSelectedProject('', 'none');
   }, [homeSignal]);
 
   useEffect(() => {
@@ -5806,6 +5793,11 @@ function NativeProjectsView({
     if (!visibleProjects.some((project) => project.id === navigationTarget.projectId)) return;
     setSelectedProject(navigationTarget.projectId, 'push');
   }, [navigationTarget, visibleProjects]);
+
+  useEffect(() => {
+    if (navigationTarget?.action !== 'create' || readOnly) return;
+    startCreate();
+  }, [navigationTarget, readOnly]);
 
   useEffect(() => {
     const previousProjectId = previousSelectedProjectIdRef.current;
@@ -6393,14 +6385,6 @@ function NativeProjectsView({
 
   return (
     <section className="panel native-panel workspace-page">
-      {!selectedProject && !readOnly ? (
-        <div className="panel-actions">
-          <button className="button primary" type="button" onClick={startCreate}>
-            New project
-          </button>
-        </div>
-      ) : null}
-
       {selectedProject ? (
         <ProjectDetailView
           data={data}
@@ -6410,7 +6394,6 @@ function NativeProjectsView({
           canEdit={!readOnly}
           activeUser={activeUser}
           selectionNavigationRequest={navigationTarget}
-          onBack={() => setSelectedProject('', 'push')}
           onEdit={startEdit}
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
           onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
@@ -6419,17 +6402,43 @@ function NativeProjectsView({
       ) : (
         <>
           {visibleProjects.length ? (
-            <section className="workspace-section">
-              <div className="project-grid">
-                {visibleProjects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    taskCount={taskCountByProject.get(project.id) || 0}
-                    onEdit={readOnly ? undefined : startEdit}
-                    onOpen={() => setSelectedProject(project.id, 'push')}
-                  />
-                ))}
+            <section className="workspace-section projects-overview-section">
+              <div className="projects-overview-main">
+                  <div className="projects-overview-header">
+                    <div className="projects-overview-copy">
+                      <h2>Projects Overview</h2>
+                      <p>Live portfolio snapshot for the jobs that need attention today.</p>
+                    </div>
+                    <div className="projects-overview-stats">
+                      <div className="overview-stat-tile">
+                        <span>Projects</span>
+                        <strong>{visibleProjects.length}</strong>
+                      </div>
+                      <div className="overview-stat-tile">
+                        <span>Open tasks</span>
+                        <strong>{totals.tasks}</strong>
+                      </div>
+                      <div className="overview-stat-tile">
+                        <span>Inspections</span>
+                        <strong>{totals.inspections}</strong>
+                      </div>
+                      <div className="overview-stat-tile">
+                        <span>Phases / steps</span>
+                        <strong>{totals.phases} / {totals.steps}</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="project-grid">
+                    {visibleProjects.map((project) => (
+                      <ProjectCard
+                        key={project.id}
+                        project={project}
+                        taskCount={taskCountByProject.get(project.id) || 0}
+                        onEdit={readOnly ? undefined : startEdit}
+                        onOpen={() => setSelectedProject(project.id, 'push')}
+                      />
+                    ))}
+                  </div>
               </div>
             </section>
           ) : (
@@ -7473,7 +7482,7 @@ function NativeTasksView({
         </div>
       </div>
 
-      <div className="project-detail-summary">
+      <div className="task-summary-strip">
         <div className="project-summary-chip">All tasks {totals.total}</div>
         <div className="project-summary-chip">Open {totals.open}</div>
         <div className="project-summary-chip">Overdue {totals.overdue}</div>
@@ -12679,6 +12688,16 @@ export default function App() {
   const activeUser = getActiveUserForAuthSession(users, authSession);
   const capabilities = getUserCapabilities(activeUser?.role);
   const visibleProjects = getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser);
+  const visibleProjectIds = useMemo(() => new Set(visibleProjects.map((project) => project.id)), [visibleProjects]);
+  const railTaskCountByProject = useMemo(() => {
+    const counts = new Map();
+    (trackerState.tasks || []).forEach((task) => {
+      if (!task?.projectId || !visibleProjectIds.has(task.projectId)) return;
+      counts.set(task.projectId, (counts.get(task.projectId) || 0) + 1);
+    });
+    return counts;
+  }, [trackerState.tasks, visibleProjectIds]);
+  const railSelectedProjectId = getProjectIdFromLocation();
   const signedInUserName =
     String(activeUser?.name || '').trim() || String(authSession?.user?.email || '').trim() || 'Signed-in user';
   const signedInUserEmail = String(activeUser?.email || authSession?.user?.email || '').trim();
@@ -12715,9 +12734,27 @@ export default function App() {
   }, [activeTab, authSession]);
 
   function goToProjectsHome() {
+    if (activeTab === 'projects' && getProjectIdFromLocation()) {
+      syncProjectToLocation('', { push: true });
+    }
     setActiveTab('projects');
     setProjectNavigationTarget(null);
     setProjectsHomeSignal((current) => current + 1);
+    setShowAndroidNavMenu(false);
+    setShowAndroidAccountMenu(false);
+  }
+
+  function openNewProjectFromRail() {
+    if (activeTab === 'projects' && getProjectIdFromLocation()) {
+      syncProjectToLocation('', { push: true });
+    }
+    setSessionProjectFilter('all');
+    setActiveTab('projects');
+    setProjectsHomeSignal((current) => current + 1);
+    setProjectNavigationTarget({
+      action: 'create',
+      token: `create-${Date.now()}`,
+    });
     setShowAndroidNavMenu(false);
     setShowAndroidAccountMenu(false);
   }
@@ -13089,43 +13126,7 @@ export default function App() {
             </div>
           ) : null}
         </section>
-      ) : (
-        <section className="workspace-header">
-          <div className="workspace-header-card">
-            <div className="workspace-header-main">
-              <button className="workspace-brand-button" type="button" onClick={goToProjectsHome}>
-                <div className="hero-logo workspace-logo" aria-hidden="true">
-                  <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-                </div>
-                <div className="workspace-brand-copy">
-                  <h1>Destiny Project Hub</h1>
-                </div>
-              </button>
-              <div className="hero-user-controls workspace-user-controls">
-                <div className="workspace-user-card">
-                  <div className="workspace-user-avatar" aria-hidden="true">
-                    {signedInUserName.slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="signed-in-user" title={signedInUserEmail || undefined}>
-                    <span className="signed-in-label">Signed in</span>
-                    <strong>{signedInUserName}</strong>
-                    {signedInUserEmail ? <small>{signedInUserEmail}</small> : null}
-                  </div>
-                </div>
-                <button
-                  className="button secondary gantt-icon-button workspace-signout-button"
-                  type="button"
-                  onClick={() => void handleSignOut()}
-                  title="Sign out"
-                  aria-label="Sign out"
-                >
-                  <FluentIcon name="signOut" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
+      ) : null}
 
       {storageBanner ? (
         <section className="storage-banner">
@@ -13180,26 +13181,59 @@ export default function App() {
 
       {capabilities.showTabs && !nativeAndroid ? (
         <section className="workspace-shell-bar">
-          <nav className="react-tabs" aria-label="Destiny Project Hub navigation">
-            {visibleTabs.map((tab) => (
+          <div className="workspace-top-strip">
+            <button
+              className="workspace-strip-home"
+              type="button"
+              onClick={goToProjectsHome}
+              aria-label="Go to projects home"
+              title="Projects home"
+            >
+              <div className="workspace-logo workspace-strip-logo" aria-hidden="true">
+                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
+              </div>
+            </button>
+            <nav className="react-tabs" aria-label="Destiny Project Hub navigation">
+              {visibleTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    if (tab.id === 'projects') {
+                      goToProjectsHome();
+                      return;
+                    }
+                    setActiveTab(tab.id);
+                  }}
+                  title={tab.description}
+                  aria-label={`${tab.label}: ${tab.description}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+            <div className="workspace-user-controls workspace-strip-user">
+              <div className="workspace-user-card">
+                <div className="workspace-user-avatar" aria-hidden="true">
+                  {signedInUserName.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="signed-in-user" title={signedInUserEmail || undefined}>
+                  <strong>{signedInUserName}</strong>
+                  {signedInUserEmail ? <small>{signedInUserEmail}</small> : null}
+                </div>
+              </div>
               <button
-                key={tab.id}
-                className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
+                className="button secondary gantt-icon-button workspace-signout-button"
                 type="button"
-                onClick={() => {
-                  if (tab.id === 'projects') {
-                    goToProjectsHome();
-                    return;
-                  }
-                  setActiveTab(tab.id);
-                }}
-                title={tab.description}
-                aria-label={`${tab.label}: ${tab.description}`}
+                onClick={() => void handleSignOut()}
+                title="Sign out"
+                aria-label="Sign out"
               >
-                {tab.label}
+                <FluentIcon name="signOut" />
               </button>
-            ))}
-          </nav>
+            </div>
+          </div>
           {sharedScopeEnabled ? (
             <div className="workspace-scope-bar">
               <div className="workspace-scope-meta">
@@ -13221,9 +13255,69 @@ export default function App() {
           ) : null}
         </section>
       ) : null}
-      <AppErrorBoundary resetKey={activeTab}>
-        {activeView}
-      </AppErrorBoundary>
+      <div className={`workspace-content-shell${capabilities.showTabs && !nativeAndroid && visibleProjects.length ? ' has-project-rail' : ''}`}>
+        {capabilities.showTabs && !nativeAndroid && visibleProjects.length ? (
+          <aside className="projects-rail workspace-projects-rail">
+            <div className="projects-rail-header">
+              <strong>Projects</strong>
+              <span>{visibleProjects.length} jobs</span>
+            </div>
+            <div className="projects-rail-list" role="list" aria-label="All projects">
+              <button
+                className={`projects-rail-item projects-rail-all${activeTab === 'projects' && !railSelectedProjectId ? ' active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setSessionProjectFilter('all');
+                  goToProjectsHome();
+                }}
+                aria-pressed={activeTab === 'projects' && !railSelectedProjectId}
+              >
+                <span className="projects-rail-item-title">All Projects</span>
+                <span className="projects-rail-item-meta">Portfolio overview</span>
+              </button>
+              {visibleProjects.map((project) => {
+                const taskCount = railTaskCountByProject.get(project.id) || 0;
+                const health = getProjectHealth(project);
+                const isActive = project.id === railSelectedProjectId || project.id === sessionProjectFilter;
+                return (
+                  <button
+                    key={project.id}
+                    className={`projects-rail-item${isActive ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => {
+                      setProjectNavigationTarget({
+                        projectId: project.id,
+                        token: `${project.id}-${Date.now()}`,
+                      });
+                      if (activeTab !== 'projects') {
+                        setActiveTab('projects');
+                      }
+                      syncProjectToLocation(project.id, { push: true });
+                    }}
+                    aria-pressed={isActive}
+                  >
+                    <span className="projects-rail-item-title">{project.name}</span>
+                    <span className="projects-rail-item-meta">
+                      {project.status || 'planning'} | {taskCount} tasks
+                    </span>
+                    <span className="projects-rail-item-meta subtle">{health.label}</span>
+                  </button>
+                );
+              })}
+              {capabilities.canEdit ? (
+                <button className="button primary projects-rail-create" type="button" onClick={openNewProjectFromRail}>
+                  New project
+                </button>
+              ) : null}
+            </div>
+          </aside>
+        ) : null}
+        <div className="workspace-content-main">
+          <AppErrorBoundary resetKey={activeTab}>
+            {activeView}
+          </AppErrorBoundary>
+        </div>
+      </div>
     </main>
   );
 }
