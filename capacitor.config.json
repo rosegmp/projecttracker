@@ -3,6 +3,11 @@
   "appName": "Destiny Project Hub",
   "webDir": "dist",
   "bundledWebRuntime": false,
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
   "android": {
     "backgroundColor": "#0f5d84"
   }

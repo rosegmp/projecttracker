@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import {
   Add24Regular,
   AppFolder24Regular,
@@ -339,17 +341,29 @@ function isShareDismissed(error) {
 async function downloadBlobForCurrentPlatform(blob, fileName = 'download') {
   const safeName = String(fileName || 'download').trim() || 'download';
 
-  if (isNativeAndroidApp() && typeof navigator !== 'undefined' && typeof navigator.share === 'function' && typeof File !== 'undefined') {
-    const shareFile = new File([blob], safeName, { type: blob.type || 'application/octet-stream' });
-    const sharePayload = {
-      title: safeName,
-      files: [shareFile],
-    };
-
-    if (!navigator.canShare || navigator.canShare(sharePayload)) {
-      await navigator.share(sharePayload);
-      return;
-    }
+  if (isNativeAndroidApp()) {
+    const androidSafeName = safeName.replace(/[\\/:*?"<>|]+/g, '-');
+    const path = `downloads/${androidSafeName}`;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('Could not prepare the file for download.'));
+      reader.readAsDataURL(blob);
+    });
+    const base64Data = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+    await Filesystem.writeFile({
+      path,
+      data: base64Data,
+      directory: Directory.Cache,
+      recursive: true,
+    });
+    const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
+    await Share.share({
+      title: androidSafeName,
+      url: uri,
+      dialogTitle: `Save or share ${androidSafeName}`,
+    });
+    return;
   }
 
   const objectUrl = URL.createObjectURL(blob);
@@ -6654,6 +6668,7 @@ function TaskRow({
   onOpenSelection,
   onDelete,
   saving,
+  deleting = false,
 }) {
   const overdue = isOverdue(task.due, task.done);
   const isEditing = editingTaskId === task.id;
@@ -6779,7 +6794,8 @@ function TaskRow({
   return (
     <article
       ref={rowRef}
-      className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}${highlighted ? ' highlighted' : ''}`}
+      className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}${highlighted ? ' highlighted' : ''}${deleting ? ' deleting' : ''}`}
+      aria-busy={deleting}
     >
       <div className="task-main">
         <input
@@ -6859,14 +6875,14 @@ function TaskRow({
           <FluentIcon name="edit" />
         </button>
         <button
-          className="button secondary gantt-icon-button gantt-trash-button"
+          className={`button secondary gantt-trash-button${deleting ? ' is-loading task-delete-working' : ' gantt-icon-button'}`}
           type="button"
           onClick={() => onDelete(task)}
           disabled={saving}
-          title="Delete task"
+          title={deleting ? 'Deleting task' : 'Delete task'}
           aria-label={`Delete ${task.label}`}
         >
-          <FluentIcon name="delete" />
+          {deleting ? 'Deleting…' : <FluentIcon name="delete" />}
         </button>
       </div>
     </article>
@@ -7044,6 +7060,7 @@ function NativeTasksView({
   const [personDraft, setPersonDraft] = useState(null);
   const [emailDraft, setEmailDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deletingTaskId, setDeletingTaskId] = useState('');
   const [taskSaveMessage, setTaskSaveMessage] = useState('');
   const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
   const createAttachmentInputRef = useRef(null);
@@ -7470,8 +7487,13 @@ function NativeTasksView({
       tone: 'danger',
     });
     if (!confirmed) return;
-    await runTaskMutation((currentState) => deleteTask(currentState, task.id));
-    if (editingTaskId === task.id) handleEditCancel();
+    setDeletingTaskId(task.id);
+    try {
+      await runTaskMutation((currentState) => deleteTask(currentState, task.id));
+      if (editingTaskId === task.id) handleEditCancel();
+    } finally {
+      setDeletingTaskId('');
+    }
   }
 
   async function continueEmailDraft() {
@@ -7784,6 +7806,7 @@ function NativeTasksView({
                       onOpenSelection={handleOpenTaskSelection}
                       onDelete={handleDelete}
                       saving={saving}
+                      deleting={deletingTaskId === task.id}
                     />
                   ))}
                 </section>
@@ -7835,6 +7858,7 @@ function NativeTasksView({
                   onOpenSelection={handleOpenTaskSelection}
                   onDelete={handleDelete}
                   saving={saving}
+                  deleting={deletingTaskId === task.id}
                 />
               ))
             )

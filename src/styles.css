@@ -3208,6 +3208,16 @@ button.calendar-chip {
   background: #fff;
 }
 
+.task-row-card.deleting {
+  opacity: 0.62;
+  cursor: progress;
+}
+
+.task-delete-working {
+  min-width: 92px;
+  cursor: progress;
+}
+
 .task-row-card.done {
   background: linear-gradient(180deg, rgba(29, 158, 117, 0.06), #fff);
 }
