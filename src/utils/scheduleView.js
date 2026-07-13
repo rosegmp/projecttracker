@@ -42,6 +42,30 @@ function isCurrentOrFutureRange(start, end, todayIso) {
   return effectiveEnd >= todayIso;
 }
 
+export function isPhaseEntirelyPast(phase, todayIso = new Date().toISOString().slice(0, 10)) {
+  const datedEnds = [];
+  if (phase.start || phase.end) datedEnds.push(phase.end || phase.start);
+  (phase.steps || []).forEach((step) => {
+    if (step.start || step.end) datedEnds.push(step.end || step.start);
+    (phase.delays || [])
+      .filter((delay) => delay.stepId === step.id && step.start)
+      .forEach((delay) => {
+        datedEnds.push(toIsoDate(addDays(parseDateValue(step.start), Number(delay.days) || 0)));
+      });
+  });
+  return datedEnds.length > 0 && datedEnds.every((date) => date < todayIso);
+}
+
+export function getDefaultPhaseExpansion(projects, todayIso = new Date().toISOString().slice(0, 10)) {
+  const expansion = {};
+  (projects || []).forEach((project) => {
+    (project.phases || []).forEach((phase) => {
+      if (isPhaseEntirelyPast(phase, todayIso)) expansion[phase.id] = false;
+    });
+  });
+  return expansion;
+}
+
 export function buildScheduleRows(projects, tasksByProject, showTasks, expandedProjects, expandedPhases, options = {}) {
   const showCurrentAndFutureOnly = options.showCurrentAndFutureOnly === true;
   const todayIso = options.todayIso || new Date().toISOString().slice(0, 10);

@@ -13,7 +13,8 @@ import {
   wouldCreatePhaseCycleFromPreds,
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
-import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows } from '../src/utils/scheduleView.js';
+import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
+import { getCalendarWeekLayout } from '../src/utils/calendarUi.js';
 import {
   buildTaskAssigneeDirectory,
   buildTaskAssigneeOptions,
@@ -95,6 +96,155 @@ const tests = [
       const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
       assert.match(source, /label: `\$\{startLabel\} - \$\{endLabel\}`/);
       assert.doesNotMatch(source, /â/);
+    },
+  },
+  {
+    name: 'modal components expose accessible dialog semantics',
+    async run() {
+      const modalModules = [
+        'AppDialogs',
+        'FormDialogs',
+        'InspectionImageEditorModal',
+        'PersonModal',
+        'ProjectModal',
+        'ScheduleDialogs',
+        'SelectionModal',
+        'TaskInspectionDialogs',
+      ];
+      for (const moduleName of modalModules) {
+        const source = await readFile(new URL(`../src/components/${moduleName}.jsx`, import.meta.url), 'utf8');
+        const modalCards = source.match(/<div className="modal-card[^>]+>/g) || [];
+        assert.ok(modalCards.length > 0, `${moduleName} should contain a modal card`);
+        for (const modalCard of modalCards) {
+          assert.match(modalCard, /role="dialog"/);
+          assert.match(modalCard, /aria-modal="true"/);
+          assert.match(modalCard, /aria-labelledby="[^"]+"/);
+        }
+      }
+    },
+  },
+  {
+    name: 'shared calendar week layout keeps range overflow and day capacity consistent',
+    run() {
+      const cells = Array.from({ length: 7 }, (_, index) => ({
+        isWeekend: index === 0 || index === 6,
+        holidays: [],
+        items: index === 2 ? [{ id: 'task-1' }, { id: 'task-2' }] : [],
+      }));
+      const week = {
+        cells,
+        laneCount: 5,
+        holidayLaneCount: 0,
+        isExpanded: false,
+        scheduledBars: Array.from({ length: 5 }, (_, lane) => ({
+          id: `bar-${lane}`,
+          type: 'phase',
+          lane,
+          startCol: 1,
+          endCol: 5,
+        })),
+        holidayBars: [],
+      };
+      const layout = getCalendarWeekLayout(week);
+      assert.equal(layout.visibleLaneCount, 5);
+      assert.equal(layout.hiddenScheduledBarCount, 0);
+      assert.ok(layout.maxVisibleDayItems >= 0);
+      assert.ok(layout.cellHeight >= layout.spanOffset + 10);
+    },
+  },
+  {
+    name: 'top-level and project calendars use the shared grid renderer',
+    async run() {
+      for (const moduleName of ['NativeScheduleView', 'ProjectDetailCalendar']) {
+        const source = await readFile(new URL(`../src/components/${moduleName}.jsx`, import.meta.url), 'utf8');
+        assert.match(source, /import SharedCalendarGrid from ['"]\.\/SharedCalendarGrid\.jsx['"]/);
+        assert.match(source, /<SharedCalendarGrid/);
+        assert.doesNotMatch(source, /className="calendar-week-grid"/);
+      }
+    },
+  },
+  {
+    name: 'mobile schedule uses a dedicated agenda instead of the desktop Gantt',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /<MobileScheduleAgenda/);
+      assert.match(scheduleSource, /gantt-shell desktop-schedule-gantt/);
+      assert.match(agendaSource, /aria-label="Schedule agenda"/);
+      assert.match(styleSource, /\.top-level-schedule-page \.desktop-schedule-gantt/);
+      assert.match(styleSource, /\.mobile-schedule-agenda \{\s+display: grid;/);
+    },
+  },
+  {
+    name: 'desktop schedule can switch between Gantt and agenda views',
+    async run() {
+      const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(source, /const \[scheduleDisplayMode, setScheduleDisplayMode\] = useState\(getStoredScheduleView\)/);
+      assert.match(source, /aria-label="Schedule view"/);
+      assert.match(source, /aria-pressed=\{scheduleDisplayMode === 'agenda'\}/);
+      assert.match(source, /desktop-hidden/);
+      assert.match(source, /desktop-visible/);
+    },
+  },
+  {
+    name: 'desktop schedule remembers the selected view and zoom',
+    async run() {
+      const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(source, /const SCHEDULE_VIEW_STORAGE_KEY = 'project-tracker:schedule-view'/);
+      assert.match(source, /const SCHEDULE_ZOOM_STORAGE_KEY = 'project-tracker:schedule-zoom'/);
+      assert.match(source, /const \[ganttZoomValue, setGanttZoomValue\] = useState\(getStoredScheduleZoom\)/);
+      assert.match(source, /localStorage\.setItem\(SCHEDULE_VIEW_STORAGE_KEY, scheduleDisplayMode\)/);
+      assert.match(source, /localStorage\.setItem\(SCHEDULE_ZOOM_STORAGE_KEY, String\(ganttZoomValue\)\)/);
+    },
+  },
+  {
+    name: 'schedule headers remain visible inside scrolling Gantt and agenda views',
+    async run() {
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(agendaSource, /className="mobile-agenda-column-header"/);
+      assert.match(styleSource, /\.mobile-agenda-column-header\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s);
+      assert.match(styleSource, /\.top-level-schedule-page \.gantt-shell\s*\{[^}]*max-height:[^;]+;[^}]*overflow:\s*auto;/s);
+      assert.match(styleSource, /\.top-level-schedule-page \.gantt-header\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s);
+      assert.match(styleSource, /\.gantt-timeline-header\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s);
+    },
+  },
+  {
+    name: 'Gantt item and timeline rows share hover and keyboard focus highlighting',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /const \[activeGanttRowId, setActiveGanttRowId\] = useState\(null\)/);
+      assert.match(scheduleSource, /className=\{`gantt-row-label[^`]+is-active/);
+      assert.match(scheduleSource, /className=\{`gantt-grid-row[^`]+is-active/);
+      assert.match(scheduleSource, /onFocusCapture=\{\(\) => setActiveGanttRowId\(row\.id\)\}/);
+      assert.match(styleSource, /\.top-level-schedule-page \.gantt-row-label\.is-active/);
+      assert.match(styleSource, /\.top-level-schedule-page \.gantt-grid-row\.is-active/);
+    },
+  },
+  {
+    name: 'agenda Today targets the earliest step starting today or later',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      assert.match(agendaSource, /data-start-date=\{row\.type === 'step'/);
+      assert.match(scheduleSource, /dataset\.startDate >= todayKey/);
+      assert.match(scheduleSource, /sort\(\(first, second\) => first\.dataset\.startDate\.localeCompare\(second\.dataset\.startDate\)\)/);
+      assert.match(scheduleSource, /target\.scrollIntoView\(\{ behavior: 'smooth', block: 'center' \}\)/);
+      assert.match(scheduleSource, /onClick=\{handleScheduleToday\}/);
+    },
+  },
+  {
+    name: 'Gantt Today centers the real sticky-layout scroll container',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /const ganttShellRef = useRef\(null\)/);
+      assert.match(scheduleSource, /const ganttTableRef = useRef\(null\)/);
+      assert.match(scheduleSource, /ref=\{ganttShellRef\} className=\{`gantt-shell/);
+      assert.match(scheduleSource, /const visibleTimelineWidth = Math\.max\(1, shell\.clientWidth - tableWidth\)/);
+      assert.match(scheduleSource, /shell\.scrollTo\(\{/);
+      assert.doesNotMatch(scheduleSource, /function scrollGanttToToday\(\) \{[\s\S]*?wrap\.scrollTo\(/);
     },
   },
   {
@@ -330,6 +480,31 @@ const tests = [
         .map((row) => row.entityId);
 
       assert.deepEqual(orderedStepIds, ['step-a', 'step-b', 'step-z', 'step-c']);
+    },
+  },
+  {
+    name: 'past phases default to collapsed while current, future, and undated phases stay open',
+    run() {
+      const pastPhase = {
+        id: 'past',
+        start: '2026-06-01',
+        end: '2026-06-30',
+        steps: [{ id: 'past-step', start: '2026-06-05', end: '2026-06-10' }],
+      };
+      const futurePhase = {
+        id: 'future',
+        start: '2026-06-01',
+        end: '2026-07-20',
+        steps: [{ id: 'future-step', start: '2026-07-15', end: '2026-07-20' }],
+      };
+      const undatedPhase = { id: 'undated', steps: [] };
+      assert.equal(isPhaseEntirelyPast(pastPhase, '2026-07-13'), true);
+      assert.equal(isPhaseEntirelyPast(futurePhase, '2026-07-13'), false);
+      assert.equal(isPhaseEntirelyPast(undatedPhase, '2026-07-13'), false);
+      assert.deepEqual(
+        getDefaultPhaseExpansion([{ phases: [pastPhase, futurePhase, undatedPhase] }], '2026-07-13'),
+        { past: false },
+      );
     },
   },
   {

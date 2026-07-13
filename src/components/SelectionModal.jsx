@@ -26,11 +26,11 @@ export default function SelectionModal({
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="selection-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Selection</p>
-            <h2>{isEditing ? 'Edit selection' : 'Add selection'}</h2>
+            <h2 id="selection-modal-title">{isEditing ? 'Edit selection' : 'Add selection'}</h2>
             <p className="panel-copy">{projectName || 'Project'}</p>
           </div>
         </div>
@@ -202,6 +202,5 @@ export default function SelectionModal({
     </div>,
   );
 }
-
 
 

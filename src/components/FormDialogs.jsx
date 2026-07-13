@@ -11,11 +11,11 @@ export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange,
       : 'Add more steps to create dependencies in this phase.';
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card dependency-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card dependency-modal-card" role="dialog" aria-modal="true" aria-labelledby="predecessor-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Predecessors</p>
-            <h2>{entityLabel} Predecessors</h2>
+            <h2 id="predecessor-dialog-title">{entityLabel} Predecessors</h2>
             <p className="panel-copy">
               Editing: <strong>{draft.name}</strong>
             </p>
@@ -77,11 +77,11 @@ export function MoveFileModal({ draft, saving, onChange, onClose, onSave }) {
   if (!draft) return null;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card move-file-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card move-file-modal-card" role="dialog" aria-modal="true" aria-labelledby="move-file-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Move file</p>
-            <h2>Move File</h2>
+            <h2 id="move-file-dialog-title">Move File</h2>
             <p className="panel-copy">
               <strong>{draft.fileName || draft.originalName || 'Untitled file'}</strong>
             </p>
@@ -118,11 +118,11 @@ export function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
   if (!draft) return null;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card compact-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="text-entry-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">{draft.eyebrow || 'Entry'}</p>
-            <h2>{draft.title || 'Update value'}</h2>
+            <h2 id="text-entry-dialog-title">{draft.title || 'Update value'}</h2>
             {draft.description ? <p className="panel-copy">{draft.description}</p> : null}
           </div>
         </div>
@@ -165,11 +165,11 @@ export function EmailAddressModal({ draft, saving, onChange, onToggleSave, onClo
   if (!draft) return null;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card compact-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="email-entry-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Email</p>
-            <h2>{draft.title || 'Enter email address'}</h2>
+            <h2 id="email-entry-dialog-title">{draft.title || 'Enter email address'}</h2>
             <p className="panel-copy">
               {draft.description || 'Add an email address now, or continue without a recipient.'}
             </p>
@@ -217,4 +217,3 @@ export function EmailAddressModal({ draft, saving, onChange, onToggleSave, onClo
     </div>,
   );
 }
-

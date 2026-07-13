@@ -12,11 +12,11 @@ export default function PersonModal({ draft, type, isEditing, saving, onChange, 
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="person-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Person</p>
-            <h2>{title}</h2>
+            <h2 id="person-modal-title">{title}</h2>
           </div>
         </div>
 
@@ -92,4 +92,3 @@ export default function PersonModal({ draft, type, isEditing, saving, onChange, 
     </div>,
   );
 }
-

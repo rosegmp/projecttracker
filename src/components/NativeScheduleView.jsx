@@ -9,10 +9,10 @@ import {
   normalizeStartDate, syncProjectPhaseDates, syncProjectTasks, syncStepLinks,
   wouldCreateCycleFromPreds, wouldCreatePhaseCycleFromPreds,
 } from '../utils/schedule.js';
-import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView } from '../utils/scheduleView.js';
+import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
 import {
-  addDays, diffInDays, endOfMonth, endOfWeek, enumerateMonths, formatHebrewCalendarLabel,
-  formatShortDate, formatTooltipDate, getProjectAccentColor, splitStepBarAroundBlockedDays,
+  addDays, diffInDays, endOfMonth, endOfWeek, enumerateMonths,
+  formatShortDate, formatTooltipDate,
   startOfMonth, startOfWeek, toIsoDate, useHorizontalSwipe,
 } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
@@ -22,6 +22,8 @@ import { InspectionModal, TaskModal } from './TaskInspectionDialogs.jsx';
 import { StepPredecessorModal, TextEntryModal } from './FormDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import PersonModal from './PersonModal.jsx';
+import SharedCalendarGrid from './SharedCalendarGrid.jsx';
+import MobileScheduleAgenda from './MobileScheduleAgenda.jsx';
 
 const GANTT_ROW_MIN_HEIGHT = 38;
 const CALENDAR_VISIBLE_RANGE_LANES = 3;
@@ -32,7 +34,27 @@ const GANTT_ZOOM_OPTIONS = [
   { label: '2 months', visibleDays: 60 }, { label: '3 months', visibleDays: 90 },
 ];
 const GANTT_ZOOM_REFERENCE_WIDTH = 760;
+const SCHEDULE_VIEW_STORAGE_KEY = 'project-tracker:schedule-view';
+const SCHEDULE_ZOOM_STORAGE_KEY = 'project-tracker:schedule-zoom';
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
+
+function getStoredScheduleView() {
+  try {
+    const stored = window.localStorage.getItem(SCHEDULE_VIEW_STORAGE_KEY);
+    return stored === 'agenda' ? 'agenda' : 'gantt';
+  } catch {
+    return 'gantt';
+  }
+}
+
+function getStoredScheduleZoom() {
+  try {
+    const stored = Number.parseInt(window.localStorage.getItem(SCHEDULE_ZOOM_STORAGE_KEY), 10);
+    return Number.isInteger(stored) && stored >= 0 && stored < GANTT_ZOOM_OPTIONS.length ? stored : 1;
+  } catch {
+    return 1;
+  }
+}
 
 function parseDateValue(iso) { if (!iso) return null; const date = new Date(`${iso}T00:00:00`); return Number.isNaN(date.getTime()) ? null : date; }
 function getTimelineStyle(row, minDate, maxDate) {
@@ -65,13 +87,16 @@ export default function NativeScheduleView({
   onProjectFilterChange = () => {},
 }) {
   const ganttGridRef = useRef(null);
+  const ganttShellRef = useRef(null);
+  const ganttTableRef = useRef(null);
   const ganttTimelineWrapRef = useRef(null);
+  const mobileAgendaRef = useRef(null);
   const ganttLabelRowRefs = useRef([]);
   const ganttTimelineRowRefs = useRef([]);
   const lastAutoScrollKeyRef = useRef('');
-  const [ganttZoomValue, setGanttZoomValue] = useState(1);
+  const [ganttZoomValue, setGanttZoomValue] = useState(getStoredScheduleZoom);
   const [expandedProjects, setExpandedProjects] = useState({});
-  const [expandedPhases, setExpandedPhases] = useState({});
+  const [expandedPhases, setExpandedPhases] = useState(() => getDefaultPhaseExpansion(data.projects));
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -94,8 +119,20 @@ export default function NativeScheduleView({
   const [rowHeights, setRowHeights] = useState([]);
   const [expandedCalendarWeeks, setExpandedCalendarWeeks] = useState({});
   const [saving, setSaving] = useState(false);
+  const [activeGanttRowId, setActiveGanttRowId] = useState(null);
   const isCalendarView = view === 'calendar';
   const isScheduleView = view === 'schedule';
+  const [scheduleDisplayMode, setScheduleDisplayMode] = useState(getStoredScheduleView);
+
+  useEffect(() => {
+    if (!isScheduleView) return;
+    try {
+      window.localStorage.setItem(SCHEDULE_VIEW_STORAGE_KEY, scheduleDisplayMode);
+      window.localStorage.setItem(SCHEDULE_ZOOM_STORAGE_KEY, String(ganttZoomValue));
+    } catch {
+      // Storage can be unavailable in privacy-restricted browsers; the in-memory preferences still work.
+    }
+  }, [ganttZoomValue, isScheduleView, scheduleDisplayMode]);
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -106,6 +143,20 @@ export default function NativeScheduleView({
     () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
     [data.tasks, data.settings, visibleProjects],
   );
+
+  useEffect(() => {
+    const defaults = getDefaultPhaseExpansion(visibleProjects);
+    setExpandedPhases((current) => {
+      let changed = false;
+      const next = { ...current };
+      Object.entries(defaults).forEach(([phaseId, expanded]) => {
+        if (next[phaseId] !== undefined) return;
+        next[phaseId] = expanded;
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [visibleProjects]);
 
   useEffect(() => {
     if (!visibleProjects.length) {
@@ -485,8 +536,8 @@ export default function NativeScheduleView({
 
   useEffect(() => {
     if (!isScheduleView) return;
-    const wrap = ganttTimelineWrapRef.current;
-    if (!wrap) return;
+    const shell = ganttShellRef.current;
+    if (!shell) return;
 
     const today = new Date();
     const todayKey = toIsoDate(today);
@@ -505,15 +556,17 @@ export default function NativeScheduleView({
 
     const offsetDays = diffInDays(timeline.minDate, today);
     const todayCenterX = (offsetDays + 0.5) * ganttPixelsPerDay;
+    const tableWidth = ganttTableRef.current?.offsetWidth || 0;
+    const visibleTimelineWidth = Math.max(1, shell.clientWidth - tableWidth);
     const targetScrollLeft = Math.max(
       0,
       Math.min(
-        todayCenterX - wrap.clientWidth / 2,
-        Math.max(0, wrap.scrollWidth - wrap.clientWidth),
+        todayCenterX - visibleTimelineWidth / 2,
+        Math.max(0, shell.scrollWidth - shell.clientWidth),
       ),
     );
 
-    wrap.scrollLeft = targetScrollLeft;
+    shell.scrollLeft = targetScrollLeft;
   }, [
     projectFilter,
     ganttPixelsPerDay,
@@ -990,17 +1043,38 @@ export default function NativeScheduleView({
   }
 
   function scrollGanttToToday() {
-    const wrap = ganttTimelineWrapRef.current;
-    if (!wrap) return;
+    const shell = ganttShellRef.current;
+    if (!shell) return;
     const today = new Date();
     const todayKey = toIsoDate(today);
     if (todayKey < toIsoDate(timeline.minDate) || todayKey > toIsoDate(timeline.maxDate)) return;
     const offsetDays = diffInDays(timeline.minDate, today);
     const todayCenterX = (offsetDays + 0.5) * ganttPixelsPerDay;
-    wrap.scrollTo({
-      left: Math.max(0, Math.min(todayCenterX - wrap.clientWidth / 2, wrap.scrollWidth - wrap.clientWidth)),
+    const tableWidth = ganttTableRef.current?.offsetWidth || 0;
+    const visibleTimelineWidth = Math.max(1, shell.clientWidth - tableWidth);
+    shell.scrollTo({
+      left: Math.max(0, Math.min(todayCenterX - visibleTimelineWidth / 2, shell.scrollWidth - shell.clientWidth)),
       behavior: 'smooth',
     });
+  }
+
+  function scrollAgendaToToday() {
+    const agenda = mobileAgendaRef.current;
+    if (!agenda) return;
+    const todayKey = toIsoDate(new Date());
+    const upcomingSteps = Array.from(agenda.querySelectorAll('.mobile-agenda-item.step[data-start-date]'))
+      .filter((element) => element.dataset.startDate >= todayKey)
+      .sort((first, second) => first.dataset.startDate.localeCompare(second.dataset.startDate));
+    const target = upcomingSteps[0];
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.focus({ preventScroll: true });
+  }
+
+  function handleScheduleToday() {
+    const mobileAgendaActive = window.matchMedia?.('(max-width: 720px)').matches;
+    if (scheduleDisplayMode === 'agenda' || mobileAgendaActive) scrollAgendaToToday();
+    else scrollGanttToToday();
   }
 
   async function handleSaveInspectionDraft() {
@@ -1982,9 +2056,27 @@ export default function NativeScheduleView({
           ) : null}
           {isScheduleView ? (
             <div className="schedule-toolbar-actions">
-              <button className="button secondary schedule-today-button" type="button" onClick={scrollGanttToToday}>
+              <button className="button secondary schedule-today-button" type="button" onClick={handleScheduleToday}>
                 Today
               </button>
+              <div className="schedule-view-toggle" role="group" aria-label="Schedule view">
+                <button
+                  className={`button secondary${scheduleDisplayMode === 'gantt' ? ' active' : ''}`}
+                  type="button"
+                  aria-pressed={scheduleDisplayMode === 'gantt'}
+                  onClick={() => setScheduleDisplayMode('gantt')}
+                >
+                  Gantt
+                </button>
+                <button
+                  className={`button secondary${scheduleDisplayMode === 'agenda' ? ' active' : ''}`}
+                  type="button"
+                  aria-pressed={scheduleDisplayMode === 'agenda'}
+                  onClick={() => setScheduleDisplayMode('agenda')}
+                >
+                  Agenda
+                </button>
+              </div>
               <div className="gantt-zoom-controls" aria-label="Gantt zoom controls">
                 <span>Zoom</span>
                 <input
@@ -2010,8 +2102,25 @@ export default function NativeScheduleView({
       {isScheduleView ? (
         <section className="workspace-section">
         {rows.length ? (
-        <div className="gantt-shell">
-          <div className="gantt-table">
+        <>
+        <MobileScheduleAgenda
+          rows={rows}
+          className={scheduleDisplayMode === 'agenda' ? 'desktop-visible' : ''}
+          agendaRef={mobileAgendaRef}
+          onToggle={(row) => row.type === 'project' ? toggleProject(row.entityId) : togglePhase(row.entityId)}
+          onAddPhase={(row) => startCreatePhase(row.entityId)}
+          onAddStep={(row) => startCreateStep(row.parentProjectId, row.entityId)}
+          onAddDelay={(row) => startCreateDelay(row.parentProjectId, row.entityId)}
+          onEdit={(row) => {
+            if (row.type === 'phase') openPhaseEditor(row);
+            else if (row.type === 'step') openStepEditor(row);
+            else if (row.type === 'delay') openDelayEditor(row);
+            else if (row.type === 'task') openTaskEditor(row);
+          }}
+          onDependencies={openDependencyEditor}
+        />
+        <div ref={ganttShellRef} className={`gantt-shell desktop-schedule-gantt${scheduleDisplayMode === 'agenda' ? ' desktop-hidden' : ''}`}>
+          <div ref={ganttTableRef} className="gantt-table">
             <div className="gantt-header gantt-label-header">
               <span>#</span>
               <span>Item</span>
@@ -2024,8 +2133,17 @@ export default function NativeScheduleView({
                 ref={(element) => {
                   ganttLabelRowRefs.current[index] = element;
                 }}
-                className={`gantt-row-label gantt-row-label-${row.type}`}
+                className={`gantt-row-label gantt-row-label-${row.type}${activeGanttRowId === row.id ? ' is-active' : ''}`}
+                data-row-id={row.id}
                 style={rowHeights[index] ? { minHeight: `${rowHeights[index]}px` } : undefined}
+                onMouseEnter={() => setActiveGanttRowId(row.id)}
+                onMouseLeave={() => setActiveGanttRowId((current) => current === row.id ? null : current)}
+                onFocusCapture={() => setActiveGanttRowId(row.id)}
+                onBlurCapture={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) {
+                    setActiveGanttRowId((current) => current === row.id ? null : current);
+                  }
+                }}
               >
                 <span className="gantt-row-index">{index + 1}</span>
                 <div className="gantt-row-title" style={{ paddingLeft: `${16 + row.depth * 18}px` }}>
@@ -2307,8 +2425,17 @@ export default function NativeScheduleView({
                     ref={(element) => {
                       ganttTimelineRowRefs.current[index] = element;
                     }}
-                    className="gantt-grid-row"
+                    className={`gantt-grid-row${activeGanttRowId === row.id ? ' is-active' : ''}`}
+                    data-row-id={row.id}
                     style={rowHeights[index] ? { minHeight: `${rowHeights[index]}px` } : undefined}
+                    onMouseEnter={() => setActiveGanttRowId(row.id)}
+                    onMouseLeave={() => setActiveGanttRowId((current) => current === row.id ? null : current)}
+                    onFocusCapture={() => setActiveGanttRowId(row.id)}
+                    onBlurCapture={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setActiveGanttRowId((current) => current === row.id ? null : current);
+                      }
+                    }}
                   >
                     {style ? (
                       <div
@@ -2343,6 +2470,7 @@ export default function NativeScheduleView({
             </div>
           </div>
         </div>
+        </>
       ) : (
         <div className="empty-state">
           <h3>No scheduled items to show</h3>
@@ -2402,225 +2530,17 @@ export default function NativeScheduleView({
           </div>
         </div>
 
-        <div className="calendar-swipe-shell" {...calendarSwipeHandlers}>
-        <div className="calendar-dow-grid">
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-            <div key={day} className="calendar-dow">
-              {day}
-            </div>
-          ))}
-        </div>
-
-        <div className="calendar-grid">
-          {calendarWeeks.map((week) => {
-            const allScheduleBars = week.scheduledBars || week.bars;
-            const holidayBars = week.holidayBars || [];
-            const collapsedLaneBudget = Math.max(
-              0,
-              Math.floor(
-                (CALENDAR_COLLAPSED_WEEK_HEIGHT -
-                  30 -
-                  week.holidayLaneCount * 28 -
-                  CALENDAR_COLLAPSED_BODY_MIN_HEIGHT -
-                  (week.laneCount > 0 ? 20 : 0)) /
-                  24,
-              ),
-            );
-            const collapsedVisibleLaneCount = Math.min(
-              week.laneCount,
-              Math.max(CALENDAR_VISIBLE_RANGE_LANES, collapsedLaneBudget),
-            );
-            const scheduleBars = week.isExpanded
-              ? allScheduleBars
-              : allScheduleBars.filter((item) => item.lane < collapsedVisibleLaneCount);
-            const hiddenScheduledBarCount = Math.max(0, allScheduleBars.length - scheduleBars.length);
-            const renderableScheduleBars = scheduleBars.flatMap((item) =>
-              splitStepBarAroundBlockedDays(item, week.cells),
-            );
-            const visibleLaneCount = week.isExpanded ? week.laneCount : collapsedVisibleLaneCount;
-            const baseSpanOffset = 30 + visibleLaneCount * 24 + (!week.isExpanded && hiddenScheduledBarCount ? 20 : 0);
-            const holidayTop = baseSpanOffset;
-            const spanOffset = holidayTop + week.holidayLaneCount * 28;
-            const provisionalAvailableBodyHeight = Math.max(0, CALENDAR_COLLAPSED_WEEK_HEIGHT - spanOffset - 10);
-            const maxVisibleDayItems = Math.max(
-              0,
-              Math.floor((provisionalAvailableBodyHeight + 6) / 42),
-            );
-            const weekBodyContentHeight = week.cells.reduce((maxHeight, cell) => {
-              const visibleCount = Math.min(cell.items.length, maxVisibleDayItems);
-              const hiddenCount = Math.max(0, cell.items.length - visibleCount);
-              const visibleHeight = visibleCount > 0 ? visibleCount * 36 + Math.max(0, visibleCount - 1) * 6 : 0;
-              const overflowHeight = hiddenCount > 0 ? 18 : 0;
-              const gapHeight = visibleHeight > 0 && overflowHeight > 0 ? 6 : 0;
-              return Math.max(maxHeight, visibleHeight + gapHeight + overflowHeight);
-            }, 0);
-            const cellHeight = week.isExpanded
-              ? Math.max(168, spanOffset + weekBodyContentHeight + 10)
-              : Math.max(spanOffset + 10, spanOffset + weekBodyContentHeight + 10);
-            const availableBodyHeight = Math.max(0, cellHeight - spanOffset - 10);
-            return (
-              <div key={week.key} className="calendar-week">
-                {visibleLaneCount ? (
-                  <div
-                    className="calendar-span-layer"
-                    style={{
-                      gridTemplateRows: `repeat(${visibleLaneCount}, 20px)`,
-                    }}
-                    >
-                    {renderableScheduleBars.map((item) => {
-                      const spanColumns = item.endCol - item.startCol + 1;
-                      const estimatedCharCapacity = spanColumns * 13;
-                      const inlineProjectName =
-                        item.projectName &&
-                        spanColumns >= 2 &&
-                        `${item.label} - ${item.projectName}`.length <= estimatedCharCapacity;
-                      const commonProps = {
-                        className: `calendar-span-bar ${item.type} status-${item.status || 'planning'}${['phase', 'step'].includes(item.type) && item.continuesBefore ? ' continues-before' : ''}${['phase', 'step'].includes(item.type) && item.continuesAfter ? ' continues-after' : ''}`,
-                        style: {
-                          gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
-                          gridRow: `${item.lane + 1}`,
-                          borderColor: item.color || getProjectAccentColor(item.projectId || item.projectName),
-                          ...(item.color ? { backgroundColor: item.color, color: '#fff' } : {}),
-                        },
-                        title: `${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`,
-                      };
-                      return (
-                        <button
-                          key={`${week.key}-${item.segmentKey || item.id}`}
-                          {...commonProps}
-                          type="button"
-                          onClick={(event) => openCalendarItem(item, event)}
-                        >
-                          <span>
-                            {inlineProjectName ? `${item.label} - ${item.projectName}` : item.label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-
-                {holidayBars.length ? (
-                  <div
-                    className="calendar-holiday-layer"
-                    style={{
-                      top: `${holidayTop}px`,
-                      gridTemplateRows: `repeat(${week.holidayLaneCount}, auto)`,
-                    }}
-                  >
-                    {holidayBars.map((item) => (
-                      <div
-                        key={`${week.key}-${item.id}`}
-                        className="calendar-chip holiday non-workday calendar-holiday-bar"
-                        style={{
-                          gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
-                          gridRow: `${item.lane + 1}`,
-                        }}
-                        title={item.label}
-                      >
-                        <span>{item.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                {hiddenScheduledBarCount && !week.isExpanded ? (
-                  <button
-                    type="button"
-                    className="calendar-span-overflow"
-                    onClick={() =>
-                      setExpandedCalendarWeeks((current) => ({ ...current, [week.key]: true }))
-                    }
-                    title={`${hiddenScheduledBarCount} additional scheduled bar${hiddenScheduledBarCount === 1 ? '' : 's'} hidden for this week`}
-                  >
-                    +{hiddenScheduledBarCount} more scheduled
-                  </button>
-                ) : null}
-
-                {week.isExpanded && week.laneCount > collapsedVisibleLaneCount ? (
-                  <button
-                    type="button"
-                    className="calendar-span-overflow"
-                    onClick={() =>
-                      setExpandedCalendarWeeks((current) => ({ ...current, [week.key]: false }))
-                    }
-                    title="Collapse this week"
-                  >
-                    Show fewer
-                  </button>
-                ) : null}
-
-                <div className="calendar-week-grid">
-                  {week.cells.map((cell) => {
-                    const holidayChips = cell.holidays.filter((holiday) => !holiday.isRange);
-                    const visibleItems = cell.items.slice(0, maxVisibleDayItems);
-                    const hiddenCount = cell.items.length - visibleItems.length;
-                    return (
-                      <article
-                        key={cell.key}
-                        className={`calendar-cell${cell.isCurrentMonth ? '' : ' other-month'}${cell.isToday ? ' today' : ''}${cell.holidays.length ? ' holiday' : ''}${cell.isWeekend ? ' weekend' : ''}`}
-                        style={{ height: `${cellHeight}px` }}
-                      >
-                        <button
-                          type="button"
-                          className="calendar-day-number"
-                          onClick={(event) => handleCalendarDateClick(cell, event)}
-                          title={`Add step on ${formatShortDate(cell.key)}`}
-                        >
-                          <span>{cell.date.getDate()}</span>
-                          {showCalendarHebrewDates ? (
-                            <small className="calendar-lunar-date">{formatHebrewCalendarLabel(cell.date)}</small>
-                          ) : null}
-                        </button>
-
-                        {holidayChips.length ? (
-                          <div className="calendar-cell-holiday-row" style={{ marginTop: `${holidayTop}px` }}>
-                            {holidayChips.map((holiday) => (
-                              <div
-                                key={`${cell.key}-${holiday.id}`}
-                                className={`calendar-chip holiday${holiday.nonWorkday ? ' non-workday' : ''}`}
-                                title={holiday.name}
-                              >
-                                <span>{holiday.name}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        <div
-                          className="calendar-cell-body"
-                          style={{
-                            marginTop: `${spanOffset}px`,
-                            maxHeight: `${Math.max(0, cellHeight - spanOffset - 10)}px`,
-                          }}
-                        >
-
-                          {visibleItems.map((item) => (
-                            <button
-                              key={`${cell.key}-${item.id}`}
-                              type="button"
-                              className={`calendar-chip ${item.type} status-${item.status || 'planning'}`}
-                              title={`${item.label} | ${item.projectName}`}
-                              onClick={(event) => openCalendarItem(item, event)}
-                            >
-                              <span>{item.label}</span>
-                              <small>{item.projectName}</small>
-                            </button>
-                          ))}
-
-                          {hiddenCount > 0 ? (
-                            <div className="calendar-more">+{hiddenCount} more</div>
-                          ) : null}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        </div>
+        <SharedCalendarGrid
+          calendarWeeks={calendarWeeks}
+          expandedCalendarWeeks={expandedCalendarWeeks}
+          setExpandedCalendarWeeks={setExpandedCalendarWeeks}
+          showHebrewDates={showCalendarHebrewDates}
+          onDateClick={handleCalendarDateClick}
+          onItemClick={openCalendarItem}
+          getDayItemSubtitle={(item) => item.projectName || ''}
+          shellClassName="calendar-swipe-shell"
+          swipeHandlers={calendarSwipeHandlers}
+        />
       </section>
       ) : null}
 

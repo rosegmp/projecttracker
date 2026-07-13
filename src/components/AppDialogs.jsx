@@ -93,11 +93,11 @@ export default function AppDialogHost() {
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={() => closeDialog(false)}>
-      <div className="modal-card compact-modal-card app-dialog-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card compact-modal-card app-dialog-modal" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">{dialog.type === 'confirm' ? 'Confirm' : 'Message'}</p>
-            <h2>{dialog.title}</h2>
+            <h2 id="app-dialog-title">{dialog.title}</h2>
           </div>
         </div>
         <div className="app-dialog-copy">

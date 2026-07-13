@@ -8,11 +8,11 @@ export function TaskModal({ draft, projects, assigneeOptions, saving, onChange, 
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="task-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Task</p>
-            <h2>Edit task</h2>
+            <h2 id="task-modal-title">Edit task</h2>
           </div>
         </div>
 
@@ -90,11 +90,11 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="inspection-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Inspection</p>
-            <h2>{isEditing ? 'Edit inspection' : 'Add inspection'}</h2>
+            <h2 id="inspection-modal-title">{isEditing ? 'Edit inspection' : 'Add inspection'}</h2>
             <p className="panel-copy">
               {project?.name || 'Project'}
             </p>
@@ -206,4 +206,3 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
     </div>,
   );
 }
-

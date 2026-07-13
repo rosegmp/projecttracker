@@ -20,11 +20,11 @@ export default function ProjectModal({ draft, users, onChange, onClose, onSave, 
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Project</p>
-            <h2>{isEditing ? 'Edit project' : 'New project'}</h2>
+            <h2 id="project-modal-title">{isEditing ? 'Edit project' : 'New project'}</h2>
           </div>
         </div>
         <div className="project-form-grid">

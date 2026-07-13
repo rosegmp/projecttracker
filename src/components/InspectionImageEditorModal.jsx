@@ -206,11 +206,11 @@ export default function InspectionImageEditorModal({ draft, saving, onClose, onS
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card inspection-image-editor-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card inspection-image-editor-modal" role="dialog" aria-modal="true" aria-labelledby="inspection-image-editor-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Inspection Image</p>
-            <h2>{draft.title}</h2>
+            <h2 id="inspection-image-editor-title">{draft.title}</h2>
           </div>
         </div>
 
@@ -289,6 +289,5 @@ export default function InspectionImageEditorModal({ draft, saving, onClose, onS
     </div>,
   );
 }
-
 
 

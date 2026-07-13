@@ -53,6 +53,69 @@ export function splitStepBarAroundBlockedDays(item, weekCells) {
   return segments;
 }
 
+export function getCalendarWeekLayout(
+  week,
+  {
+    visibleRangeLanes = 3,
+    collapsedWeekHeight = 244,
+    collapsedBodyMinHeight = 32,
+  } = {},
+) {
+  const allScheduleBars = week.scheduledBars || week.bars;
+  const holidayBars = week.holidayBars || [];
+  const collapsedLaneBudget = Math.max(
+    0,
+    Math.floor(
+      (collapsedWeekHeight -
+        30 -
+        week.holidayLaneCount * 28 -
+        collapsedBodyMinHeight -
+        (week.laneCount > 0 ? 20 : 0)) /
+        24,
+    ),
+  );
+  const collapsedVisibleLaneCount = Math.min(
+    week.laneCount,
+    Math.max(visibleRangeLanes, collapsedLaneBudget),
+  );
+  const scheduleBars = week.isExpanded
+    ? allScheduleBars
+    : allScheduleBars.filter((item) => item.lane < collapsedVisibleLaneCount);
+  const hiddenScheduledBarCount = Math.max(0, allScheduleBars.length - scheduleBars.length);
+  const renderableScheduleBars = scheduleBars.flatMap((item) =>
+    splitStepBarAroundBlockedDays(item, week.cells),
+  );
+  const visibleLaneCount = week.isExpanded ? week.laneCount : collapsedVisibleLaneCount;
+  const baseSpanOffset = 30 + visibleLaneCount * 24 + (!week.isExpanded && hiddenScheduledBarCount ? 20 : 0);
+  const holidayTop = baseSpanOffset;
+  const spanOffset = holidayTop + week.holidayLaneCount * 28;
+  const provisionalAvailableBodyHeight = Math.max(0, collapsedWeekHeight - spanOffset - 10);
+  const maxVisibleDayItems = Math.max(0, Math.floor((provisionalAvailableBodyHeight + 6) / 42));
+  const weekBodyContentHeight = week.cells.reduce((maxHeight, cell) => {
+    const visibleCount = Math.min(cell.items.length, maxVisibleDayItems);
+    const hiddenCount = Math.max(0, cell.items.length - visibleCount);
+    const visibleHeight = visibleCount > 0 ? visibleCount * 36 + Math.max(0, visibleCount - 1) * 6 : 0;
+    const overflowHeight = hiddenCount > 0 ? 18 : 0;
+    const gapHeight = visibleHeight > 0 && overflowHeight > 0 ? 6 : 0;
+    return Math.max(maxHeight, visibleHeight + gapHeight + overflowHeight);
+  }, 0);
+  const cellHeight = week.isExpanded
+    ? Math.max(168, spanOffset + weekBodyContentHeight + 10)
+    : Math.max(spanOffset + 10, spanOffset + weekBodyContentHeight + 10);
+
+  return {
+    holidayBars,
+    collapsedVisibleLaneCount,
+    hiddenScheduledBarCount,
+    renderableScheduleBars,
+    visibleLaneCount,
+    holidayTop,
+    spanOffset,
+    maxVisibleDayItems,
+    cellHeight,
+  };
+}
+
 export function toIsoDate(date) { return date.toISOString().slice(0, 10); }
 export function startOfMonth(date) { return new Date(date.getFullYear(), date.getMonth(), 1); }
 export function endOfMonth(date) { return new Date(date.getFullYear(), date.getMonth() + 1, 0); }

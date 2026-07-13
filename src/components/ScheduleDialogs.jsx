@@ -23,11 +23,11 @@ export function ScheduleItemModal({
   const phaseOptions = selectedProject?.phases || [];
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card schedule-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card schedule-modal-card" role="dialog" aria-modal="true" aria-labelledby="schedule-item-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Schedule</p>
-            <h2>
+            <h2 id="schedule-item-modal-title">
               {isEditing
                 ? type === 'phase'
                   ? 'Edit phase'
@@ -211,11 +211,11 @@ export function DelayModal({ draft, saving, onChange, onClose, onSave, onDelete 
   const isEditing = draft.mode !== 'create';
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card schedule-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card schedule-modal-card" role="dialog" aria-modal="true" aria-labelledby="delay-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Delay</p>
-            <h2>{isEditing ? 'Edit delay' : 'Add delay'}</h2>
+            <h2 id="delay-modal-title">{isEditing ? 'Edit delay' : 'Add delay'}</h2>
           </div>
         </div>
 
@@ -283,11 +283,11 @@ export function DependencyModal({ draft, saving, onTogglePred, onLagChange, onCl
   if (!draft) return null;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card dependency-modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card dependency-modal-card" role="dialog" aria-modal="true" aria-labelledby="dependency-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Dependencies</p>
-            <h2>Step Dependencies</h2>
+            <h2 id="dependency-modal-title">Step Dependencies</h2>
             <p className="panel-copy">
               Editing: <strong>{draft.name}</strong>
             </p>
