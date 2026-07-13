@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   applyDelayToStep,
   cascadePhaseDates,
@@ -13,6 +14,13 @@ import {
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
 import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows } from '../src/utils/scheduleView.js';
+import {
+  buildTaskAssigneeDirectory,
+  buildTaskAssigneeOptions,
+  getVisibleProjectsForUser,
+  getVisibleTasksForUser,
+  normalizeProjectAccessUserIds,
+} from '../src/utils/accessUi.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -20,6 +28,75 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'project access normalization removes blanks and duplicates',
+    run() {
+      assert.deepEqual(normalizeProjectAccessUserIds(['user-1', ' user-1 ', '', null, 'user-2']), ['user-1', 'user-2']);
+    },
+  },
+  {
+    name: 'project and task visibility follows role and project assignments',
+    run() {
+      const projects = [
+        { id: 'open', accessUserIds: [] },
+        { id: 'assigned', accessUserIds: ['user-1'] },
+        { id: 'other', accessUserIds: ['user-2'] },
+      ];
+      const editVisible = getVisibleProjectsForUser(projects, {}, { id: 'user-1', role: 'Edit' });
+      const customerVisible = getVisibleProjectsForUser(projects, {}, { id: 'user-1', role: 'Customer' });
+      assert.deepEqual(editVisible.map((project) => project.id), ['open', 'assigned']);
+      assert.deepEqual(customerVisible.map((project) => project.id), ['assigned']);
+      assert.deepEqual(
+        getVisibleTasksForUser(
+          [{ id: 'general', projectId: '' }, { id: 'visible', projectId: 'assigned' }, { id: 'hidden', projectId: 'other' }],
+          {},
+          customerVisible,
+        ).map((task) => task.id),
+        ['general', 'visible'],
+      );
+    },
+  },
+  {
+    name: 'assignee helpers deduplicate labels and prefer records with email',
+    run() {
+      const subs = [{ first: 'Alex', last: 'Smith', company: 'Build Co', email: '' }];
+      const employees = [
+        { first: 'Alex', last: 'Smith', company: 'Build Co', email: 'alex@example.com' },
+        { first: 'Jamie', last: 'Jones', company: '', email: 'jamie@example.com' },
+      ];
+      assert.deepEqual(buildTaskAssigneeOptions(subs, employees), ['Alex Smith (Build Co)', 'Jamie Jones']);
+      assert.equal(buildTaskAssigneeDirectory(subs, employees).get('Alex Smith (Build Co)').email, 'alex@example.com');
+    },
+  },
+  {
+    name: 'top-level pages remain lazy-loaded behind Suspense',
+    async run() {
+      const appSource = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+      for (const moduleName of ['NativeProjectsView', 'NativeScheduleView', 'NativeTasksView', 'NativePeopleView', 'NativeSettingsView']) {
+        assert.match(appSource, new RegExp(`const ${moduleName} = lazy\\(`));
+      }
+      assert.match(appSource, /<Suspense/);
+      assert.match(appSource, /Loading workspace/);
+    },
+  },
+  {
+    name: 'extracted pages import FluentIcon when they render it',
+    async run() {
+      for (const componentName of ['NativeScheduleView', 'ProjectPhotosManager']) {
+        const source = await readFile(new URL(`../src/components/${componentName}.jsx`, import.meta.url), 'utf8');
+        assert.match(source, /<FluentIcon\b/);
+        assert.match(source, /import FluentIcon from ['"]\.\/FluentIcon\.jsx['"]/);
+      }
+    },
+  },
+  {
+    name: 'schedule week labels use an encoding-safe date separator',
+    async run() {
+      const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(source, /label: `\$\{startLabel\} - \$\{endLabel\}`/);
+      assert.doesNotMatch(source, /â/);
+    },
+  },
   {
     name: 'normalizePreds supports legacy and current dependency shapes',
     run() {
@@ -636,7 +713,7 @@ let failed = 0;
 
 for (const test of tests) {
   try {
-    test.run();
+    await test.run();
     console.log(`PASS ${test.name}`);
   } catch (error) {
     failed += 1;
