@@ -1204,6 +1204,60 @@ a {
   font-weight: 600;
 }
 
+.saved-filter-controls,
+.projects-filter-toolbar,
+.calendar-filter-actions {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.saved-filter-select {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.saved-filter-select select {
+  min-width: 132px;
+  min-height: 32px;
+  padding: 4px 28px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.saved-filter-button {
+  min-height: 32px;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+
+.projects-filter-toolbar {
+  margin: 10px 0 8px;
+}
+
+.projects-search-input {
+  align-self: end;
+  width: min(260px, 100%);
+}
+
+.projects-status-filter,
+.calendar-item-filter {
+  min-width: 130px;
+}
+
+.calendar-filter-actions {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 .task-filter > span {
   font-size: 10px;
   font-weight: 800;
@@ -1253,6 +1307,21 @@ a {
 .task-list {
   display: grid;
   gap: 12px;
+}
+
+.task-virtual-list {
+  display: grid;
+}
+
+.task-virtual-list.active {
+  max-height: min(68vh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.task-virtual-item {
+  padding-bottom: 12px;
 }
 
 .people-grid {
@@ -2038,6 +2107,17 @@ button.calendar-span-bar {
   font-weight: 800;
 }
 
+.gantt-virtual-spacer,
+.gantt-grid-virtual-spacer {
+  width: 100%;
+  pointer-events: none;
+}
+
+.gantt-grid-virtual-spacer {
+  position: relative;
+  z-index: 2;
+}
+
 .calendar-span-bar.continues-after {
   border-right: 0;
   border-top-right-radius: 0;
@@ -2391,6 +2471,179 @@ button.calendar-chip {
 
 .auth-shell {
   width: min(720px, calc(100vw - 32px));
+}
+
+.android-notification-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.android-notification-timing {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.android-notification-timing label {
+  display: grid;
+  gap: 5px;
+  min-width: 170px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.android-notification-timing select,
+.android-notification-timing input {
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.android-notification-status {
+  padding: 10px 12px;
+  border-left: 3px solid var(--brand);
+  background: var(--brand-soft);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.android-notification-status.success {
+  border-left-color: var(--success);
+}
+
+.android-notification-status.error {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.audit-trail-header {
+  align-items: end;
+}
+
+.audit-trail-filters {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-trail-filters label {
+  display: grid;
+  gap: 5px;
+  min-width: 190px;
+}
+
+.audit-trail-filters label > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.audit-trail-list {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.audit-trail-row {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr);
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-trail-marker { background: var(--muted); }
+.audit-trail-marker.dates { background: #2563eb; }
+.audit-trail-marker.dependencies { background: #7c3aed; }
+.audit-trail-marker.statuses { background: #d97706; }
+.audit-trail-marker.files { background: #0891b2; }
+.audit-trail-marker.activity { background: #64748b; }
+
+.audit-trail-content {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+.audit-trail-summary,
+.audit-trail-values,
+.audit-trail-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.audit-trail-summary span {
+  color: var(--text-secondary, #475569);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-trail-values {
+  color: var(--text-secondary, #475569);
+  font-size: 0.84rem;
+}
+
+.audit-trail-values > span {
+  overflow-wrap: anywhere;
+}
+
+.audit-trail-values .fluent-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.audit-trail-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.audit-trail-meta > * + *::before {
+  content: '\00b7';
+  margin-right: 8px;
+}
+
+.audit-trail-message {
+  padding: 18px 0;
+  color: var(--muted);
+}
+
+.audit-trail-message.error {
+  color: var(--danger);
+}
+
+@media (max-width: 860px) {
+  .android-notification-options {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .audit-trail-filters,
+  .audit-trail-summary,
+  .audit-trail-values,
+  .audit-trail-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .audit-trail-filters label {
+    min-width: 0;
+  }
+
+  .audit-trail-meta > * + *::before {
+    content: '';
+    margin: 0;
+  }
 }
 
 .app-splash {
@@ -3208,6 +3461,13 @@ button.calendar-chip {
   background: #fff;
 }
 
+.people-list.virtualized {
+  height: min(68vh, 760px);
+  max-height: 760px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .task-row-card.deleting {
   opacity: 0.62;
   cursor: progress;
@@ -3765,6 +4025,99 @@ button.calendar-chip {
   margin: 0;
   color: var(--text);
   line-height: 1.55;
+}
+
+.undo-toast {
+  position: fixed;
+  right: 18px;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: min(420px, calc(100vw - 36px));
+  min-height: 56px;
+  padding: 9px 10px 9px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  background: #1e2733;
+  color: #fff;
+  box-shadow: 0 18px 38px rgba(17, 24, 39, 0.24);
+}
+
+.undo-toast-copy {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-toast .button.secondary {
+  min-height: 36px;
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.download-progress-toast {
+  position: fixed;
+  right: 18px;
+  bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px));
+  z-index: 79;
+  width: min(420px, calc(100vw - 36px));
+  padding: 13px 16px;
+  border: 1px solid var(--divider);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 18px 38px rgba(17, 24, 39, 0.18);
+}
+
+.download-progress-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.download-progress-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-progress-copy span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.download-progress-bar {
+  display: block;
+  width: 100%;
+  height: 7px;
+  accent-color: var(--brand);
+}
+
+@media (max-width: 620px) {
+  .undo-toast {
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: calc(100vw - 20px);
+  }
+
+  .download-progress-toast {
+    right: 10px;
+    bottom: max(78px, calc(env(safe-area-inset-bottom) + 78px));
+    width: calc(100vw - 20px);
+  }
 }
 
 .project-form-grid {
@@ -4728,6 +5081,9 @@ button.calendar-chip {
 }
 
 .top-level-calendar-page .schedule-calendar-header {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   margin-bottom: 2px;
 }
 
@@ -5363,7 +5719,10 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .people-list-header {
+.people-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
     display: none;
   }
 
@@ -5715,6 +6074,11 @@ textarea:focus-visible {
 
 }
 
+.virtual-list-spacer {
+  min-width: 1px;
+  pointer-events: none;
+}
+
 @media (max-width: 720px) {
   .top-level-schedule-page .workspace-section {
     overflow-x: auto;
@@ -5794,6 +6158,49 @@ textarea:focus-visible {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.schedule-history-filter {
+  display: inline-flex;
+  min-height: 32px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.schedule-history-filter input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.schedule-search-input {
+  width: 170px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.schedule-search-input:focus {
+  border-color: var(--brand);
+  outline: 2px solid rgba(15, 93, 132, 0.18);
+  outline-offset: 0;
+}
+
+.mobile-agenda-toggle:disabled,
+.gantt-expand-button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .top-level-schedule-page .gantt-zoom-controls {
@@ -6317,6 +6724,11 @@ textarea:focus-visible {
 
   .schedule-toolbar-actions {
     justify-content: flex-start;
+  }
+
+  .schedule-search-input {
+    flex: 1 1 180px;
+    width: auto;
   }
 
   .top-level-schedule-page .desktop-schedule-gantt,

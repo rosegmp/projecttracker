@@ -17,62 +17,43 @@ const NativePhotosView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativePhotosView })),
 );
 import {
-  DEFAULT_PROJECT_FILE_FOLDERS,
-  PEOPLE_TYPE_OPTIONS,
-  USER_ROLE_OPTIONS,
-  consumeAuthSessionFromUrl,
-  createPerson,
-  createProject,
-  createTask,
-  deleteProjectFileFromStorage,
-  deletePerson,
-  deleteProject,
-  deleteTask,
-  downloadProjectFileFromStorage,
-  getSupabaseDiagnosticsInfo,
-  getProjectHealth,
-  getStorageBannerMessage,
-  initializeAuthSession,
-  importPeople,
-  inviteAuthUser,
-  isSupabaseStorageConfigured,
-  loadTrackerData,
-  runSupabaseStartupCheck,
-  sendPasswordRecoveryEmail,
-  signInWithPassword,
-  signOutAuthSession,
-  testSupabaseConnection,
-  updateAuthPassword,
-  uploadProjectFileToStorage,
-  updatePerson,
-  updateProject,
-  updateProjectAndTasks,
-  updateSettings,
-  updateTask,
-} from './services/trackerData.js';
-import {
-  addWorkdaysFromSettings,
-  applyDelayToStep,
-  calcStepFirstAvailable,
-  cascadePhaseDates,
-  cascadeStepDates,
-  computeStepEndDate,
-  isOverdue,
-  normalizePreds,
-  normalizeStartDate,
-  syncProjectPhaseDates,
-  syncProjectTasks,
-  syncStepLinks,
-  wouldCreatePhaseCycleFromPreds,
-  wouldCreateCycleFromPreds,
-} from './utils/schedule.js';
-import {
-  buildCalendarItems as buildCalendarItemsView,
-  buildCalendarWeeks as buildCalendarWeeksView,
-  buildScheduleRows as buildScheduleRowsView,
-} from './utils/scheduleView.js';
-import { addDays, diffInDays, endOfMonth, endOfWeek, enumerateMonths, formatHebrewCalendarLabel, formatShortDate, formatTooltipDate, getProjectAccentColor, splitStepBarAroundBlockedDays, startOfMonth, startOfWeek, toIsoDate, useHorizontalSwipe } from './utils/calendarUi.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, formatFileSize, isImageFile, isNativeAndroidApp, isShareDismissed } from './utils/fileUi.js';
+  getAppRedirectUrl,
+  getSearchParam,
+  isNativeAndroidApp,
+  updateCurrentUrl,
+} from './platform/platformAdapter.js';
+
+const USER_ROLE_OPTIONS = ['Admin', 'Edit', 'Customer', 'Subcontractor', 'View Only'];
+let trackerDataModulePromise = null;
+let androidNotificationsModulePromise = null;
+
+function loadTrackerDataModule() {
+  if (!trackerDataModulePromise) trackerDataModulePromise = import('./services/trackerData.js');
+  return trackerDataModulePromise;
+}
+
+function loadAndroidNotificationsModule() {
+  if (!androidNotificationsModulePromise) androidNotificationsModulePromise = import('./utils/androidNotifications.js');
+  return androidNotificationsModulePromise;
+}
+
+function getProjectHealth(project) {
+  const labels = { active: 'On track', planning: 'In planning', delayed: 'Needs attention', done: 'Completed' };
+  return { label: labels[project?.status || 'planning'] || 'Project' };
+}
+
+function getStorageBannerMessage(storageMode, storageIssue = '') {
+  if (storageMode === 'supabase' || storageMode === 'loading') return null;
+  if (storageMode === 'local-unconfigured') {
+    return { title: 'Supabase not configured.', message: storageIssue || 'The React app is currently reading browser local storage only.' };
+  }
+  return {
+    title: 'Using local storage.',
+    message: storageIssue
+      ? `Supabase is unavailable right now. ${storageIssue}`
+      : 'Supabase is unavailable right now, so this React slice is reading browser-stored data on this device.',
+  };
+}
 
 const tabs = [
   {
@@ -156,9 +137,7 @@ function getActiveUserForAuthSession(users, authSession) {
 }
 
 function getTabFromLocation() {
-  if (typeof window === 'undefined') return 'projects';
-  const params = new URLSearchParams(window.location.search);
-  const tab = params.get('tab');
+  const tab = getSearchParam('tab');
   if (validTabIds.has(tab)) return tab;
   let storedTab = '';
   try {
@@ -170,38 +149,22 @@ function getTabFromLocation() {
 }
 
 function getProjectIdFromLocation() {
-  if (typeof window === 'undefined') return '';
-  const params = new URLSearchParams(window.location.search);
-  return String(params.get('project') || '').trim();
+  return String(getSearchParam('project') || '').trim();
 }
 
 function syncTabToLocation(tab, { push = false } = {}) {
-  if (typeof window === 'undefined' || !validTabIds.has(tab)) return;
-  const url = new URL(window.location.href);
-  url.searchParams.set('tab', tab);
-  if (tab !== 'projects') {
-    url.searchParams.delete('project');
-  }
-  if (push) {
-    window.history.pushState(null, '', url);
-    return;
-  }
-  window.history.replaceState(null, '', url);
+  if (!validTabIds.has(tab)) return;
+  updateCurrentUrl((url) => {
+    url.searchParams.set('tab', tab);
+    if (tab !== 'projects') url.searchParams.delete('project');
+  }, { push });
 }
 
 function syncProjectToLocation(projectId, { push = false } = {}) {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (String(projectId || '').trim()) {
-    url.searchParams.set('project', String(projectId).trim());
-  } else {
-    url.searchParams.delete('project');
-  }
-  if (push) {
-    window.history.pushState(null, '', url);
-    return;
-  }
-  window.history.replaceState(null, '', url);
+  updateCurrentUrl((url) => {
+    if (String(projectId || '').trim()) url.searchParams.set('project', String(projectId).trim());
+    else url.searchParams.delete('project');
+  }, { push });
 }
 
 
@@ -234,6 +197,8 @@ export default function App() {
       currentUserId: 'user-admin',
     },
     settingsLoadedFromSupabase: false,
+    settingsVersion: 0,
+    concurrencyEnabled: false,
     storageMode: 'loading',
     storageIssue: '',
   });
@@ -243,6 +208,7 @@ export default function App() {
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
+  const [taskHighlightRequest, setTaskHighlightRequest] = useState({ taskId: '', token: '' });
   const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
     if (typeof window === 'undefined') return 'all';
     return window.sessionStorage.getItem(SESSION_PROJECT_FILTER_KEY) || 'all';
@@ -254,7 +220,7 @@ export default function App() {
     trackerStateRef.current = trackerState;
   }, [trackerState]);
 
-  async function refreshData() {
+  async function refreshData(options = {}) {
     if (!authSession) {
       setLoading(false);
       return;
@@ -262,7 +228,8 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
-      const next = await loadTrackerData();
+      const { loadTrackerData } = await loadTrackerDataModule();
+      const next = await loadTrackerData({ force: options?.force !== false });
       setTrackerState(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
@@ -273,11 +240,12 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const recoverySession = consumeAuthSessionFromUrl();
-    if (recoverySession?.type === 'recovery') {
-      setRecoveryMode(true);
-    }
-    Promise.resolve(recoverySession || initializeAuthSession())
+    loadTrackerDataModule()
+      .then(async ({ consumeAuthSessionFromUrl, initializeAuthSession }) => {
+        const recoverySession = consumeAuthSessionFromUrl();
+        if (recoverySession?.type === 'recovery') setRecoveryMode(true);
+        return recoverySession || initializeAuthSession();
+      })
       .then((session) => {
         if (!cancelled) {
           setAuthSession(session);
@@ -300,7 +268,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authLoading && authSession) {
-      refreshData();
+      refreshData({ force: false });
     } else if (!authLoading && !authSession) {
       setLoading(false);
     }
@@ -333,7 +301,8 @@ export default function App() {
     trackerState.storageMode,
     trackerState.storageIssue,
   );
-  const supabaseDiagnostics = getSupabaseDiagnosticsInfo();
+  const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
+  const supabaseDiagnostics = { url: supabaseUrl, configured: !!supabaseUrl && supabaseUrl !== 'YOUR_SUPABASE_URL' };
   const users = useMemo(
     () =>
       Array.isArray(trackerState.settings?.users) && trackerState.settings.users.length
@@ -343,6 +312,40 @@ export default function App() {
   );
   const activeUser = useMemo(() => getActiveUserForAuthSession(users, authSession), [users, authSession]);
   const capabilities = useMemo(() => getUserCapabilities(activeUser?.role), [activeUser?.role]);
+
+  useEffect(() => {
+    if (!nativeAndroid || loading || !authSession || !activeUser?.id) return;
+    void loadAndroidNotificationsModule()
+      .then(({ syncAndroidNotifications }) => syncAndroidNotifications({ data: trackerState, activeUser }))
+      .catch(() => {});
+  }, [activeUser, authSession, loading, nativeAndroid, trackerState.projects, trackerState.settings, trackerState.tasks]);
+
+  useEffect(() => {
+    if (!nativeAndroid) return undefined;
+    let listenerHandle = null;
+    let cancelled = false;
+    void loadAndroidNotificationsModule()
+      .then(({ addAndroidNotificationActionListener }) => addAndroidNotificationActionListener((extra) => {
+        const requestedTab = String(extra.tab || 'projects');
+        const targetTab = capabilities.allowedTabs.includes(requestedTab) ? requestedTab : 'projects';
+        if (extra.projectId) setSessionProjectFilter(extra.projectId || 'all');
+        if (targetTab === 'tasks' && extra.taskId) {
+          setTaskHighlightRequest({ taskId: extra.taskId, token: `${Date.now()}` });
+        }
+        if (targetTab === 'projects' && extra.projectId && extra.projectId !== 'all') {
+          setProjectNavigationTarget({ projectId: extra.projectId, token: `${Date.now()}` });
+        }
+        setActiveTab(targetTab);
+      }))
+      .then((handle) => {
+        if (cancelled) void handle.remove();
+        else listenerHandle = handle;
+      });
+    return () => {
+      cancelled = true;
+      if (listenerHandle) void listenerHandle.remove();
+    };
+  }, [capabilities.allowedTabs, nativeAndroid]);
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser),
     [trackerState.projects, trackerState.settings, activeUser],
@@ -450,6 +453,7 @@ export default function App() {
     setSigningIn(true);
     setAuthError('');
     try {
+      const { signInWithPassword } = await loadTrackerDataModule();
       const session = await signInWithPassword(email, password);
       setAuthSession(session);
     } catch (err) {
@@ -465,7 +469,8 @@ export default function App() {
     setRecoveryLoading(true);
     setRecoveryMessage(null);
     try {
-      await sendPasswordRecoveryEmail(trimmedEmail, window.location.origin + window.location.pathname);
+      const { sendPasswordRecoveryEmail } = await loadTrackerDataModule();
+      await sendPasswordRecoveryEmail(trimmedEmail, getAppRedirectUrl());
       setRecoveryMessage({
         type: 'success',
         text: `Password email sent to ${trimmedEmail}.`,
@@ -484,6 +489,7 @@ export default function App() {
     setRecoveryLoading(true);
     setPasswordResetError('');
     try {
+      const { updateAuthPassword } = await loadTrackerDataModule();
       const nextSession = await updateAuthPassword(password, authSession);
       setAuthSession(nextSession || authSession);
       setRecoveryMode(false);
@@ -496,6 +502,7 @@ export default function App() {
   }
 
   async function handleSignOut() {
+    const { signOutAuthSession } = await loadTrackerDataModule();
     await signOutAuthSession();
     setAuthSession(null);
     setRecoveryMode(false);
@@ -515,6 +522,7 @@ export default function App() {
 
   async function handleTestSupabaseConnection() {
     setConnectionTest({ status: 'testing', message: '' });
+    const { testSupabaseConnection } = await loadTrackerDataModule();
     const result = await testSupabaseConnection();
     setConnectionTest({
       status: result.ok ? 'success' : 'error',
@@ -524,6 +532,7 @@ export default function App() {
 
   async function handleRunSupabaseStartupCheck() {
     setStartupCheck({ status: 'testing', message: '' });
+    const { runSupabaseStartupCheck } = await loadTrackerDataModule();
     const result = await runSupabaseStartupCheck();
     setStartupCheck({
       status: result.ok ? 'success' : 'error',
@@ -589,6 +598,8 @@ export default function App() {
           activeUser={activeUser}
           projectFilter={sessionProjectFilter}
           onProjectFilterChange={setSessionProjectFilter}
+          highlightTaskId={taskHighlightRequest.taskId}
+          highlightToken={taskHighlightRequest.token}
           onOpenSelection={openProjectSelectionLink}
         />
       );
@@ -631,6 +642,7 @@ export default function App() {
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
+          activeUser={activeUser}
         />
       );
     }
@@ -642,6 +654,7 @@ export default function App() {
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
+          activeUser={activeUser}
         />
       );
     }

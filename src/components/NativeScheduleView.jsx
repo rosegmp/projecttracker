@@ -1,29 +1,41 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser } from '../utils/accessUi.js';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
-  createPerson, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
-  updateProject, updateProjectAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
+  createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
+  updateProject, updateProjectAndTasks, updateProjects, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import {
   applyDelayToStep, cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds,
   normalizeStartDate, syncProjectPhaseDates, syncProjectTasks, syncStepLinks,
   wouldCreateCycleFromPreds, wouldCreatePhaseCycleFromPreds,
 } from '../utils/schedule.js';
-import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
+import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, filterScheduleRows, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
 import {
   addDays, diffInDays, endOfMonth, endOfWeek, enumerateMonths,
   formatShortDate, formatTooltipDate,
   startOfMonth, startOfWeek, toIsoDate, useHorizontalSwipe,
 } from '../utils/calendarUi.js';
-import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
+import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
-import { DelayModal, DependencyModal, ScheduleItemModal } from './ScheduleDialogs.jsx';
-import { InspectionModal, TaskModal } from './TaskInspectionDialogs.jsx';
-import { StepPredecessorModal, TextEntryModal } from './FormDialogs.jsx';
+import SavedFiltersControls from './SavedFiltersControls.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import PersonModal from './PersonModal.jsx';
 import SharedCalendarGrid from './SharedCalendarGrid.jsx';
 import MobileScheduleAgenda from './MobileScheduleAgenda.jsx';
+import {
+  timelineItemIntersectsWindow,
+  useHorizontalVirtualWindow,
+  useVirtualRange,
+} from '../utils/virtualization.js';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+
+const ScheduleItemModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.ScheduleItemModal })));
+const DelayModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.DelayModal })));
+const DependencyModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.DependencyModal })));
+const InspectionModal = lazy(() => import('./TaskInspectionDialogs.jsx').then((module) => ({ default: module.InspectionModal })));
+const TaskModal = lazy(() => import('./TaskInspectionDialogs.jsx').then((module) => ({ default: module.TaskModal })));
+const StepPredecessorModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.StepPredecessorModal })));
+const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
+const PersonModal = lazy(() => import('./PersonModal.jsx'));
 
 const GANTT_ROW_MIN_HEIGHT = 38;
 const CALENDAR_VISIBLE_RANGE_LANES = 3;
@@ -36,6 +48,9 @@ const GANTT_ZOOM_OPTIONS = [
 const GANTT_ZOOM_REFERENCE_WIDTH = 760;
 const SCHEDULE_VIEW_STORAGE_KEY = 'project-tracker:schedule-view';
 const SCHEDULE_ZOOM_STORAGE_KEY = 'project-tracker:schedule-zoom';
+const SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-project-expansion';
+const SCHEDULE_PHASE_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-phase-expansion';
+const SCHEDULE_HIDE_PAST_STORAGE_KEY = 'project-tracker:schedule-hide-past';
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
 
 function getStoredScheduleView() {
@@ -54,6 +69,27 @@ function getStoredScheduleZoom() {
   } catch {
     return 1;
   }
+}
+
+function getStoredExpansion(storageKey) {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, expanded]) => typeof expanded === 'boolean'));
+  } catch {
+    return {};
+  }
+}
+
+function getStoredBoolean(storageKey, fallback = false) {
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored === 'true') return true;
+    if (stored === 'false') return false;
+  } catch {
+    // Use the fallback when browser storage is unavailable.
+  }
+  return fallback;
 }
 
 function parseDateValue(iso) { if (!iso) return null; const date = new Date(`${iso}T00:00:00`); return Number.isNaN(date.getTime()) ? null : date; }
@@ -86,6 +122,7 @@ export default function NativeScheduleView({
   projectFilter = 'all',
   onProjectFilterChange = () => {},
 }) {
+  const dataRef = useRef(data);
   const ganttGridRef = useRef(null);
   const ganttShellRef = useRef(null);
   const ganttTableRef = useRef(null);
@@ -95,8 +132,11 @@ export default function NativeScheduleView({
   const ganttTimelineRowRefs = useRef([]);
   const lastAutoScrollKeyRef = useRef('');
   const [ganttZoomValue, setGanttZoomValue] = useState(getStoredScheduleZoom);
-  const [expandedProjects, setExpandedProjects] = useState({});
-  const [expandedPhases, setExpandedPhases] = useState(() => getDefaultPhaseExpansion(data.projects));
+  const [expandedProjects, setExpandedProjects] = useState(() => getStoredExpansion(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY));
+  const [expandedPhases, setExpandedPhases] = useState(() => ({
+    ...getDefaultPhaseExpansion(data.projects),
+    ...getStoredExpansion(SCHEDULE_PHASE_EXPANSION_STORAGE_KEY),
+  }));
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -115,24 +155,58 @@ export default function NativeScheduleView({
   const [editorPredecessorDraft, setEditorPredecessorDraft] = useState(null);
   const [taskDraft, setTaskDraft] = useState(null);
   const [taskPersonDraft, setTaskPersonDraft] = useState(null);
+  const [personAssignmentTarget, setPersonAssignmentTarget] = useState('task');
   const [dragDependency, setDragDependency] = useState(null);
   const [rowHeights, setRowHeights] = useState([]);
   const [expandedCalendarWeeks, setExpandedCalendarWeeks] = useState({});
-  const [saving, setSaving] = useState(false);
+  const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const [activeGanttRowId, setActiveGanttRowId] = useState(null);
+  const [hidePastScheduleItems, setHidePastScheduleItems] = useState(() => getStoredBoolean(SCHEDULE_HIDE_PAST_STORAGE_KEY));
+  const [scheduleSearchQuery, setScheduleSearchQuery] = useState('');
+  const [calendarItemFilter, setCalendarItemFilter] = useState('all');
   const isCalendarView = view === 'calendar';
   const isScheduleView = view === 'schedule';
   const [scheduleDisplayMode, setScheduleDisplayMode] = useState(getStoredScheduleView);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  function commitScheduleState(nextState) {
+    dataRef.current = nextState;
+    onStateChange(nextState);
+  }
+
+  async function restoreScheduleSnapshot(projectId, projectSnapshot, tasksSnapshot) {
+    const dueByTaskId = new Map(
+      tasksSnapshot
+        .filter((task) => task.projectId === projectId)
+        .map((task) => [task.id, task.due || '']),
+    );
+    const restoredTasks = dataRef.current.tasks.map((task) =>
+      dueByTaskId.has(task.id) ? { ...task, due: dueByTaskId.get(task.id) } : task,
+    );
+    const restoredState = await updateProjectAndTasks(
+      dataRef.current,
+      projectId,
+      projectSnapshot,
+      restoredTasks,
+    );
+    commitScheduleState(restoredState);
+  }
 
   useEffect(() => {
     if (!isScheduleView) return;
     try {
       window.localStorage.setItem(SCHEDULE_VIEW_STORAGE_KEY, scheduleDisplayMode);
       window.localStorage.setItem(SCHEDULE_ZOOM_STORAGE_KEY, String(ganttZoomValue));
+      window.localStorage.setItem(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY, JSON.stringify(expandedProjects));
+      window.localStorage.setItem(SCHEDULE_PHASE_EXPANSION_STORAGE_KEY, JSON.stringify(expandedPhases));
+      window.localStorage.setItem(SCHEDULE_HIDE_PAST_STORAGE_KEY, String(hidePastScheduleItems));
     } catch {
       // Storage can be unavailable in privacy-restricted browsers; the in-memory preferences still work.
     }
-  }, [ganttZoomValue, isScheduleView, scheduleDisplayMode]);
+  }, [expandedPhases, expandedProjects, ganttZoomValue, hidePastScheduleItems, isScheduleView, scheduleDisplayMode]);
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -215,17 +289,26 @@ export default function NativeScheduleView({
     });
   }, [expandedPhases, expandedProjects, filteredProjects]);
 
-  const rows = useMemo(
-    () =>
-      buildScheduleRowsView(
+  const scheduleSearchActive = scheduleSearchQuery.trim().length > 0;
+  const scheduleRows = useMemo(() => {
+    const searchExpandedProjects = scheduleSearchActive
+      ? Object.fromEntries(filteredProjects.map((project) => [project.id, true]))
+      : expandedProjects;
+    const searchExpandedPhases = scheduleSearchActive
+      ? Object.fromEntries(filteredProjects.flatMap((project) => (project.phases || []).map((phase) => [phase.id, true])))
+      : expandedPhases;
+    return buildScheduleRowsView(
         filteredProjects,
         tasksByProject,
         showGanttTasks,
-        expandedProjects,
-        expandedPhases,
-        {},
-      ),
-    [expandedPhases, expandedProjects, filteredProjects, showGanttTasks, tasksByProject],
+        searchExpandedProjects,
+        searchExpandedPhases,
+        { showCurrentAndFutureOnly: hidePastScheduleItems },
+      );
+  }, [expandedPhases, expandedProjects, filteredProjects, hidePastScheduleItems, scheduleSearchActive, showGanttTasks, tasksByProject]);
+  const rows = useMemo(
+    () => filterScheduleRows(scheduleRows, scheduleSearchQuery),
+    [scheduleRows, scheduleSearchQuery],
   );
 
   const datedRows = useMemo(
@@ -314,6 +397,20 @@ export default function NativeScheduleView({
     }
     return days;
   }, [data.settings?.holidays, data.settings?.weekdaysOnly, ganttZoomOption.visibleDays, timeline.maxDate, timeline.minDate, timelineTotalDays]);
+  const ganttHorizontalWindow = useHorizontalVirtualWindow({
+    contentSize: timelineCanvasWidth,
+    scrollRef: ganttShellRef,
+    reservedWidthRef: ganttTableRef,
+    revision: `${scheduleDisplayMode}:${ganttZoomValue}:${projectFilter}`,
+  });
+  const visibleTimelineWeeks = useMemo(
+    () => timelineWeeks.filter((week) => timelineItemIntersectsWindow(week, ganttHorizontalWindow, timelineCanvasWidth)),
+    [ganttHorizontalWindow, timelineCanvasWidth, timelineWeeks],
+  );
+  const visibleTimelineDays = useMemo(
+    () => timelineDays.filter((day) => timelineItemIntersectsWindow(day, ganttHorizontalWindow, timelineCanvasWidth)),
+    [ganttHorizontalWindow, timelineCanvasWidth, timelineDays],
+  );
   const ganttTodayPosition = useMemo(() => {
     const today = new Date();
     if (today < timeline.minDate || today > timeline.maxDate) return null;
@@ -324,6 +421,19 @@ export default function NativeScheduleView({
     () => rows.map((_, index) => Math.max(GANTT_ROW_MIN_HEIGHT, rowHeights[index] || GANTT_ROW_MIN_HEIGHT)),
     [rowHeights, rows],
   );
+  const getGanttRowHeight = useCallback(
+    (index) => resolvedRowHeights[index] || GANTT_ROW_MIN_HEIGHT,
+    [resolvedRowHeights],
+  );
+  const ganttVirtualRange = useVirtualRange({
+    count: rows.length,
+    getSize: getGanttRowHeight,
+    scrollRef: ganttShellRef,
+    headerOffset: 56,
+    threshold: 40,
+    revision: scheduleDisplayMode,
+  });
+  const visibleGanttRows = rows.slice(ganttVirtualRange.startIndex, ganttVirtualRange.endIndex);
 
   const rowTopOffsets = useMemo(() => {
     const offsets = [];
@@ -470,10 +580,28 @@ export default function NativeScheduleView({
     return { phases, steps, scheduledRows, visibleTaskCount };
   }, [datedRows.length, filteredProjects, tasksByProject]);
 
-  const calendarData = useMemo(
+  const unfilteredCalendarData = useMemo(
     () => buildCalendarItemsView(filteredProjects, showCalendarTasks ? tasksByProject : new Map(), data.settings),
     [data.settings, filteredProjects, showCalendarTasks, tasksByProject],
   );
+  const calendarData = useMemo(() => {
+    if (calendarItemFilter === 'all') return unfilteredCalendarData;
+    const includeItem = (item) => {
+      if (item.type === 'holiday') return true;
+      if (calendarItemFilter === 'schedule') return ['phase', 'step', 'delay'].includes(item.type);
+      if (calendarItemFilter === 'tasks') return item.type === 'task';
+      if (calendarItemFilter === 'inspections') return item.type === 'inspection';
+      return true;
+    };
+    return {
+      holidayMap: unfilteredCalendarData.holidayMap,
+      itemsByDate: new Map(
+        [...unfilteredCalendarData.itemsByDate.entries()]
+          .map(([dateKey, items]) => [dateKey, items.filter(includeItem)]),
+      ),
+      rangeItems: unfilteredCalendarData.rangeItems.filter(includeItem),
+    };
+  }, [calendarItemFilter, unfilteredCalendarData]);
   const emptyScheduleTarget = useMemo(() => getFallbackStepTarget(), [data.projects, filteredProjects]);
 
   const calendarCells = useMemo(() => {
@@ -797,7 +925,8 @@ export default function NativeScheduleView({
     const trimmed = phaseNameDraft.value.trim();
     if (!trimmed) return;
 
-    setSaving(true);
+    const mutationKey = ['project', phaseNameDraft.projectId, 'phase-create'];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === phaseNameDraft.projectId);
       if (!project) return;
@@ -841,7 +970,7 @@ export default function NativeScheduleView({
       setEditorPredecessorDraft(null);
       setPhaseNameDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1016,12 +1145,18 @@ export default function NativeScheduleView({
     if (!subcodeDraft) return;
     const trimmed = subcodeDraft.value.trim();
     if (!trimmed) return;
-    const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
-    const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
-    const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
-    onStateChange(nextState);
-    setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
-    setSubcodeDraft(null);
+    const mutationKey = ['settings', 'inspection-subcodes'];
+    beginMutation(mutationKey);
+    try {
+      const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+      const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
+      const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
+      onStateChange(nextState);
+      setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+      setSubcodeDraft(null);
+    } finally {
+      endMutation(mutationKey);
+    }
   }
 
   async function createInspectionAttachmentRecord(projectId, kind, file) {
@@ -1079,28 +1214,26 @@ export default function NativeScheduleView({
 
   async function handleSaveInspectionDraft() {
     if (!inspectionDraft?.projectId) return;
-    setSaving(true);
+    const mutationKey = ['inspection', inspectionDraft.id || 'create'];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === inspectionDraft.projectId);
       if (!project) return;
       const sourceProjectId = inspectionDraft.originalProjectId || inspectionDraft.projectId;
       const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
+      const filesToDeleteAfterSave = [];
       let stickerFile = inspectionDraft.stickerFile || null;
       let reportFile = inspectionDraft.reportFile || null;
       if (inspectionDraft.stickerPendingFile) {
-        if (stickerFile?.storagePath) {
-          await deleteProjectFileFromStorage(stickerFile);
-        }
+        if (stickerFile?.storagePath) filesToDeleteAfterSave.push(stickerFile);
         stickerFile = await createInspectionAttachmentRecord(project.id, 'sticker', inspectionDraft.stickerPendingFile);
       }
       if (inspectionDraft.reportPendingFile) {
-        if (reportFile?.storagePath) {
-          await deleteProjectFileFromStorage(reportFile);
-        }
+        if (reportFile?.storagePath) filesToDeleteAfterSave.push(reportFile);
         reportFile = await createInspectionAttachmentRecord(project.id, 'report', inspectionDraft.reportPendingFile);
       }
       if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
-        await deleteProjectFileFromStorage(reportFile);
+        filesToDeleteAfterSave.push(reportFile);
         reportFile = null;
       } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
         reportFile = null;
@@ -1118,15 +1251,15 @@ export default function NativeScheduleView({
       };
       let nextState = data;
       if (sourceProject && sourceProject.id !== project.id) {
-        nextState = await updateProject(nextState, sourceProject.id, {
+        const nextSourceProject = {
           ...sourceProject,
           inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-        });
-        const refreshedTargetProject = nextState.projects.find((item) => item.id === project.id) || project;
-        nextState = await updateProject(nextState, project.id, {
-          ...refreshedTargetProject,
-          inspections: [...(refreshedTargetProject.inspections || []), nextInspection],
-        });
+        };
+        const nextTargetProject = {
+          ...project,
+          inspections: [...(project.inspections || []), nextInspection],
+        };
+        nextState = await updateProjects(nextState, [nextSourceProject, nextTargetProject]);
       } else {
         nextState = await updateProject(nextState, project.id, {
           ...project,
@@ -1136,9 +1269,12 @@ export default function NativeScheduleView({
         });
       }
       onStateChange(nextState);
+      await Promise.allSettled(
+        filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
+      );
       setInspectionDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1150,25 +1286,25 @@ export default function NativeScheduleView({
       tone: 'danger',
     });
     if (!confirmed) return;
-    setSaving(true);
+    const mutationKey = ['inspection', inspectionDraft.id];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
       if (!project) return;
       const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
-      if (existing?.stickerFile?.storagePath) {
-        await deleteProjectFileFromStorage(existing.stickerFile);
-      }
-      if (existing?.reportFile?.storagePath) {
-        await deleteProjectFileFromStorage(existing.reportFile);
-      }
       const nextState = await updateProject(data, project.id, {
         ...project,
         inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
       });
       onStateChange(nextState);
+      await Promise.allSettled(
+        [existing?.stickerFile, existing?.reportFile]
+          .filter((file) => file?.storagePath)
+          .map((file) => deleteProjectFileFromStorage(file)),
+      );
       setInspectionDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1187,7 +1323,8 @@ export default function NativeScheduleView({
     setTaskDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
-  function startCreateTaskAssignee() {
+  function startCreateTaskAssignee(target = 'task') {
+    setPersonAssignmentTarget(target);
     setTaskPersonDraft({
       id: '',
       first: '',
@@ -1205,7 +1342,8 @@ export default function NativeScheduleView({
 
   async function handleSaveTaskDraft() {
     if (!taskDraft?.id || !taskDraft.label.trim()) return;
-    setSaving(true);
+    const mutationKey = ['task', taskDraft.id];
+    beginMutation(mutationKey);
     try {
       const nextState = await updateTask(data, taskDraft.id, {
         label: taskDraft.label.trim(),
@@ -1217,7 +1355,7 @@ export default function NativeScheduleView({
       onStateChange(nextState);
       setTaskDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1230,31 +1368,53 @@ export default function NativeScheduleView({
     });
     if (!confirmed) return;
 
-    setSaving(true);
+    const mutationKey = ['task', taskDraft.id];
+    beginMutation(mutationKey);
     try {
-      const nextState = await deleteTask(data, taskDraft.id);
-      onStateChange(nextState);
+      const currentState = dataRef.current;
+      const deletedTask = currentState.tasks.find((task) => task.id === taskDraft.id);
+      if (!deletedTask) return;
+      const taskSnapshot = { ...deletedTask, attachments: [...(deletedTask.attachments || [])] };
+      const nextState = await deleteTask(currentState, taskDraft.id, { preserveAttachments: true });
+      commitScheduleState(nextState);
+      showUndoAction({
+        message: `Deleted "${taskSnapshot.label}".`,
+        onUndo: async () => {
+          const restoredState = await createTask(dataRef.current, taskSnapshot);
+          commitScheduleState(restoredState);
+        },
+        onCommit: async () => {
+          for (const attachment of taskSnapshot.attachments) {
+            if (attachment?.storagePath) await deleteProjectFileFromStorage(attachment);
+          }
+        },
+      });
       setTaskDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   async function handleSaveTaskPersonDraft() {
     if (!taskPersonDraft) return;
     if (!taskPersonDraft.first.trim() && !taskPersonDraft.last.trim() && !taskPersonDraft.company.trim()) return;
-    setSaving(true);
+    const mutationKey = ['person', 'create-for-schedule'];
+    beginMutation(mutationKey);
     try {
       const nextState = await createPerson(data, taskPersonDraft.type, taskPersonDraft);
       const createdPerson = (taskPersonDraft.type === 'sub' ? nextState.subs : nextState.employees)?.at(-1);
       const nextAssignee = createdPerson ? personAssignmentLabel(createdPerson) : '';
       onStateChange(nextState);
       if (nextAssignee) {
-        setTaskDraft((current) => (current ? { ...current, assignee: nextAssignee } : current));
+        if (personAssignmentTarget === 'schedule') {
+          setEditorDraft((current) => (current ? { ...current, assign: nextAssignee } : current));
+        } else {
+          setTaskDraft((current) => (current ? { ...current, assignee: nextAssignee } : current));
+        }
       }
       setTaskPersonDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1441,7 +1601,8 @@ export default function NativeScheduleView({
     }
     if (source.fromStepId === target.stepId) return;
 
-    setSaving(true);
+    const mutationKey = ['project', source.projectId, 'dependency', target.stepId];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === source.projectId);
       if (!project) return;
@@ -1488,12 +1649,12 @@ export default function NativeScheduleView({
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to create dependency.', 'Dependency failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   function beginDependencyDrag(event, row) {
-    if (!timeline || saving) return;
+    if (!timeline) return;
     event.preventDefault();
     event.stopPropagation();
     setDragDependency({
@@ -1551,7 +1712,8 @@ export default function NativeScheduleView({
       return;
     }
 
-    setSaving(true);
+    const mutationKey = ['project', editorDraft.projectId, editorDraft.type, editorDraft.stepId || editorDraft.phaseId || 'create'];
+    beginMutation(mutationKey);
     setEditorPredecessorDraft(null);
     try {
       if (editorDraft.type === 'phase') {
@@ -1750,8 +1912,7 @@ export default function NativeScheduleView({
 
       let nextTasks = syncProjectTasks(sourceProject.id, nextSourceProject, data.tasks);
       nextTasks = syncProjectTasks(targetProject.id, nextTargetProject, nextTasks);
-      const sourceState = await updateProject(data, sourceProject.id, nextSourceProject);
-      const nextState = await updateProjectAndTasks(sourceState, targetProject.id, nextTargetProject, nextTasks);
+      const nextState = await updateProjectsAndTasks(data, [nextSourceProject, nextTargetProject], nextTasks);
       onStateChange(nextState);
       if (nextAction === 'new') {
         setEditorDraft(buildStepDraftFromState(nextState, targetProjectId, targetPhaseId));
@@ -1761,7 +1922,7 @@ export default function NativeScheduleView({
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to save schedule item.', 'Save failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1800,21 +1961,28 @@ export default function NativeScheduleView({
     });
     if (!confirmed) return;
 
-    setSaving(true);
+    const projectId = row.sourceProjectId || row.parentProjectId || row.projectId;
+    const phaseId = row.sourcePhaseId || row.parentPhaseId || row.phaseId;
+    const stepId = row.stepId || row.entityId;
+    const mutationKey = ['project', projectId, 'step', stepId];
+    beginMutation(mutationKey);
     try {
-      const projectId = row.sourceProjectId || row.parentProjectId || row.projectId;
-      const phaseId = row.sourcePhaseId || row.parentPhaseId || row.phaseId;
-      const stepId = row.stepId || row.entityId;
-      const project = data.projects.find((item) => item.id === projectId);
+      const currentState = dataRef.current;
+      const project = currentState.projects.find((item) => item.id === projectId);
       if (!project || !phaseId || !stepId) return;
 
       const nextProject = resyncProjectSchedule(buildProjectAfterStepDelete(project, phaseId, stepId));
-      const nextTasks = syncProjectTasks(projectId, nextProject, data.tasks);
-      const nextState = await updateProjectAndTasks(data, projectId, nextProject, nextTasks);
-      onStateChange(nextState);
+      const taskSnapshot = [...currentState.tasks];
+      const nextTasks = syncProjectTasks(projectId, nextProject, currentState.tasks);
+      const nextState = await updateProjectAndTasks(currentState, projectId, nextProject, nextTasks);
+      commitScheduleState(nextState);
+      showUndoAction({
+        message: `Deleted "${row.label}".`,
+        onUndo: () => restoreScheduleSnapshot(projectId, project, taskSnapshot),
+      });
       setEditorDraft((current) => (current?.stepId === stepId ? null : current));
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1826,12 +1994,14 @@ export default function NativeScheduleView({
     });
     if (!confirmed) return;
 
-    setSaving(true);
+    const projectId = row.parentProjectId || row.projectId;
+    const phaseId = row.parentPhaseId || row.phaseId;
+    const delayId = row.entityId || row.delayId;
+    const mutationKey = ['project', projectId, 'delay', delayId];
+    beginMutation(mutationKey);
     try {
-      const projectId = row.parentProjectId || row.projectId;
-      const phaseId = row.parentPhaseId || row.phaseId;
-      const delayId = row.entityId || row.delayId;
-      const project = data.projects.find((item) => item.id === projectId);
+      const currentState = dataRef.current;
+      const project = currentState.projects.find((item) => item.id === projectId);
       if (!project || !phaseId || !delayId) return;
 
       const nextProject = {
@@ -1843,7 +2013,7 @@ export default function NativeScheduleView({
           let steps = [...(phase.steps || [])];
           if (existing) {
             steps = steps.map((step) =>
-              step.id === existing.stepId ? applyDelayToStep(step, -Number(existing.days || 0), data.settings) : step,
+              step.id === existing.stepId ? applyDelayToStep(step, -Number(existing.days || 0), currentState.settings) : step,
             );
           }
 
@@ -1856,12 +2026,17 @@ export default function NativeScheduleView({
       };
 
       const syncedProject = resyncProjectSchedule(nextProject);
-      const nextTasks = syncProjectTasks(projectId, syncedProject, data.tasks);
-      const nextState = await updateProjectAndTasks(data, projectId, syncedProject, nextTasks);
-      onStateChange(nextState);
+      const taskSnapshot = [...currentState.tasks];
+      const nextTasks = syncProjectTasks(projectId, syncedProject, currentState.tasks);
+      const nextState = await updateProjectAndTasks(currentState, projectId, syncedProject, nextTasks);
+      commitScheduleState(nextState);
+      showUndoAction({
+        message: 'Delay removed.',
+        onUndo: () => restoreScheduleSnapshot(projectId, project, taskSnapshot),
+      });
       setDelayDraft((current) => (current?.delayId === delayId ? null : current));
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1877,11 +2052,13 @@ export default function NativeScheduleView({
     );
     if (!confirmed) return;
 
-    setSaving(true);
+    const mutationKey = ['project', editorDraft.projectId, editorDraft.type, editorDraft.phaseId];
+    beginMutation(mutationKey);
     try {
       const projectId = editorDraft.projectId;
       const phaseId = editorDraft.phaseId;
-      const project = data.projects.find((item) => item.id === projectId);
+      const currentState = dataRef.current;
+      const project = currentState.projects.find((item) => item.id === projectId);
       if (!project) return;
 
       const nextProject = {
@@ -1905,19 +2082,25 @@ export default function NativeScheduleView({
       };
 
       const syncedProject = resyncProjectSchedule(nextProject);
-      const nextTasks = syncProjectTasks(projectId, syncedProject, data.tasks);
-      const nextState = await updateProjectAndTasks(data, projectId, syncedProject, nextTasks);
-      onStateChange(nextState);
+      const taskSnapshot = [...currentState.tasks];
+      const nextTasks = syncProjectTasks(projectId, syncedProject, currentState.tasks);
+      const nextState = await updateProjectAndTasks(currentState, projectId, syncedProject, nextTasks);
+      commitScheduleState(nextState);
+      showUndoAction({
+        message: `Deleted "${editorDraft.name}".`,
+        onUndo: () => restoreScheduleSnapshot(projectId, project, taskSnapshot),
+      });
       setEditorDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   async function handleSaveDelay() {
     if (!delayDraft?.stepId) return;
 
-    setSaving(true);
+    const mutationKey = ['project', delayDraft.projectId, 'delay', delayDraft.delayId || 'create'];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === delayDraft.projectId);
       if (!project) return;
@@ -1983,7 +2166,7 @@ export default function NativeScheduleView({
       onStateChange(nextState);
       setDelayDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -1995,7 +2178,8 @@ export default function NativeScheduleView({
   async function handleSaveDependencies() {
     if (!dependencyDraft) return;
 
-    setSaving(true);
+    const mutationKey = ['project', dependencyDraft.projectId, 'dependency', dependencyDraft.stepId];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === dependencyDraft.projectId);
       if (!project) return;
@@ -2040,9 +2224,29 @@ export default function NativeScheduleView({
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to save dependencies.', 'Save failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
+
+  const editorSaving = editorDraft
+    ? isMutating(['project', editorDraft.projectId, editorDraft.type, editorDraft.stepId || editorDraft.phaseId || 'create']) ||
+      isMutating(['project', editorDraft.projectId, editorDraft.type, editorDraft.phaseId])
+    : false;
+  const delaySaving = delayDraft
+    ? isMutating(['project', delayDraft.projectId, 'delay', delayDraft.delayId || 'create'])
+    : false;
+  const dependencySaving = dependencyDraft
+    ? isMutating(['project', dependencyDraft.projectId, 'dependency', dependencyDraft.stepId])
+    : false;
+  const taskSaving = taskDraft ? isMutating(['task', taskDraft.id]) : false;
+  const taskPersonSaving = isMutating(['person', 'create-for-schedule']);
+  const inspectionSaving = inspectionDraft
+    ? isMutating(['inspection', inspectionDraft.id || 'create'])
+    : false;
+  const phaseSaving = phaseNameDraft
+    ? isMutating(['project', phaseNameDraft.projectId, 'phase-create'])
+    : false;
+  const subcodeSaving = isMutating(['settings', 'inspection-subcodes']);
 
   return (
     <section className={`panel native-panel workspace-page ${isScheduleView ? 'top-level-schedule-page' : 'top-level-calendar-page'}`}>
@@ -2051,11 +2255,49 @@ export default function NativeScheduleView({
           {isScheduleView ? (
             <div className="schedule-toolbar-summary">
               <strong>Schedule</strong>
-              <span>{rows.length} visible items</span>
+              <span>{rows.length} {scheduleSearchActive ? 'matching' : 'visible'} items</span>
             </div>
           ) : null}
           {isScheduleView ? (
             <div className="schedule-toolbar-actions">
+              <input
+                className="schedule-search-input"
+                type="search"
+                value={scheduleSearchQuery}
+                onChange={(event) => setScheduleSearchQuery(event.target.value)}
+                aria-label="Search schedule"
+                placeholder="Search schedule"
+              />
+              <label className="schedule-history-filter">
+                <input
+                  type="checkbox"
+                  checked={hidePastScheduleItems}
+                  onChange={(event) => setHidePastScheduleItems(event.target.checked)}
+                />
+                <span>Hide past</span>
+              </label>
+              <SavedFiltersControls
+                storageKey={`project-tracker:saved-filters:schedule:${activeUser?.id || 'default'}`}
+                currentValue={{
+                  projectId: projectFilter,
+                  query: scheduleSearchQuery,
+                  hidePast: hidePastScheduleItems,
+                  displayMode: scheduleDisplayMode,
+                  zoom: ganttZoomValue,
+                }}
+                onApply={(filter) => {
+                  onProjectFilterChange(
+                    filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
+                      ? filter.projectId
+                      : 'all',
+                  );
+                  setScheduleSearchQuery(String(filter.query || ''));
+                  setHidePastScheduleItems(filter.hidePast === true);
+                  setScheduleDisplayMode(filter.displayMode === 'agenda' ? 'agenda' : 'gantt');
+                  setGanttZoomValue(Math.min(GANTT_ZOOM_OPTIONS.length - 1, Math.max(0, Number(filter.zoom) || 0)));
+                }}
+                disabled={false}
+              />
               <button className="button secondary schedule-today-button" type="button" onClick={handleScheduleToday}>
                 Today
               </button>
@@ -2107,6 +2349,7 @@ export default function NativeScheduleView({
           rows={rows}
           className={scheduleDisplayMode === 'agenda' ? 'desktop-visible' : ''}
           agendaRef={mobileAgendaRef}
+          expansionLocked={scheduleSearchActive}
           onToggle={(row) => row.type === 'project' ? toggleProject(row.entityId) : togglePhase(row.entityId)}
           onAddPhase={(row) => startCreatePhase(row.entityId)}
           onAddStep={(row) => startCreateStep(row.parentProjectId, row.entityId)}
@@ -2127,7 +2370,12 @@ export default function NativeScheduleView({
               <span>Dates</span>
             </div>
 
-            {rows.map((row, index) => (
+            {ganttVirtualRange.beforeSize ? (
+              <div className="gantt-virtual-spacer" style={{ height: `${ganttVirtualRange.beforeSize}px` }} aria-hidden="true" />
+            ) : null}
+            {visibleGanttRows.map((row, visibleIndex) => {
+              const index = ganttVirtualRange.startIndex + visibleIndex;
+              return (
               <div
                 key={row.id}
                 ref={(element) => {
@@ -2152,6 +2400,7 @@ export default function NativeScheduleView({
                       <button
                         className="gantt-expand-button"
                         type="button"
+                        disabled={scheduleSearchActive}
                         onClick={() => toggleProject(row.entityId)}
                         aria-label={row.expanded ? 'Collapse project' : 'Expand project'}
                       >
@@ -2161,6 +2410,7 @@ export default function NativeScheduleView({
                       <button
                         className="gantt-expand-button"
                         type="button"
+                        disabled={scheduleSearchActive}
                         onClick={() => togglePhase(row.entityId)}
                         aria-label={row.expanded ? 'Collapse phase' : 'Expand phase'}
                       >
@@ -2288,7 +2538,11 @@ export default function NativeScheduleView({
                   ) : null}
                 </div>
               </div>
-            ))}
+              );
+            })}
+            {ganttVirtualRange.afterSize ? (
+              <div className="gantt-virtual-spacer" style={{ height: `${ganttVirtualRange.afterSize}px` }} aria-hidden="true" />
+            ) : null}
           </div>
 
           <div ref={ganttTimelineWrapRef} className="gantt-timeline-wrap">
@@ -2297,7 +2551,7 @@ export default function NativeScheduleView({
               style={{ width: `${timelineCanvasWidth}px` }}
             >
               <div className="gantt-weeks">
-                {timelineWeeks.map((week) => (
+                {visibleTimelineWeeks.map((week) => (
                   <div
                     key={week.key}
                     className="gantt-week"
@@ -2308,7 +2562,7 @@ export default function NativeScheduleView({
                 ))}
               </div>
               <div className="gantt-ticks">
-                {timelineDays.map((tick) => (
+                {visibleTimelineDays.map((tick) => (
                   <div
                     key={tick.key}
                     className={`gantt-tick${tick.isNonWorkday ? ' non-workday' : ''}`}
@@ -2326,7 +2580,7 @@ export default function NativeScheduleView({
               style={{ width: `${timelineCanvasWidth}px` }}
             >
               <div className="gantt-non-workdays" aria-hidden="true">
-                {timelineDays
+                {visibleTimelineDays
                   .filter((day) => day.isNonWorkday)
                   .map((day) => (
                     <span
@@ -2336,7 +2590,7 @@ export default function NativeScheduleView({
                   ))}
               </div>
               <div className="gantt-grid-dividers" aria-hidden="true">
-                {(ganttZoomOption.visibleDays === 90 ? timelineWeeks : timelineDays)
+                {(ganttZoomOption.visibleDays === 90 ? visibleTimelineWeeks : visibleTimelineDays)
                   .filter((divider) => divider.left > 0)
                   .map((divider) => (
                     <span key={divider.key} style={{ left: `${divider.left}%` }} />
@@ -2407,7 +2661,11 @@ export default function NativeScheduleView({
                   ))}
                 </div>
               ) : null}
-              {rows.map((row, index) => {
+              {ganttVirtualRange.beforeSize ? (
+                <div className="gantt-grid-virtual-spacer" style={{ height: `${ganttVirtualRange.beforeSize}px` }} aria-hidden="true" />
+              ) : null}
+              {visibleGanttRows.map((row, visibleIndex) => {
+                const index = ganttVirtualRange.startIndex + visibleIndex;
                 const style = getTimelineStyle(row, timeline.minDate, timeline.maxDate);
                 const canConnectHere =
                   dragDependency &&
@@ -2467,6 +2725,9 @@ export default function NativeScheduleView({
                   </div>
                 );
               })}
+              {ganttVirtualRange.afterSize ? (
+                <div className="gantt-grid-virtual-spacer" style={{ height: `${ganttVirtualRange.afterSize}px` }} aria-hidden="true" />
+              ) : null}
             </div>
           </div>
         </div>
@@ -2528,6 +2789,30 @@ export default function NativeScheduleView({
               Today
             </button>
           </div>
+          <div className="calendar-filter-actions">
+            <label className="task-filter calendar-item-filter">
+              <span>Show</span>
+              <select value={calendarItemFilter} onChange={(event) => setCalendarItemFilter(event.target.value)}>
+                <option value="all">All items</option>
+                <option value="schedule">Schedule</option>
+                <option value="tasks">Tasks</option>
+                <option value="inspections">Inspections</option>
+              </select>
+            </label>
+            <SavedFiltersControls
+              storageKey={`project-tracker:saved-filters:calendar:${activeUser?.id || 'default'}`}
+              currentValue={{ projectId: projectFilter, itemType: calendarItemFilter }}
+              onApply={(filter) => {
+                onProjectFilterChange(
+                  filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
+                    ? filter.projectId
+                    : 'all',
+                );
+                setCalendarItemFilter(['schedule', 'tasks', 'inspections'].includes(filter.itemType) ? filter.itemType : 'all');
+              }}
+              disabled={false}
+            />
+          </div>
         </div>
 
         <SharedCalendarGrid
@@ -2544,14 +2829,17 @@ export default function NativeScheduleView({
       </section>
       ) : null}
 
-      <ScheduleItemModal
+      <Suspense fallback={null}>
+      {editorDraft ? <ScheduleItemModal
         draft={editorDraft}
         type={editorDraft?.type}
         projects={visibleProjects}
-        saving={saving}
+        assigneeOptions={taskAssigneeOptions}
+        saving={editorSaving}
         onChange={updateEditorDraft}
         onOpenPreds={openEditorPredecessors}
         onAddPhase={handleQuickAddPhase}
+        onAddPerson={() => startCreateTaskAssignee('schedule')}
         onClose={() => {
           setEditorPredecessorDraft(null);
           setEditorDraft(null);
@@ -2559,48 +2847,48 @@ export default function NativeScheduleView({
         onSave={() => handleSaveEditor('close')}
         onSaveAndNew={() => handleSaveEditor('new')}
         onDelete={handleDeleteEditor}
-      />
-      <StepPredecessorModal
+      /> : null}
+      {editorPredecessorDraft ? <StepPredecessorModal
         draft={editorPredecessorDraft}
-        saving={saving}
+        saving={editorSaving}
         onTogglePred={toggleEditorPred}
         onLagChange={changeEditorPredLag}
         onClose={() => setEditorPredecessorDraft(null)}
         onSave={saveEditorPredecessors}
-      />
-      <DelayModal
+      /> : null}
+      {delayDraft ? <DelayModal
         draft={delayDraft}
-        saving={saving}
+        saving={delaySaving}
         onChange={updateDelayDraft}
         onClose={() => setDelayDraft(null)}
         onSave={handleSaveDelay}
         onDelete={handleDeleteDelay}
-      />
-      <DependencyModal
+      /> : null}
+      {dependencyDraft ? <DependencyModal
         draft={dependencyDraft}
-        saving={saving}
+        saving={dependencySaving}
         onTogglePred={toggleDependencyPred}
         onLagChange={changeDependencyLag}
         onClose={() => setDependencyDraft(null)}
         onSave={handleSaveDependencies}
-      />
-      <TaskModal
+      /> : null}
+      {taskDraft ? <TaskModal
         draft={taskDraft}
         projects={visibleProjects}
         assigneeOptions={taskAssigneeOptions}
-        saving={saving}
+        saving={taskSaving}
         onChange={updateTaskDraft}
         onAddPerson={startCreateTaskAssignee}
         onClose={() => setTaskDraft(null)}
         onSave={handleSaveTaskDraft}
         onDelete={handleDeleteTaskDraft}
-      />
+      /> : null}
       {taskPersonDraft ? (
         <PersonModal
           draft={taskPersonDraft}
           type={taskPersonDraft.type}
           isEditing={false}
-          saving={saving}
+          saving={taskPersonSaving}
           showTypeSelector
           onChange={(field, value) =>
             setTaskPersonDraft((current) => (current ? { ...current, [field]: value } : current))
@@ -2610,32 +2898,33 @@ export default function NativeScheduleView({
           onDelete={() => {}}
         />
       ) : null}
-      <InspectionModal
+      {inspectionDraft ? <InspectionModal
         draft={inspectionDraft}
         project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || null}
         projects={visibleProjects}
         subcodes={inspectionSubcodes}
-        saving={saving}
+        saving={inspectionSaving}
         onChange={updateInspectionDraft}
         onAddSubcode={handleAddInspectionSubcodeFromSchedule}
         onClose={() => setInspectionDraft(null)}
         onSave={handleSaveInspectionDraft}
         onDelete={handleDeleteInspectionDraft}
-      />
-      <TextEntryModal
+      /> : null}
+      {phaseNameDraft ? <TextEntryModal
         draft={phaseNameDraft}
-        saving={saving}
+        saving={phaseSaving}
         onChange={(value) => setPhaseNameDraft((current) => (current ? { ...current, value } : current))}
         onClose={() => setPhaseNameDraft(null)}
         onSave={savePhaseNameDraft}
-      />
-      <TextEntryModal
+      /> : null}
+      {subcodeDraft ? <TextEntryModal
         draft={subcodeDraft}
-        saving={saving}
+        saving={subcodeSaving}
         onChange={(value) => setSubcodeDraft((current) => (current ? { ...current, value } : current))}
         onClose={() => setSubcodeDraft(null)}
         onSave={saveScheduleInspectionSubcodeDraft}
-      />
+      /> : null}
+      </Suspense>
       <PageStats settings={data.settings}>
         <DashboardStat label="Projects" value={filteredProjects.length} tone="brand" />
         <DashboardStat label="Phases" value={stats.phases} />
@@ -2646,8 +2935,8 @@ export default function NativeScheduleView({
         />
       </PageStats>
       <div className="page-refresh-footer">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-          {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
         </button>
       </div>
     </section>

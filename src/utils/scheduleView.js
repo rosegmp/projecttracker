@@ -207,6 +207,68 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
   return rows;
 }
 
+export function filterScheduleRows(rows, query) {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
+  if (!normalizedQuery) return rows;
+
+  const contexts = [];
+  let currentProjectId = '';
+  let currentPhaseId = '';
+  let currentStepId = '';
+
+  rows.forEach((row) => {
+    if (row.type === 'project') {
+      currentProjectId = row.id;
+      currentPhaseId = '';
+      currentStepId = '';
+    } else if (row.type === 'phase') {
+      currentPhaseId = row.id;
+      currentStepId = '';
+    } else if (row.type === 'step') {
+      currentStepId = row.id;
+    } else if (row.type === 'task') {
+      currentPhaseId = '';
+      currentStepId = '';
+    }
+    contexts.push({ projectId: currentProjectId, phaseId: currentPhaseId, stepId: currentStepId });
+  });
+
+  const includedIds = new Set();
+  rows.forEach((row, index) => {
+    const searchableText = [
+      row.label,
+      row.subtitle,
+      row.assign,
+      row.assignee,
+      row.stepName,
+      row.delayCause,
+      row.description,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase();
+    if (!searchableText.includes(normalizedQuery)) return;
+
+    const context = contexts[index];
+    if (context.projectId) includedIds.add(context.projectId);
+    if (context.phaseId) includedIds.add(context.phaseId);
+    if (row.type === 'delay' && context.stepId) includedIds.add(context.stepId);
+    includedIds.add(row.id);
+
+    if (row.type === 'project') {
+      rows.forEach((candidate, candidateIndex) => {
+        if (contexts[candidateIndex].projectId === row.id) includedIds.add(candidate.id);
+      });
+    } else if (row.type === 'phase') {
+      rows.forEach((candidate, candidateIndex) => {
+        if (contexts[candidateIndex].phaseId === row.id) includedIds.add(candidate.id);
+      });
+    }
+  });
+
+  return rows.filter((row) => includedIds.has(row.id));
+}
+
 export function buildCalendarItems(projects, tasksByProject, settings) {
   const itemsByDate = new Map();
   const holidayMap = new Map();

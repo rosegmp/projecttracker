@@ -1,18 +1,78 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskAssigneeDirectory, buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
-  createPerson, createTask, deleteTask, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
+  createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
   updatePerson, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { isOverdue } from '../utils/schedule.js';
 import { formatShortDate } from '../utils/calendarUi.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, isShareDismissed } from '../utils/fileUi.js';
-import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
-import { EmailAddressModal } from './FormDialogs.jsx';
+import { downloadFileWithUi } from '../utils/downloadUi.js';
+import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
+const EmailAddressModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.EmailAddressModal })));
 import FluentIcon from './FluentIcon.jsx';
-import PersonModal from './PersonModal.jsx';
+const PersonModal = lazy(() => import('./PersonModal.jsx'));
 import { DashboardStat, PageStats } from './SharedUI.jsx';
+import SavedFiltersControls from './SavedFiltersControls.jsx';
 import TaskRow from './TaskRow.jsx';
+import { useVirtualRange } from '../utils/virtualization.js';
+import { openMailComposer } from '../platform/platformAdapter.js';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+
+function VirtualTaskItem({ taskId, onSize, children }) {
+  const itemRef = useRef(null);
+
+  useEffect(() => {
+    const element = itemRef.current;
+    if (!element) return undefined;
+    const measure = () => onSize(taskId, element.offsetHeight + 12);
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [onSize, taskId]);
+
+  return <div ref={itemRef} className="task-virtual-item">{children}</div>;
+}
+
+function VirtualTaskRows({ tasks, renderTask, highlightedTaskId = '' }) {
+  const scrollRef = useRef(null);
+  const sizesRef = useRef(new Map());
+  const [sizeRevision, setSizeRevision] = useState(0);
+  const getSize = useCallback((index) => sizesRef.current.get(tasks[index]?.id) || 104, [tasks]);
+  const range = useVirtualRange({
+    count: tasks.length,
+    getSize,
+    scrollRef,
+    threshold: 30,
+    revision: sizeRevision,
+  });
+  const recordSize = useCallback((taskId, size) => {
+    if (sizesRef.current.get(taskId) === size) return;
+    sizesRef.current.set(taskId, size);
+    setSizeRevision((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!highlightedTaskId || !range.virtualized || !scrollRef.current) return;
+    const index = tasks.findIndex((task) => task.id === highlightedTaskId);
+    if (index < 0) return;
+    let offset = 0;
+    for (let itemIndex = 0; itemIndex < index; itemIndex += 1) offset += getSize(itemIndex);
+    scrollRef.current.scrollTo({ top: Math.max(0, offset - scrollRef.current.clientHeight / 3), behavior: 'smooth' });
+  }, [getSize, highlightedTaskId, range.virtualized, tasks]);
+
+  return (
+    <div ref={scrollRef} className={`task-virtual-list${range.virtualized ? ' active' : ''}`}>
+      {range.beforeSize ? <div className="virtual-list-spacer" style={{ height: `${range.beforeSize}px` }} aria-hidden="true" /> : null}
+      {tasks.slice(range.startIndex, range.endIndex).map((task) => (
+        <VirtualTaskItem key={task.id} taskId={task.id} onSize={recordSize}>
+          {renderTask(task)}
+        </VirtualTaskItem>
+      ))}
+      {range.afterSize ? <div className="virtual-list-spacer" style={{ height: `${range.afterSize}px` }} aria-hidden="true" /> : null}
+    </div>
+  );
+}
 
 export default function NativeTasksView({
   data,
@@ -40,8 +100,7 @@ export default function NativeTasksView({
   const [editAttachmentInputKey, setEditAttachmentInputKey] = useState(0);
   const [personDraft, setPersonDraft] = useState(null);
   const [emailDraft, setEmailDraft] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [deletingTaskId, setDeletingTaskId] = useState('');
+  const { runMutation, isMutating } = useEntityMutations();
   const [taskSaveMessage, setTaskSaveMessage] = useState('');
   const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
   const createAttachmentInputRef = useRef(null);
@@ -218,7 +277,7 @@ export default function NativeTasksView({
   }
 
   function openMailto(email, subject, body) {
-    window.location.href = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    openMailComposer(email, subject, body);
   }
 
   function startEmailDraft({ title, description, email = '', person = null, subject, body }) {
@@ -236,14 +295,12 @@ export default function NativeTasksView({
     });
   }
 
-  async function runTaskMutation(mutation) {
-    setSaving(true);
-    try {
+  async function runTaskMutation(key, mutation) {
+    return runMutation(key, async () => {
       const nextState = await mutation(dataRef.current);
       commitTaskState(nextState);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
   }
 
   function appendTaskFiles(currentFiles, fileList) {
@@ -297,27 +354,14 @@ export default function NativeTasksView({
   }
 
   async function handleDownloadTaskAttachment(attachment) {
-    try {
-      let blob = null;
-      if (attachment?.storagePath && attachment?.storageBucket) {
-        blob = await downloadProjectFileFromStorage(attachment);
-      } else if (attachment?.dataUrl) {
-        blob = await dataUrlToBlob(attachment.dataUrl);
-      } else {
-        return;
-      }
-      await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'attachment');
-    } catch (error) {
-      if (isShareDismissed(error)) return;
-      await showAppAlert(error instanceof Error ? error.message : 'Unable to download attachment.', 'Download failed');
-    }
+    await downloadFileWithUi(attachment, { failureMessage: 'Unable to download attachment.' });
   }
 
   async function handleCreateTask(event) {
     event.preventDefault();
-    if (saving || !newTask.label.trim()) return;
-    setSaving(true);
-    try {
+    if (isMutating('task:create') || !newTask.label.trim()) return;
+    await runMutation('task:create', async () => {
+      try {
       const targetProjectId = newTask.projectId || defaultTaskProjectId;
       const taskId = `t${Date.now()}`;
       const attachments = await createTaskAttachmentRecords(targetProjectId, taskId, newTaskFiles);
@@ -336,11 +380,10 @@ export default function NativeTasksView({
       window.requestAnimationFrame(() => {
         createTaskNameInputRef.current?.focus();
       });
-    } catch (error) {
-      await showAppAlert(error instanceof Error ? error.message : 'Failed to add task.', 'Save failed');
-    } finally {
-      setSaving(false);
-    }
+      } catch (error) {
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to add task.', 'Save failed');
+      }
+    });
   }
 
   function startCreateAssignee() {
@@ -362,8 +405,7 @@ export default function NativeTasksView({
   async function handleSaveAssigneePerson() {
     if (!personDraft) return;
     if (!personDraft.first.trim() && !personDraft.last.trim() && !personDraft.company.trim()) return;
-    setSaving(true);
-    try {
+    await runMutation('person:create-for-task', async () => {
       const nextState = await createPerson(dataRef.current, personDraft.type, personDraft);
       const createdPerson = (personDraft.type === 'sub' ? nextState.subs : nextState.employees)?.at(-1);
       const nextAssignee = createdPerson ? personAssignmentLabel(createdPerson) : '';
@@ -373,13 +415,11 @@ export default function NativeTasksView({
         setEditDraft((current) => ({ ...current, assignee: editingTaskId ? nextAssignee : current.assignee }));
       }
       setPersonDraft(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   async function handleToggle(task, done) {
-    await runTaskMutation((currentState) => updateTask(currentState, task.id, { done }));
+    await runTaskMutation(['task', task.id, 'save'], (currentState) => updateTask(currentState, task.id, { done }));
   }
 
   function handleEditStart(task) {
@@ -438,9 +478,10 @@ export default function NativeTasksView({
   }
 
   async function handleEditSave(task) {
-    if (saving || !editDraft.label.trim()) return;
-    setSaving(true);
-    try {
+    const mutationKey = ['task', task.id, 'save'];
+    if (isMutating(mutationKey) || !editDraft.label.trim()) return;
+    await runMutation(mutationKey, async () => {
+      try {
       const nextAttachments = [
         ...(editDraft.attachments || []),
         ...(await createTaskAttachmentRecords(editDraft.projectId || task.projectId || '', task.id, editPendingFiles)),
@@ -454,11 +495,10 @@ export default function NativeTasksView({
       });
       commitTaskState(nextState);
       handleEditCancel();
-    } catch (error) {
-      await showAppAlert(error instanceof Error ? error.message : 'Failed to save task.', 'Save failed');
-    } finally {
-      setSaving(false);
-    }
+      } catch (error) {
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to save task.', 'Save failed');
+      }
+    });
   }
 
   async function handleDelete(task) {
@@ -468,20 +508,31 @@ export default function NativeTasksView({
       tone: 'danger',
     });
     if (!confirmed) return;
-    setDeletingTaskId(task.id);
-    try {
-      await runTaskMutation((currentState) => deleteTask(currentState, task.id));
+    await runMutation(['task', task.id, 'delete'], async () => {
+      const deletedTask = {
+        ...task,
+        attachments: [...(task.attachments || [])],
+      };
+      const nextState = await deleteTask(dataRef.current, task.id, { preserveAttachments: true });
+      commitTaskState(nextState);
+      showUndoAction({
+        message: `Deleted "${task.label}".`,
+        onUndo: () => runTaskMutation(['task', task.id, 'restore'], (currentState) => createTask(currentState, deletedTask)),
+        onCommit: async () => {
+          for (const attachment of deletedTask.attachments) {
+            if (attachment?.storagePath) await deleteProjectFileFromStorage(attachment);
+          }
+        },
+      });
       if (editingTaskId === task.id) handleEditCancel();
-    } finally {
-      setDeletingTaskId('');
-    }
+    });
   }
 
   async function continueEmailDraft() {
     if (!emailDraft) return;
     const nextEmail = String(emailDraft.email || '').trim();
-    setSaving(true);
-    try {
+    await runMutation('task-email:continue', async () => {
+      try {
       if (nextEmail && emailDraft.saveToPerson && emailDraft.personId) {
         const nextState = await updatePerson(dataRef.current, emailDraft.personType, emailDraft.personId, {
           email: nextEmail,
@@ -490,11 +541,10 @@ export default function NativeTasksView({
       }
       openMailto(nextEmail, emailDraft.subject || '', emailDraft.body || '');
       setEmailDraft(null);
-    } catch (error) {
-      await showAppAlert(error instanceof Error ? error.message : 'Failed to save email address.', 'Save failed');
-    } finally {
-      setSaving(false);
-    }
+      } catch (error) {
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to save email address.', 'Save failed');
+      }
+    });
   }
 
   function handleEmailTask(task) {
@@ -558,6 +608,14 @@ export default function NativeTasksView({
     });
   }
 
+  const createSaving = isMutating('task:create');
+  const personSaving = isMutating('person:create-for-task');
+  const emailSaving = isMutating('task-email:continue');
+  const isTaskSaving = (taskId) =>
+    isMutating(['task', taskId, 'save']) ||
+    isMutating(['task', taskId, 'delete']) ||
+    isMutating(['task', taskId, 'restore']);
+
   const taskContent = (
     <>
       <div className="panel-actions task-header-actions">
@@ -592,6 +650,22 @@ export default function NativeTasksView({
               <option value="assignee">Assignee</option>
             </select>
           </label>
+          {!embedded && !lockedProjectId ? (
+            <SavedFiltersControls
+              storageKey={`project-tracker:saved-filters:tasks:${activeUser?.id || 'default'}`}
+              currentValue={{ projectId: projectFilter, status: statusFilter, groupBy }}
+              onApply={(filter) => {
+                onProjectFilterChange(
+                  filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
+                    ? filter.projectId
+                    : 'all',
+                );
+                setStatusFilter(['open', 'completed'].includes(filter.status) ? filter.status : 'all');
+                setGroupBy(filter.groupBy === 'assignee' ? 'assignee' : 'none');
+              }}
+              disabled={false}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -649,12 +723,12 @@ export default function NativeTasksView({
                     </option>
                   ))}
                 </select>
-                <button className="button secondary" type="button" onClick={startCreateAssignee} disabled={saving}>
+                <button className="button secondary" type="button" onClick={startCreateAssignee} disabled={createSaving}>
                   Add person
                 </button>
               </div>
-              <button className={`button primary${saving ? ' is-loading' : ''}`} type="submit" disabled={saving}>
-                {saving ? 'Saving...' : 'Add task'}
+              <button className={`button primary${createSaving ? ' is-loading' : ''}`} type="submit" disabled={createSaving}>
+                {createSaving ? 'Saving...' : 'Add task'}
               </button>
               <input
                 key={createAttachmentInputKey}
@@ -663,7 +737,7 @@ export default function NativeTasksView({
                 type="file"
                 multiple
                 onChange={handleCreateAttachmentAdd}
-                disabled={saving}
+                disabled={createSaving}
               />
               {newTaskFiles.length ? (
                 <div className="task-attachment-editor task-create-attachments">
@@ -673,7 +747,7 @@ export default function NativeTasksView({
                       className="button secondary"
                       type="button"
                       onClick={() => openAttachmentPicker(createAttachmentInputRef)}
-                      disabled={saving}
+                      disabled={createSaving}
                     >
                       Add more files
                     </button>
@@ -686,7 +760,7 @@ export default function NativeTasksView({
                           className="button secondary gantt-icon-button"
                           type="button"
                           onClick={() => setNewTaskFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
-                          disabled={saving}
+                          disabled={createSaving}
                           title="Remove pending attachment"
                           aria-label="Remove pending attachment"
                         >
@@ -701,7 +775,7 @@ export default function NativeTasksView({
                     className="button secondary task-add-attachment-button"
                     type="button"
                     onClick={() => openAttachmentPicker(createAttachmentInputRef)}
-                    disabled={saving}
+                    disabled={createSaving}
                   >
                     Add attachment
                   </button>
@@ -729,7 +803,7 @@ export default function NativeTasksView({
                         className="button secondary gantt-icon-button"
                         type="button"
                         onClick={() => handleEmailAssigneeGroup(group.label)}
-                        disabled={saving || !(openTasksByAssignee.get(group.label)?.length)}
+                        disabled={!(openTasksByAssignee.get(group.label)?.length)}
                         title={
                           assigneeDirectory.get(group.label)?.email
                             ? 'Email all open tasks to assignee'
@@ -741,7 +815,10 @@ export default function NativeTasksView({
                       </button>
                     </div>
                   </div>
-                  {group.tasks.map((task) => (
+                  <VirtualTaskRows
+                    tasks={group.tasks}
+                    highlightedTaskId={activeHighlightTaskId}
+                    renderTask={(task) => (
                     <TaskRow
                       key={task.id}
                       highlighted={activeHighlightTaskId === task.id}
@@ -786,14 +863,18 @@ export default function NativeTasksView({
                       onAttachmentDownload={handleDownloadTaskAttachment}
                       onOpenSelection={handleOpenTaskSelection}
                       onDelete={handleDelete}
-                      saving={saving}
-                      deleting={deletingTaskId === task.id}
+                      saving={isTaskSaving(task.id)}
+                      deleting={isMutating(['task', task.id, 'delete'])}
                     />
-                  ))}
+                    )}
+                  />
                 </section>
               ))
             ) : (
-              filteredTasks.map((task) => (
+              <VirtualTaskRows
+                tasks={filteredTasks}
+                highlightedTaskId={activeHighlightTaskId}
+                renderTask={(task) => (
                 <TaskRow
                   key={task.id}
                   highlighted={activeHighlightTaskId === task.id}
@@ -838,10 +919,11 @@ export default function NativeTasksView({
                   onAttachmentDownload={handleDownloadTaskAttachment}
                   onOpenSelection={handleOpenTaskSelection}
                   onDelete={handleDelete}
-                  saving={saving}
-                  deleting={deletingTaskId === task.id}
+                  saving={isTaskSaving(task.id)}
+                  deleting={isMutating(['task', task.id, 'delete'])}
                 />
-              ))
+                )}
+              />
             )
           ) : (
             <div className="empty-state">
@@ -861,18 +943,19 @@ export default function NativeTasksView({
             <DashboardStat label="Projects" value={visibleProjects.length} />
           </PageStats>
           <div className="page-refresh-footer">
-            <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-              {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+            <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+              {loading ? 'Refreshing...' : 'Refresh data'}
             </button>
           </div>
         </>
       ) : null}
+      <Suspense fallback={null}>
       {personDraft ? (
         <PersonModal
           draft={personDraft}
           type={personDraft.type}
           isEditing={false}
-          saving={saving}
+          saving={personSaving}
           showTypeSelector
           onChange={(field, value) => setPersonDraft((current) => (current ? { ...current, [field]: value } : current))}
           onClose={() => setPersonDraft(null)}
@@ -880,17 +963,18 @@ export default function NativeTasksView({
           onDelete={() => {}}
         />
       ) : null}
-      <EmailAddressModal
+      {emailDraft ? <EmailAddressModal
         draft={emailDraft}
-        saving={saving}
+        saving={emailSaving}
         onChange={(value) => setEmailDraft((current) => (current ? { ...current, email: value } : current))}
         onToggleSave={(checked) => setEmailDraft((current) => (current ? { ...current, saveToPerson: checked } : current))}
         onClose={() => {
-          if (saving) return;
+          if (emailSaving) return;
           setEmailDraft(null);
         }}
         onSave={continueEmailDraft}
-      />
+      /> : null}
+      </Suspense>
     </>
   );
 
@@ -904,4 +988,3 @@ export default function NativeTasksView({
     </section>
   );
 }
-

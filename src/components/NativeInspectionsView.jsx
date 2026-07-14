@@ -1,17 +1,21 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  updateProject, updateSettings, uploadProjectFileToStorage,
+  updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, isImageFile, isShareDismissed } from '../utils/fileUi.js';
+import { isImageFile } from '../utils/fileUi.js';
+import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import { TextEntryModal } from './FormDialogs.jsx';
-import InspectionImageEditorModal from './InspectionImageEditorModal.jsx';
+import { openPreview } from '../platform/platformAdapter.js';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
-import { InspectionModal } from './TaskInspectionDialogs.jsx';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+
+const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
+const InspectionImageEditorModal = lazy(() => import('./InspectionImageEditorModal.jsx'));
+const InspectionModal = lazy(() => import('./TaskInspectionDialogs.jsx').then((module) => ({ default: module.InspectionModal })));
 
 export default function NativeInspectionsView({
   data,
@@ -29,7 +33,7 @@ export default function NativeInspectionsView({
   const [subcodeDraft, setSubcodeDraft] = useState(null);
   const [previewUrls, setPreviewUrls] = useState({});
   const previewUrlsRef = useRef({});
-  const [saving, setSaving] = useState(false);
+  const { beginMutation, endMutation, isMutating } = useEntityMutations();
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -236,12 +240,18 @@ export default function NativeInspectionsView({
     if (!subcodeDraft) return;
     const trimmed = subcodeDraft.value.trim();
     if (!trimmed) return;
-    const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
-    const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
-    const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
-    onStateChange(nextState);
-    setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
-    setSubcodeDraft(null);
+    const mutationKey = ['settings', 'inspection-subcodes'];
+    beginMutation(mutationKey);
+    try {
+      const existing = inspectionSubcodes.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+      const nextSubcodes = existing ? inspectionSubcodes : [...inspectionSubcodes, trimmed];
+      const nextState = await updateSettings(data, { inspectionSubcodes: nextSubcodes });
+      onStateChange(nextState);
+      setInspectionDraft((current) => (current ? { ...current, subcode: trimmed } : current));
+      setSubcodeDraft(null);
+    } finally {
+      endMutation(mutationKey);
+    }
   }
 
   async function openInspectionImageEditor(inspection, field) {
@@ -276,18 +286,12 @@ export default function NativeInspectionsView({
       const attachment = inspection?.[field];
       if (!attachment || !isImageFile(attachment)) return;
       try {
-        let objectUrl = attachment.dataUrl || previewUrls[attachment.id] || '';
-        let shouldRevoke = false;
-        if (!objectUrl && attachment.storagePath) {
-          const blob = await downloadProjectFileFromStorage(attachment);
-          objectUrl = URL.createObjectURL(blob);
-          shouldRevoke = true;
+        let previewSource = attachment.dataUrl || previewUrls[attachment.id] || '';
+        if (!previewSource && attachment.storagePath) {
+          previewSource = await downloadProjectFileFromStorage(attachment);
         }
-        if (!objectUrl) return;
-        window.open(objectUrl, '_blank', 'noopener,noreferrer');
-        if (shouldRevoke && objectUrl.startsWith('blob:')) {
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-        }
+        if (!previewSource) return;
+        openPreview(previewSource);
       } catch (error) {
         await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
       }
@@ -295,25 +299,9 @@ export default function NativeInspectionsView({
   }
 
   function downloadInspectionAttachment(inspection, field) {
-    void (async () => {
-      const attachment = inspection?.[field];
-      if (!attachment) return;
-      try {
-        let blob = null;
-        if (attachment.storagePath && attachment.storageBucket) {
-          blob = await downloadProjectFileFromStorage(attachment);
-        } else if (attachment.dataUrl) {
-          blob = await dataUrlToBlob(attachment.dataUrl);
-        } else {
-          return;
-        }
-
-        await downloadBlobForCurrentPlatform(blob, attachment.originalName || attachment.name || 'download');
-      } catch (error) {
-        if (isShareDismissed(error)) return;
-        await showAppAlert(error instanceof Error ? error.message : 'Unable to download attachment.', 'Download failed');
-      }
-    })();
+    const attachment = inspection?.[field];
+    if (!attachment) return;
+    void downloadFileWithUi(attachment, { failureMessage: 'Unable to download attachment.' });
   }
 
   function closeInspectionImageEditor() {
@@ -327,16 +315,14 @@ export default function NativeInspectionsView({
 
   async function saveInspectionImageEdits(blob) {
     if (!imageEditorDraft?.projectId || !imageEditorDraft?.inspectionId) return;
-    setSaving(true);
+    const mutationKey = ['inspection', imageEditorDraft.inspectionId];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === imageEditorDraft.projectId);
       if (!project) return;
       const existingInspection = (project.inspections || []).find((inspection) => inspection.id === imageEditorDraft.inspectionId);
       if (!existingInspection) return;
       const existingAttachment = existingInspection[imageEditorDraft.field];
-      if (existingAttachment?.storagePath) {
-        await deleteProjectFileFromStorage(existingAttachment);
-      }
       const fileName = existingAttachment?.originalName || `${imageEditorDraft.kind}.png`;
       const fileType = blob.type || existingAttachment?.type || 'image/png';
       const editedFile = new File([blob], fileName, { type: fileType });
@@ -354,26 +340,33 @@ export default function NativeInspectionsView({
       };
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
+      if (existingAttachment?.storagePath) {
+        try {
+          await deleteProjectFileFromStorage(existingAttachment);
+        } catch (error) {
+          console.warn('Inspection image was saved, but old storage cleanup failed.', error);
+        }
+      }
       closeInspectionImageEditor();
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   async function saveInspection() {
     if (!inspectionDraft?.projectId) return;
-    setSaving(true);
+    const mutationKey = ['inspection', inspectionDraft.id || 'create'];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === inspectionDraft.projectId);
       if (!project) return;
       const sourceProjectId = inspectionDraft.originalProjectId || inspectionDraft.projectId;
       const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
+      const filesToDeleteAfterSave = [];
       let stickerFile = inspectionDraft.stickerFile || null;
       let reportFile = inspectionDraft.reportFile || null;
       if (inspectionDraft.stickerPendingFile) {
-        if (stickerFile?.storagePath) {
-          await deleteProjectFileFromStorage(stickerFile);
-        }
+        if (stickerFile?.storagePath) filesToDeleteAfterSave.push(stickerFile);
         stickerFile = await createInspectionAttachmentRecord(
           project.id,
           'sticker',
@@ -381,9 +374,7 @@ export default function NativeInspectionsView({
         );
       }
       if (inspectionDraft.reportPendingFile) {
-        if (reportFile?.storagePath) {
-          await deleteProjectFileFromStorage(reportFile);
-        }
+        if (reportFile?.storagePath) filesToDeleteAfterSave.push(reportFile);
         reportFile = await createInspectionAttachmentRecord(
           project.id,
           'report',
@@ -391,7 +382,7 @@ export default function NativeInspectionsView({
         );
       }
       if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
-        await deleteProjectFileFromStorage(reportFile);
+        filesToDeleteAfterSave.push(reportFile);
         reportFile = null;
       } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
         reportFile = null;
@@ -409,15 +400,15 @@ export default function NativeInspectionsView({
       };
       let nextState = data;
       if (inspectionDraft.mode === 'edit' && sourceProject && sourceProject.id !== project.id) {
-        nextState = await updateProject(nextState, sourceProject.id, {
+        const nextSourceProject = {
           ...sourceProject,
           inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-        });
-        const refreshedTargetProject = nextState.projects.find((item) => item.id === project.id) || project;
-        nextState = await updateProject(nextState, project.id, {
-          ...refreshedTargetProject,
-          inspections: [...(refreshedTargetProject.inspections || []), nextInspection],
-        });
+        };
+        const nextTargetProject = {
+          ...project,
+          inspections: [...(project.inspections || []), nextInspection],
+        };
+        nextState = await updateProjects(nextState, [nextSourceProject, nextTargetProject]);
       } else {
         const nextProject = {
           ...project,
@@ -431,9 +422,12 @@ export default function NativeInspectionsView({
         nextState = await updateProject(nextState, project.id, nextProject);
       }
       onStateChange(nextState);
+      await Promise.allSettled(
+        filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
+      );
       setInspectionDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -445,26 +439,26 @@ export default function NativeInspectionsView({
       tone: 'danger',
     });
     if (!confirmed) return;
-    setSaving(true);
+    const mutationKey = ['inspection', inspectionDraft.id];
+    beginMutation(mutationKey);
     try {
       const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
       if (!project) return;
       const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
-      if (existing?.stickerFile?.storagePath) {
-        await deleteProjectFileFromStorage(existing.stickerFile);
-      }
-      if (existing?.reportFile?.storagePath) {
-        await deleteProjectFileFromStorage(existing.reportFile);
-      }
       const nextProject = {
         ...project,
         inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
       };
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
+      await Promise.allSettled(
+        [existing?.stickerFile, existing?.reportFile]
+          .filter((file) => file?.storagePath)
+          .map((file) => deleteProjectFileFromStorage(file)),
+      );
       setInspectionDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -472,7 +466,7 @@ export default function NativeInspectionsView({
     <>
       {!readOnly ? (
         <div className={`panel-actions header-scope-actions${embedded ? ' embedded-inspection-actions' : ''}`}>
-          <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length || saving}>
+          <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length}>
             Add inspection
           </button>
         </div>
@@ -495,7 +489,7 @@ export default function NativeInspectionsView({
                           className="button secondary gantt-icon-button"
                           type="button"
                           onClick={() => startEdit(inspection)}
-                          disabled={saving || readOnly}
+                          disabled={isMutating(['inspection', inspection.id]) || readOnly}
                           title="Edit inspection"
                           aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'}`}
                         >
@@ -547,7 +541,7 @@ export default function NativeInspectionsView({
                                   className="button secondary gantt-icon-button"
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                                  disabled={saving || readOnly}
+                                  disabled={isMutating(['inspection', inspection.id]) || readOnly}
                                   title="Edit sticker image"
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
                                 >
@@ -587,7 +581,7 @@ export default function NativeInspectionsView({
                                   className="button secondary gantt-icon-button"
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                                  disabled={saving || readOnly}
+                                  disabled={isMutating(['inspection', inspection.id]) || readOnly}
                                   title="Edit report image"
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
                                 >
@@ -636,13 +630,14 @@ export default function NativeInspectionsView({
         </>
       ) : null}
 
-      {!readOnly ? (
+      <Suspense fallback={null}>
+      {!readOnly && inspectionDraft ? (
         <InspectionModal
           draft={inspectionDraft}
           project={visibleProjects.find((project) => project.id === inspectionDraft?.projectId) || selectedProject}
           projects={visibleProjects}
           subcodes={inspectionSubcodes}
-          saving={saving}
+          saving={isMutating(['inspection', inspectionDraft.id || 'create'])}
           onChange={updateDraft}
           onAddSubcode={handleAddInspectionSubcode}
           onClose={() => setInspectionDraft(null)}
@@ -650,21 +645,22 @@ export default function NativeInspectionsView({
           onDelete={deleteInspection}
         />
       ) : null}
-      {!readOnly ? (
+      {!readOnly && subcodeDraft ? (
         <TextEntryModal
           draft={subcodeDraft}
-          saving={saving}
+          saving={isMutating(['settings', 'inspection-subcodes'])}
           onChange={(value) => setSubcodeDraft((current) => (current ? { ...current, value } : current))}
           onClose={() => setSubcodeDraft(null)}
           onSave={saveInspectionSubcodeDraft}
         />
       ) : null}
-      <InspectionImageEditorModal
+      {imageEditorDraft ? <InspectionImageEditorModal
         draft={imageEditorDraft}
-        saving={saving}
+        saving={isMutating(['inspection', imageEditorDraft.inspectionId])}
         onClose={closeInspectionImageEditor}
         onSave={saveInspectionImageEdits}
-      />
+      /> : null}
+      </Suspense>
     </>
   );
 
@@ -678,4 +674,3 @@ export default function NativeInspectionsView({
     </section>
   );
 }
-

@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { formatShortDate } from '../utils/calendarUi.js';
-import NativeInspectionsView from './NativeInspectionsView.jsx';
-import NativeTasksView from './NativeTasksView.jsx';
-import ProjectDetailCalendar from './ProjectDetailCalendar.jsx';
-import ProjectFilesManager from './ProjectFilesManager.jsx';
-import ProjectPhotosManager from './ProjectPhotosManager.jsx';
-import ProjectSelectionsManager from './ProjectSelectionsManager.jsx';
+
+const NativeInspectionsView = lazy(() => import('./NativeInspectionsView.jsx'));
+const NativeTasksView = lazy(() => import('./NativeTasksView.jsx'));
+const ProjectDetailCalendar = lazy(() => import('./ProjectDetailCalendar.jsx'));
+const ProjectFilesManager = lazy(() => import('./ProjectFilesManager.jsx'));
+const ProjectPhotosManager = lazy(() => import('./ProjectPhotosManager.jsx'));
+const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.jsx'));
 
 export default function ProjectDetailView({
   data,
@@ -216,6 +217,7 @@ export default function ProjectDetailView({
         </section>
       ) : null}
 
+      <Suspense fallback={<div className="empty-state compact"><p>Loading project workspace...</p></div>}>
       {activeDetailTab === 'tasks' ? (
         <section id="project-panel-tasks" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-tasks">
           <NativeTasksView
@@ -307,10 +309,10 @@ export default function ProjectDetailView({
           <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
         </section>
       ) : null}
+      </Suspense>
 
     </div>
   );
 }
-
 
 

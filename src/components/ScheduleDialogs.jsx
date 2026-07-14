@@ -8,10 +8,12 @@ export function ScheduleItemModal({
   draft,
   type,
   projects,
+  assigneeOptions = [],
   saving,
   onChange,
   onOpenPreds,
   onAddPhase,
+  onAddPerson,
   onClose,
   onSave,
   onSaveAndNew,
@@ -21,6 +23,9 @@ export function ScheduleItemModal({
   const isEditing = draft.mode !== 'create';
   const selectedProject = type === 'step' ? projects.find((project) => project.id === draft.projectId) : null;
   const phaseOptions = selectedProject?.phases || [];
+  const resolvedAssigneeOptions = draft.assign && !assigneeOptions.includes(draft.assign)
+    ? [draft.assign, ...assigneeOptions]
+    : assigneeOptions;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card schedule-modal-card" role="dialog" aria-modal="true" aria-labelledby="schedule-item-modal-title" onClick={(event) => event.stopPropagation()}>
@@ -88,7 +93,21 @@ export function ScheduleItemModal({
 
           <label>
             <span>Assignee</span>
-            <input value={draft.assign} onChange={(event) => onChange('assign', event.target.value)} />
+            <div className="inline-action-field">
+              <select value={draft.assign || ''} onChange={(event) => onChange('assign', event.target.value)}>
+                <option value="">Unassigned</option>
+                {resolvedAssigneeOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+              {onAddPerson ? (
+                <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
+                  Add person
+                </button>
+              ) : null}
+            </div>
           </label>
 
           <label>

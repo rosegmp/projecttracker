@@ -1,12 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DEFAULT_PROJECT_FILE_FOLDERS, deleteProjectFileFromStorage, downloadProjectFileFromStorage,
+  DEFAULT_PROJECT_FILE_FOLDERS, deleteProjectFileFromStorage,
   isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, formatFileSize, isShareDismissed } from '../utils/fileUi.js';
-import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
+import { formatFileSize } from '../utils/fileUi.js';
+import { downloadFileWithUi } from '../utils/downloadUi.js';
+import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import { MoveFileModal, TextEntryModal } from './FormDialogs.jsx';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+
+const MoveFileModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.MoveFileModal })));
+const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
 
 export default function ProjectFilesManager({
   data,
@@ -17,7 +21,7 @@ export default function ProjectFilesManager({
   hideViewToggle = false,
 }) {
   const [viewMode, setViewMode] = useState(forcedViewMode || 'cards');
-  const [saving, setSaving] = useState(false);
+  const { beginMutation, endMutation, runMutation, isMutating } = useEntityMutations();
   const [fileNameDraft, setFileNameDraft] = useState(null);
   const [storageNotice, setStorageNotice] = useState('');
   const [moveFileDraft, setMoveFileDraft] = useState(null);
@@ -53,10 +57,9 @@ export default function ProjectFilesManager({
     }
   }, [forcedViewMode, viewMode]);
 
-  async function runFilesMutation(buildNextProject) {
+  async function runFilesMutation(key, buildNextProject) {
     if (!project?.id) return;
-    setSaving(true);
-    try {
+    return runMutation(key, async () => {
       const currentState = dataRef.current;
       const currentProject = currentState.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
@@ -64,9 +67,8 @@ export default function ProjectFilesManager({
       const nextState = await updateProject(currentState, project.id, nextProject);
       dataRef.current = nextState;
       onStateChange(nextState);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
   }
 
   function openCreateFolderModal() {
@@ -94,7 +96,7 @@ export default function ProjectFilesManager({
       return;
     }
     if (folderNameDraft.mode === 'create') {
-      void runFilesMutation((currentProject) => ({
+      void runFilesMutation(['folder', 'create'], (currentProject) => ({
         ...currentProject,
         files: {
           folders: [
@@ -118,7 +120,7 @@ export default function ProjectFilesManager({
       void showAppAlert('A folder with that name already exists for this project.', 'Folder already exists');
       return;
     }
-    await runFilesMutation((currentProject) => ({
+    await runFilesMutation(['folder', folderId], (currentProject) => ({
       ...currentProject,
       files: {
         folders: (currentProject.files?.folders || []).map((item) =>
@@ -158,45 +160,67 @@ export default function ProjectFilesManager({
     const fileCountInFolder = folder.files?.length || 0;
     const confirmed = await showAppConfirm(
       fileCountInFolder
-        ? `Delete folder "${folder.name}" and its ${fileCountInFolder} file(s)? This cannot be undone.`
+        ? `Delete folder "${folder.name}" and its ${fileCountInFolder} file(s)?`
         : `Delete folder "${folder.name}"?`,
       { title: 'Delete folder', confirmLabel: 'Delete', tone: 'danger' },
     );
     if (!confirmed) return;
 
-    setSaving(true);
+    const mutationKey = ['folder', folderId];
+    beginMutation(mutationKey);
     try {
-      for (const file of folder.files || []) {
-        if (file?.storagePath) {
-          await deleteProjectFileFromStorage(file);
-        }
-      }
-      const currentProject = data.projects.find((item) => item.id === project.id);
+      const currentState = dataRef.current;
+      const currentProject = currentState.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
+      const folderIndex = (currentProject.files?.folders || []).findIndex((item) => item.id === folderId);
+      const folderSnapshot = (currentProject.files?.folders || [])[folderIndex];
+      if (!folderSnapshot) return;
       const nextProject = {
         ...currentProject,
         files: {
           folders: (currentProject.files?.folders || []).filter((item) => item.id !== folderId),
         },
       };
-      const nextState = await updateProject(data, project.id, nextProject);
+      const nextState = await updateProject(currentState, project.id, nextProject);
+      dataRef.current = nextState;
       onStateChange(nextState);
+      showUndoAction({
+        message: `Deleted folder "${folderSnapshot.name}".`,
+        onUndo: async () => {
+          const undoState = dataRef.current;
+          const undoProject = undoState.projects.find((item) => item.id === project.id);
+          if (!undoProject) return;
+          const restoredFolders = [...(undoProject.files?.folders || [])];
+          restoredFolders.splice(Math.min(folderIndex, restoredFolders.length), 0, folderSnapshot);
+          const restoredState = await updateProject(undoState, project.id, {
+            ...undoProject,
+            files: { folders: restoredFolders },
+          });
+          dataRef.current = restoredState;
+          onStateChange(restoredState);
+        },
+        onCommit: async () => {
+          for (const file of folderSnapshot.files || []) {
+            if (file?.storagePath) await deleteProjectFileFromStorage(file);
+          }
+        },
+      });
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to delete folder.', 'Delete failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   function startFolderDrag(event, folderId) {
-    if (saving) return;
+    if (isMutating(['folder', folderId])) return;
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', folderId);
     setDragItem({ type: 'folder', folderId });
   }
 
   function startFileDrag(event, folderId, fileId) {
-    if (saving) return;
+    if (isMutating(['file', fileId])) return;
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', fileId);
     setDragItem({ type: 'file', folderId, fileId });
@@ -262,7 +286,7 @@ export default function ProjectFilesManager({
 
   function moveFolderByDrag(targetFolderId) {
     if (!project || !dragItem || dragItem.type !== 'folder' || dragItem.folderId === targetFolderId) return;
-    void runFilesMutation((currentProject) => {
+    void runFilesMutation(['project', project.id, 'folder-order'], (currentProject) => {
       const current = [...(currentProject.files?.folders || [])];
       const sourceIndex = current.findIndex((folder) => folder.id === dragItem.folderId);
       const targetIndex = current.findIndex((folder) => folder.id === targetFolderId);
@@ -289,7 +313,7 @@ export default function ProjectFilesManager({
     ) {
       return;
     }
-    void runFilesMutation((currentProject) => {
+    void runFilesMutation(['file', dragItem.fileId], (currentProject) => {
       const foldersList = currentProject.files?.folders || [];
       return {
         ...currentProject,
@@ -341,7 +365,8 @@ export default function ProjectFilesManager({
     const files = Array.from(fileList || []);
     if (!files.length || !project?.id) return;
 
-    setSaving(true);
+    const mutationKey = ['folder', folderId, 'upload'];
+    beginMutation(mutationKey);
     try {
       const uploadResults = await Promise.all(files.map((file) => createProjectFileRecord(folderId, file)));
       const uploads = uploadResults.map((result) => result.fileRecord);
@@ -368,28 +393,12 @@ export default function ProjectFilesManager({
     } finally {
       const input = fileInputRefs.current[folderId];
       if (input) input.value = '';
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   function downloadProjectFile(file) {
-    void (async () => {
-      try {
-        let blob = null;
-        if (file?.storagePath && file?.storageBucket) {
-          blob = await downloadProjectFileFromStorage(file);
-        } else if (file?.dataUrl) {
-          blob = await dataUrlToBlob(file.dataUrl);
-        } else {
-          return;
-        }
-
-        await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'download');
-      } catch (error) {
-        if (isShareDismissed(error)) return;
-        await showAppAlert(error instanceof Error ? error.message : 'Failed to open file.', 'Open failed');
-      }
-    })();
+    void downloadFileWithUi(file, { failureMessage: 'Failed to download file.' });
   }
 
   function getDisplayFileName(file) {
@@ -416,7 +425,7 @@ export default function ProjectFilesManager({
     const nextName = String(draft.value || '').trim();
     if (!nextName) return;
     setFileNameDraft(null);
-    await runFilesMutation((currentProject) => ({
+    await runFilesMutation(['file', draft.fileId], (currentProject) => ({
       ...currentProject,
       files: {
         folders: (currentProject.files?.folders || []).map((folder) =>
@@ -447,15 +456,16 @@ export default function ProjectFilesManager({
     });
     if (!confirmed) return;
     void (async () => {
-      setSaving(true);
+      const mutationKey = ['file', fileId];
+      beginMutation(mutationKey);
       try {
-        const currentProject = data.projects.find((item) => item.id === project.id);
+        const currentState = dataRef.current;
+        const currentProject = currentState.projects.find((item) => item.id === project.id);
         if (!currentProject) return;
         const targetFolder = (currentProject.files?.folders || []).find((folder) => folder.id === folderId);
         const targetFile = targetFolder?.files?.find((file) => file.id === fileId);
-        if (targetFile?.storagePath) {
-          await deleteProjectFileFromStorage(targetFile);
-        }
+        const fileIndex = (targetFolder?.files || []).findIndex((file) => file.id === fileId);
+        if (!targetFile) return;
         const nextProject = {
           ...currentProject,
           files: {
@@ -469,12 +479,36 @@ export default function ProjectFilesManager({
             ),
           },
         };
-        const nextState = await updateProject(data, project.id, nextProject);
+        const nextState = await updateProject(currentState, project.id, nextProject);
+        dataRef.current = nextState;
         onStateChange(nextState);
+        showUndoAction({
+          message: `Deleted "${targetFile.name || targetFile.originalName || 'file'}".`,
+          onUndo: async () => {
+            const undoState = dataRef.current;
+            const undoProject = undoState.projects.find((item) => item.id === project.id);
+            if (!undoProject) return;
+            const restoredProject = {
+              ...undoProject,
+              files: {
+                folders: (undoProject.files?.folders || []).map((folder) => {
+                  if (folder.id !== folderId) return folder;
+                  const restoredFiles = [...(folder.files || [])];
+                  restoredFiles.splice(Math.min(fileIndex, restoredFiles.length), 0, targetFile);
+                  return { ...folder, files: restoredFiles };
+                }),
+              },
+            };
+            const restoredState = await updateProject(undoState, project.id, restoredProject);
+            dataRef.current = restoredState;
+            onStateChange(restoredState);
+          },
+          onCommit: () => targetFile.storagePath ? deleteProjectFileFromStorage(targetFile) : undefined,
+        });
       } catch (error) {
         await showAppAlert(error instanceof Error ? error.message : 'Failed to delete file.', 'Delete failed');
       } finally {
-        setSaving(false);
+        endMutation(mutationKey);
       }
     })();
   }
@@ -497,7 +531,7 @@ export default function ProjectFilesManager({
 
   function moveProjectFile(sourceFolderId, targetFolderId, fileId) {
     if (!targetFolderId || targetFolderId === sourceFolderId) return;
-    void runFilesMutation((currentProject) => {
+    void runFilesMutation(['file', fileId], (currentProject) => {
       const sourceFolder = (currentProject.files?.folders || []).find((folder) => folder.id === sourceFolderId);
       const targetFolder = (currentProject.files?.folders || []).find((folder) => folder.id === targetFolderId);
       const fileToMove = sourceFolder?.files?.find((file) => file.id === fileId);
@@ -536,7 +570,7 @@ export default function ProjectFilesManager({
     return (
       <span
         className="files-drag-handle"
-        draggable={!saving}
+        draggable={!isMutating(['folder', folder.id]) && !isMutating(['project', project.id, 'folder-order'])}
         onDragStart={(event) => startFolderDrag(event, folder.id)}
         onDragEnd={finishDrag}
         title={`Drag to reorder folder ${folder.name}`}
@@ -551,7 +585,7 @@ export default function ProjectFilesManager({
     return (
       <span
         className="files-drag-handle"
-        draggable={!saving}
+        draggable={!isMutating(['file', file.id])}
         onDragStart={(event) => startFileDrag(event, folderId, file.id)}
         onDragEnd={finishDrag}
         title={`Drag to reorder ${getDisplayFileName(file)}`}
@@ -580,7 +614,7 @@ export default function ProjectFilesManager({
               className="button secondary gantt-icon-button"
               type="button"
               onClick={() => triggerFolderUpload(folder.id)}
-              disabled={saving}
+              disabled={isMutating(['folder', folder.id, 'upload'])}
               title="Upload files"
               aria-label={`Upload files to folder ${folder.name}`}
             >
@@ -592,7 +626,7 @@ export default function ProjectFilesManager({
           className="button secondary gantt-icon-button"
           type="button"
           onClick={() => openRenameFolderModal(folder.id)}
-          disabled={saving}
+          disabled={isMutating(['folder', folder.id])}
           title="Rename folder"
           aria-label={`Rename folder ${folder.name}`}
         >
@@ -602,7 +636,7 @@ export default function ProjectFilesManager({
           className="button secondary gantt-icon-button gantt-trash-button"
           type="button"
           onClick={() => void deleteFolder(folder.id)}
-          disabled={saving}
+          disabled={isMutating(['folder', folder.id])}
           title="Delete folder"
           aria-label={`Delete folder ${folder.name}`}
         >
@@ -620,7 +654,7 @@ export default function ProjectFilesManager({
           className="button secondary gantt-icon-button"
           type="button"
           onClick={() => openRenameFileModal(folderId, file)}
-          disabled={saving}
+          disabled={isMutating(['file', file.id])}
           title="Rename file"
           aria-label={`Rename ${getDisplayFileName(file)}`}
         >
@@ -630,7 +664,7 @@ export default function ProjectFilesManager({
           className="button secondary gantt-icon-button"
           type="button"
           onClick={() => openMoveFile(file, folderId)}
-          disabled={saving || folders.length < 2}
+          disabled={isMutating(['file', file.id]) || folders.length < 2}
           title={folders.length < 2 ? 'Add another folder to move files' : 'Move file'}
           aria-label={`Move ${getDisplayFileName(file)}`}
         >
@@ -640,7 +674,7 @@ export default function ProjectFilesManager({
           className="button secondary gantt-icon-button gantt-trash-button"
           type="button"
           onClick={() => deleteProjectFile(folderId, file.id)}
-          disabled={saving}
+          disabled={isMutating(['file', file.id])}
           title="Delete file"
           aria-label={`Delete ${getDisplayFileName(file)}`}
         >
@@ -683,12 +717,12 @@ export default function ProjectFilesManager({
             </div>
           ) : null}
           {effectiveViewMode === 'list' && folders.length ? (
-            <button className="button secondary" type="button" onClick={toggleAllFoldersExpanded} disabled={saving}>
+            <button className="button secondary" type="button" onClick={toggleAllFoldersExpanded}>
               {allFoldersExpanded ? 'Collapse all' : 'Expand all'}
             </button>
           ) : null}
         </div>
-        <button className="button primary" type="button" onClick={openCreateFolderModal} disabled={saving || readOnly}>
+        <button className="button primary" type="button" onClick={openCreateFolderModal} disabled={isMutating(['folder', 'create']) || readOnly}>
           Add folder
         </button>
       </div>
@@ -746,7 +780,7 @@ export default function ProjectFilesManager({
                                   className="files-name-button"
                                   type="button"
                                   onClick={() => downloadProjectFile(file)}
-                                  disabled={saving}
+                                  disabled={false}
                                 >
                                   {getDisplayFileName(file)}
                                 </button>
@@ -842,7 +876,7 @@ export default function ProjectFilesManager({
                           className="files-name-button"
                           type="button"
                           onClick={() => downloadProjectFile(file)}
-                          disabled={saving}
+                          disabled={false}
                         >
                           {getDisplayFileName(file)}
                         </button>
@@ -871,36 +905,35 @@ export default function ProjectFilesManager({
         </div>
       )}
 
-      {!readOnly ? (
+      <Suspense fallback={null}>
+      {!readOnly && moveFileDraft ? (
         <MoveFileModal
           draft={moveFileDraft}
-          saving={saving}
+          saving={isMutating(['file', moveFileDraft.fileId])}
           onChange={updateMoveFileDraft}
           onClose={() => setMoveFileDraft(null)}
           onSave={saveMoveFile}
         />
       ) : null}
-      {!readOnly ? (
+      {!readOnly && fileNameDraft ? (
         <TextEntryModal
           draft={fileNameDraft}
-          saving={saving}
+          saving={isMutating(['file', fileNameDraft.fileId])}
           onChange={(value) => setFileNameDraft((current) => (current ? { ...current, value } : current))}
           onClose={() => setFileNameDraft(null)}
           onSave={saveFileNameDraft}
         />
       ) : null}
-      {!readOnly ? (
+      {!readOnly && folderNameDraft ? (
         <TextEntryModal
           draft={folderNameDraft}
-          saving={saving}
+          saving={isMutating(['folder', folderNameDraft.folderId || 'create'])}
           onChange={(value) => setFolderNameDraft((current) => (current ? { ...current, value } : current))}
           onClose={() => setFolderNameDraft(null)}
           onSave={saveFolderNameDraft}
         />
       ) : null}
+      </Suspense>
     </div>
   );
 }
-
-
-

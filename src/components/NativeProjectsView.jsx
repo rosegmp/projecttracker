@@ -1,28 +1,33 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { getVisibleProjectsForUser, getVisibleTasksForUser, normalizeProjectAccessUserIds } from '../utils/accessUi.js';
-import { createProject, deleteProject, updateProject, updateProjectAndTasks } from '../services/trackerData.js';
+import { createProject, deleteProject, updateProject, updateProjectAndTasks, updateProjectsAndTasks } from '../services/trackerData.js';
 import {
   cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds, normalizeStartDate,
   syncProjectPhaseDates, syncProjectTasks, syncStepLinks, wouldCreateCycleFromPreds,
 } from '../utils/schedule.js';
 import { addDays, formatShortDate, toIsoDate } from '../utils/calendarUi.js';
-import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
-import { StepPredecessorModal, TextEntryModal } from './FormDialogs.jsx';
+import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import ProjectCard from './ProjectCard.jsx';
-import ProjectDetailView from './ProjectDetailView.jsx';
-import ProjectModal from './ProjectModal.jsx';
-import { ScheduleItemModal } from './ScheduleDialogs.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
+import SavedFiltersControls from './SavedFiltersControls.jsx';
+import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+
+const ProjectDetailView = lazy(() => import('./ProjectDetailView.jsx'));
+const ProjectModal = lazy(() => import('./ProjectModal.jsx'));
+const ScheduleItemModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.ScheduleItemModal })));
+const StepPredecessorModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.StepPredecessorModal })));
+const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
 
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
 function parseDateValue(iso) { if (!iso) return null; const date = new Date(`${iso}T00:00:00`); return Number.isNaN(date.getTime()) ? null : date; }
 function getNextTaskColor(projects = []) { const count = projects.reduce((total, project) => total + (project.phases || []).reduce((sum, phase) => sum + (phase.steps || []).length, 0), 0); return TASK_COLOR_PALETTE[count % TASK_COLOR_PALETTE.length]; }
-function getProjectIdFromLocation() { if (typeof window === 'undefined') return ''; return String(new URLSearchParams(window.location.search).get('project') || '').trim(); }
+function getProjectIdFromLocation() { return String(getSearchParam('project') || '').trim(); }
 function syncProjectToLocation(projectId, { push = false } = {}) {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (String(projectId || '').trim()) url.searchParams.set('project', String(projectId).trim()); else url.searchParams.delete('project');
-  if (push) window.history.pushState(null, '', url); else window.history.replaceState(null, '', url);
+  updateCurrentUrl((url) => {
+    if (String(projectId || '').trim()) url.searchParams.set('project', String(projectId).trim());
+    else url.searchParams.delete('project');
+  }, { push });
 }
 
 export default function NativeProjectsView({
@@ -41,10 +46,17 @@ export default function NativeProjectsView({
   const [stepDraft, setStepDraft] = useState(null);
   const [stepPredecessorDraft, setStepPredecessorDraft] = useState(null);
   const [phaseNameDraft, setPhaseNameDraft] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const { runMutation, isMutating } = useEntityMutations();
+  const [projectSearchQuery, setProjectSearchQuery] = useState('');
+  const [projectStatusFilter, setProjectStatusFilter] = useState('all');
+  const dataRef = useRef(data);
   const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
   const nextProjectHistoryModeRef = useRef('none');
   const initializedHomeSignalRef = useRef(false);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
@@ -54,6 +66,16 @@ export default function NativeProjectsView({
     () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
     [data.tasks, data.settings, visibleProjects],
   );
+
+  const overviewProjects = useMemo(() => {
+    const query = projectSearchQuery.trim().toLowerCase();
+    return visibleProjects.filter((project) => {
+      if (projectStatusFilter !== 'all' && project.status !== projectStatusFilter) return false;
+      if (!query) return true;
+      return [project.name, project.address, project.customerName, project.desc, project.status]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+    });
+  }, [projectSearchQuery, projectStatusFilter, visibleProjects]);
 
   const taskCountByProject = useMemo(() => {
     const counts = new Map();
@@ -73,11 +95,11 @@ export default function NativeProjectsView({
   );
 
   const totals = useMemo(() => {
-    const phases = visibleProjects.reduce(
+    const phases = overviewProjects.reduce(
       (sum, project) => sum + (project.phases?.length || 0),
       0,
     );
-    const steps = visibleProjects.reduce(
+    const steps = overviewProjects.reduce(
       (sum, project) =>
         sum +
         (project.phases || []).reduce(
@@ -86,13 +108,13 @@ export default function NativeProjectsView({
         ),
       0,
     );
-    const tasks = [...taskCountByProject.values()].reduce((sum, count) => sum + count, 0);
-    const inspections = visibleProjects.reduce(
+    const tasks = overviewProjects.reduce((sum, project) => sum + (taskCountByProject.get(project.id) || 0), 0);
+    const inspections = overviewProjects.reduce(
       (sum, project) => sum + (project.inspections?.length || 0),
       0,
     );
     return { phases, steps, tasks, inspections };
-  }, [taskCountByProject, visibleProjects]);
+  }, [overviewProjects, taskCountByProject]);
 
   function setSelectedProject(projectId, history = 'push') {
     nextProjectHistoryModeRef.current = history;
@@ -216,24 +238,22 @@ export default function NativeProjectsView({
     setStepDraft(buildProjectStepEditDraft(data, selectedProject.id, phase.id, step));
   }
 
-  async function runProjectMutation(mutation) {
-    setSaving(true);
-    try {
+  async function runProjectMutation(key, mutation) {
+    return runMutation(key, async () => {
       const nextState = await mutation();
       onStateChange(nextState);
       setProjectDraft(null);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
   }
 
   async function handleSaveProject() {
     if (!projectDraft?.name.trim()) return;
     if (projectDraft.id) {
-      await runProjectMutation(() => updateProject(data, projectDraft.id, projectDraft));
+      await runProjectMutation(['project', projectDraft.id], () => updateProject(data, projectDraft.id, projectDraft));
       return;
     }
-    await runProjectMutation(() => createProject(data, projectDraft));
+    await runProjectMutation('project:create', () => createProject(data, projectDraft));
   }
 
   async function handleDeleteProject() {
@@ -244,7 +264,7 @@ export default function NativeProjectsView({
       tone: 'danger',
     });
     if (!confirmed) return;
-    await runProjectMutation(() => deleteProject(data, projectDraft.id));
+    await runProjectMutation(['project', projectDraft.id], () => deleteProject(data, projectDraft.id));
   }
 
   function buildProjectStepDependencyOptions(projectId, phaseId, selectedPreds = [], projectsSource = data.projects) {
@@ -464,8 +484,7 @@ export default function NativeProjectsView({
     const trimmed = phaseNameDraft.value.trim();
     if (!trimmed) return;
 
-    setSaving(true);
-    try {
+    await runMutation(['project', phaseNameDraft.projectId, 'phase-create'], async () => {
       const project = data.projects.find((item) => item.id === phaseNameDraft.projectId);
       if (!project) return;
       const newPhase = {
@@ -501,9 +520,7 @@ export default function NativeProjectsView({
         return nextDraft;
       });
       setPhaseNameDraft(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   async function handleSaveProjectDetailStep(nextAction = 'close') {
@@ -513,9 +530,10 @@ export default function NativeProjectsView({
       return;
     }
 
-    setSaving(true);
     setStepPredecessorDraft(null);
-    try {
+    const stepMutationKey = ['project', stepDraft.projectId, 'step', stepDraft.stepId || 'create'];
+    await runMutation(stepMutationKey, async () => {
+      try {
       const project = data.projects.find((item) => item.id === stepDraft.projectId);
       if (!project) return;
       const targetPhase = project.phases?.find((phase) => phase.id === stepDraft.phaseId);
@@ -647,19 +665,17 @@ export default function NativeProjectsView({
 
       let nextTasks = syncProjectTasks(sourceProject.id, nextSourceProject, data.tasks);
       nextTasks = syncProjectTasks(project.id, nextTargetProject, nextTasks);
-      const sourceState = await updateProject(data, sourceProject.id, nextSourceProject);
-      const nextState = await updateProjectAndTasks(sourceState, project.id, nextTargetProject, nextTasks);
+      const nextState = await updateProjectsAndTasks(data, [nextSourceProject, nextTargetProject], nextTasks);
       onStateChange(nextState);
       if (nextAction === 'new') {
         setStepDraft(buildProjectStepDraft(nextState, stepDraft.projectId, stepDraft.phaseId));
       } else {
         setStepDraft(null);
       }
-    } catch (error) {
-      await showAppAlert(error instanceof Error ? error.message : 'Failed to save the step.', 'Save failed');
-    } finally {
-      setSaving(false);
-    }
+      } catch (error) {
+        await showAppAlert(error instanceof Error ? error.message : 'Failed to save the step.', 'Save failed');
+      }
+    });
   }
 
   async function handleDeleteProjectDetailStep() {
@@ -671,12 +687,12 @@ export default function NativeProjectsView({
     });
     if (!confirmed) return;
 
-    setSaving(true);
-    try {
-      const projectId = stepDraft.sourceProjectId || stepDraft.projectId;
-      const phaseId = stepDraft.sourcePhaseId || stepDraft.phaseId;
-      const stepId = stepDraft.stepId;
-      const project = data.projects.find((item) => item.id === projectId);
+    const projectId = stepDraft.sourceProjectId || stepDraft.projectId;
+    const phaseId = stepDraft.sourcePhaseId || stepDraft.phaseId;
+    const stepId = stepDraft.stepId;
+    await runMutation(['project', projectId, 'step', stepId], async () => {
+      const currentState = dataRef.current;
+      const project = currentState.projects.find((item) => item.id === projectId);
       if (!project || !phaseId || !stepId) return;
 
       const nextProject = resyncProjectSchedule({
@@ -697,23 +713,51 @@ export default function NativeProjectsView({
             delays: (phase.delays || []).filter((delay) => delay.stepId !== stepId),
           };
           syncStepLinks(nextPhase);
-          cascadeStepDates(nextPhase, data.settings);
+          cascadeStepDates(nextPhase, currentState.settings);
           return nextPhase;
         }),
       });
 
-      const nextTasks = syncProjectTasks(projectId, nextProject, data.tasks);
-      const nextState = await updateProjectAndTasks(data, projectId, nextProject, nextTasks);
+      const dueSnapshot = new Map(
+        currentState.tasks
+          .filter((task) => task.projectId === projectId)
+          .map((task) => [task.id, task.due || '']),
+      );
+      const nextTasks = syncProjectTasks(projectId, nextProject, currentState.tasks);
+      const nextState = await updateProjectAndTasks(currentState, projectId, nextProject, nextTasks);
+      dataRef.current = nextState;
       onStateChange(nextState);
+      showUndoAction({
+        message: `Deleted "${stepDraft.name}".`,
+        onUndo: async () => {
+          const undoState = dataRef.current;
+          const restoredTasks = undoState.tasks.map((task) =>
+            dueSnapshot.has(task.id) ? { ...task, due: dueSnapshot.get(task.id) } : task,
+          );
+          const restoredState = await updateProjectAndTasks(undoState, projectId, project, restoredTasks);
+          dataRef.current = restoredState;
+          onStateChange(restoredState);
+        },
+      });
       setStepDraft(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
+
+  const projectSaving = projectDraft?.id
+    ? isMutating(['project', projectDraft.id])
+    : isMutating('project:create');
+  const stepSaving = stepDraft
+    ? isMutating(['project', stepDraft.projectId, 'step', stepDraft.stepId || 'create']) ||
+      isMutating(['project', stepDraft.sourceProjectId || stepDraft.projectId, 'step', stepDraft.stepId || 'create'])
+    : false;
+  const phaseSaving = phaseNameDraft
+    ? isMutating(['project', phaseNameDraft.projectId, 'phase-create'])
+    : false;
 
   return (
     <section className="panel native-panel workspace-page">
       {selectedProject ? (
+        <Suspense fallback={<div className="empty-state compact"><p>Loading project details...</p></div>}>
         <ProjectDetailView
           data={data}
           project={selectedProject}
@@ -727,6 +771,7 @@ export default function NativeProjectsView({
           onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
           onStateChange={onStateChange}
         />
+        </Suspense>
       ) : (
         <>
           {visibleProjects.length ? (
@@ -740,7 +785,7 @@ export default function NativeProjectsView({
                     <div className="projects-overview-stats">
                       <div className="overview-stat-tile">
                         <span>Projects</span>
-                        <strong>{visibleProjects.length}</strong>
+                        <strong>{overviewProjects.length}</strong>
                       </div>
                       <div className="overview-stat-tile">
                         <span>Open tasks</span>
@@ -756,8 +801,36 @@ export default function NativeProjectsView({
                       </div>
                     </div>
                   </div>
+                  <div className="projects-filter-toolbar">
+                    <input
+                      className="schedule-search-input projects-search-input"
+                      type="search"
+                      value={projectSearchQuery}
+                      onChange={(event) => setProjectSearchQuery(event.target.value)}
+                      placeholder="Search projects"
+                      aria-label="Search projects"
+                    />
+                    <label className="task-filter projects-status-filter">
+                      <span>Status</span>
+                      <select value={projectStatusFilter} onChange={(event) => setProjectStatusFilter(event.target.value)}>
+                        <option value="all">All statuses</option>
+                        <option value="planning">Planning</option>
+                        <option value="active">Active</option>
+                        <option value="delayed">Delayed</option>
+                        <option value="done">Done</option>
+                      </select>
+                    </label>
+                    <SavedFiltersControls
+                      storageKey={`project-tracker:saved-filters:projects:${activeUser?.id || 'default'}`}
+                      currentValue={{ query: projectSearchQuery, status: projectStatusFilter }}
+                      onApply={(filter) => {
+                        setProjectSearchQuery(String(filter.query || ''));
+                        setProjectStatusFilter(['planning', 'active', 'delayed', 'done'].includes(filter.status) ? filter.status : 'all');
+                      }}
+                    />
+                  </div>
                   <div className="project-grid">
-                    {visibleProjects.map((project) => (
+                    {overviewProjects.map((project) => (
                       <ProjectCard
                         key={project.id}
                         project={project}
@@ -767,6 +840,12 @@ export default function NativeProjectsView({
                       />
                     ))}
                   </div>
+                  {!overviewProjects.length ? (
+                    <div className="empty-state compact-empty-state">
+                      <h3>No matching projects</h3>
+                      <p>Adjust the current search or status filter.</p>
+                    </div>
+                  ) : null}
               </div>
             </section>
           ) : (
@@ -780,18 +859,19 @@ export default function NativeProjectsView({
       {!selectedProjectId ? (
         <>
           <PageStats settings={data.settings}>
-            <DashboardStat label="Projects" value={visibleProjects.length} tone="brand" />
+            <DashboardStat label="Projects" value={overviewProjects.length} tone="brand" />
             <DashboardStat label="Phases" value={totals.phases} />
             <DashboardStat label="Steps" value={totals.steps} />
             <DashboardStat label="Tasks" value={totals.tasks} />
           </PageStats>
           <div className="page-refresh-footer">
-            <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
+            <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
               {loading ? 'Refreshing...' : 'Refresh data'}
             </button>
           </div>
         </>
       ) : null}
+      <Suspense fallback={null}>
       {projectDraft ? (
         <ProjectModal
           draft={projectDraft}
@@ -800,7 +880,7 @@ export default function NativeProjectsView({
           onClose={() => setProjectDraft(null)}
           onSave={readOnly ? () => {} : handleSaveProject}
           onDelete={readOnly ? () => {} : handleDeleteProject}
-          saving={saving}
+          saving={projectSaving}
           isEditing={!!projectDraft.id}
         />
       ) : null}
@@ -809,7 +889,7 @@ export default function NativeProjectsView({
           draft={stepDraft}
           type="step"
           projects={visibleProjects}
-          saving={saving}
+          saving={stepSaving}
           onChange={updateProjectStepDraft}
           onOpenPreds={openProjectStepPredecessors}
           onAddPhase={handleQuickAddProjectDetailPhase}
@@ -822,24 +902,24 @@ export default function NativeProjectsView({
           onDelete={handleDeleteProjectDetailStep}
         />
       ) : null}
-      <StepPredecessorModal
+      {stepPredecessorDraft ? <StepPredecessorModal
         draft={stepPredecessorDraft}
-        saving={saving}
+        saving={stepSaving}
         onTogglePred={toggleProjectStepPred}
         onLagChange={changeProjectStepPredLag}
         onClose={() => setStepPredecessorDraft(null)}
         onSave={saveProjectStepPredecessors}
-      />
-      {!readOnly ? (
+      /> : null}
+      {!readOnly && phaseNameDraft ? (
         <TextEntryModal
           draft={phaseNameDraft}
-          saving={saving}
+          saving={phaseSaving}
           onChange={(value) => setPhaseNameDraft((current) => (current ? { ...current, value } : current))}
           onClose={() => setPhaseNameDraft(null)}
           onSave={saveProjectDetailPhaseNameDraft}
         />
       ) : null}
+      </Suspense>
     </section>
   );
 }
-

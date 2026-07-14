@@ -1,3 +1,6 @@
+import { getCurrentUrl, updateCurrentUrl } from '../platform/platformAdapter.js';
+import { trackerQueryClient } from './queryClient.js';
+
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env.VITE_SUPABASE_KEY || '').trim();
 const SUPABASE_FILES_BUCKET = (import.meta.env.VITE_SUPABASE_FILES_BUCKET || 'project-files').trim();
@@ -246,19 +249,20 @@ export async function inviteAuthUser(email, name = '', redirectTo = '') {
 }
 
 export function consumeAuthSessionFromUrl() {
-  if (typeof window === 'undefined') return null;
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  const queryParams = new URLSearchParams(window.location.search);
+  const currentUrl = getCurrentUrl();
+  if (!currentUrl) return null;
+  const hashParams = new URLSearchParams(currentUrl.hash.replace(/^#/, ''));
+  const queryParams = currentUrl.searchParams;
   const session = normalizeAuthSessionFromUrlParams(hashParams) || normalizeAuthSessionFromUrlParams(queryParams);
   if (!session) return null;
   writeAuthSession(session);
 
-  const url = new URL(window.location.href);
-  ['access_token', 'refresh_token', 'expires_in', 'expires_at', 'token_type', 'type'].forEach((key) =>
-    url.searchParams.delete(key),
-  );
-  url.hash = '';
-  window.history.replaceState(null, '', url);
+  updateCurrentUrl((url) => {
+    ['access_token', 'refresh_token', 'expires_in', 'expires_at', 'token_type', 'type'].forEach((key) =>
+      url.searchParams.delete(key),
+    );
+    url.hash = '';
+  });
   return session;
 }
 
@@ -645,6 +649,8 @@ function getFallbackData(overrides = {}) {
     subs: fromStorage('cx_s', []).map((person) => normalizePerson('sub', person)),
     employees: fromStorage('cx_e', []).map((person) => normalizePerson('emp', person)),
     settings: normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS)),
+    settingsVersion: 0,
+    concurrencyEnabled: false,
     settingsLoadedFromSupabase: false,
     storageMode: 'local',
     storageIssue: '',
@@ -818,7 +824,24 @@ export async function uploadProjectFileToStorage(projectId, folderId, fileId, fi
   };
 }
 
-export async function downloadProjectFileFromStorage(file) {
+async function readDownloadResponse(response, onProgress) {
+  if (typeof onProgress !== 'function' || !response.body?.getReader) return response.blob();
+  const total = Number(response.headers.get('content-length')) || 0;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  onProgress(loaded, total);
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress(loaded, total);
+  }
+  return new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+}
+
+export async function downloadProjectFileFromStorage(file, options = {}) {
   if (!file?.storageBucket || !file?.storagePath || !isSupabaseConfigured()) {
     throw new Error('Storage file is missing its bucket or path.');
   }
@@ -839,7 +862,7 @@ export async function downloadProjectFileFromStorage(file) {
         headers,
       }, 'File download');
       if (response.ok) {
-        return response.blob();
+        return readDownloadResponse(response, options.onProgress);
       }
       lastError = `File download failed: ${await response.text()}`;
     } catch (error) {
@@ -868,26 +891,24 @@ export async function deleteProjectFileFromStorage(file) {
 }
 
 async function upsertCollection(table, items) {
-  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}`, {
-    method: 'POST',
-    headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
-    body: JSON.stringify(items.map((item) => ({ id: item.id, data: item }))),
-  }, `${table} save`);
-
-  if (!response.ok) {
-    throw new Error(`${table} upsert failed: ${await response.text()}`);
-  }
+  return runTrackerMutation([table, 'upsert'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(items.map((item) => ({ id: item.id, data: stripRecordMetadata(item) }))),
+    }, `${table} save`);
+    if (!response.ok) throw new Error(`${table} upsert failed: ${await response.text()}`);
+  });
 }
 
 async function removeRemoteRow(table, id) {
-  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
-    method: 'DELETE',
-    headers: buildHeaders(),
-  }, `${table} delete`);
-
-  if (!response.ok) {
-    throw new Error(`${table} delete failed: ${await response.text()}`);
-  }
+  return runTrackerMutation([table, id, 'delete'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: buildHeaders(),
+    }, `${table} delete`);
+    if (!response.ok) throw new Error(`${table} delete failed: ${await response.text()}`);
+  });
 }
 
 async function fetchSupabaseJson(path, label, { timeoutMs = 12000 } = {}) {
@@ -897,9 +918,11 @@ async function fetchSupabaseJson(path, label, { timeoutMs = 12000 } = {}) {
   const text = await response.text();
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       `${label} request failed (${response.status} ${response.statusText}): ${text || 'No response body.'}`,
     );
+    error.status = response.status;
+    throw error;
   }
 
   try {
@@ -909,27 +932,151 @@ async function fetchSupabaseJson(path, label, { timeoutMs = 12000 } = {}) {
   }
 }
 
-async function loadSupabaseSettingsWithRetry() {
-  const attempts = [
-    { timeoutMs: 12000, delayMs: 0 },
-    { timeoutMs: 18000, delayMs: 900 },
-    { timeoutMs: 22000, delayMs: 1800 },
-  ];
-  let lastError = null;
-  for (const attempt of attempts) {
-    if (attempt.delayMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, attempt.delayMs));
+function querySupabaseJson(key, path, label, options = {}) {
+  const timeouts = options.timeouts || [12000, 18000, 22000];
+  return trackerQueryClient.query({
+    key: ['supabase', ...key],
+    staleTime: options.staleTime ?? 15000,
+    retry: options.retry ?? 2,
+    retryDelay: options.retryDelay || ((attempt) => [500, 1200, 2000][attempt] || 2000),
+    force: options.force === true,
+    queryFn: ({ attempt }) => fetchSupabaseJson(path, label, {
+      timeoutMs: timeouts[Math.min(attempt, timeouts.length - 1)],
+    }),
+  });
+}
+
+export function invalidateTrackerQueries() {
+  trackerQueryClient.invalidateQueries(['tracker']);
+  trackerQueryClient.invalidateQueries(['supabase']);
+  trackerQueryClient.invalidateQueries(['audit']);
+}
+
+function runTrackerMutation(key, mutationFn, invalidate = [['tracker'], ['supabase'], ['audit']]) {
+  return trackerQueryClient.mutate({ key: ['tracker', ...key], mutationFn, invalidate });
+}
+
+function stripRecordMetadata(item) {
+  if (!item || typeof item !== 'object') return item;
+  const { _version, ...data } = item;
+  return data;
+}
+
+function recordsMatch(left, right) {
+  return JSON.stringify(stripRecordMetadata(left)) === JSON.stringify(stripRecordMetadata(right));
+}
+
+function concurrencyConflictError() {
+  const error = new Error('This record was changed by someone else. Refresh data, review the latest changes, and try again.');
+  error.code = 'concurrency-conflict';
+  return error;
+}
+
+async function applyVersionedOperations(operations) {
+  if (!operations.length) return [];
+  return runTrackerMutation(['batch'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/apply_tracker_batch`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({ p_operations: operations }),
+    }, 'Concurrent save');
+    const text = await response.text();
+    if (!response.ok) {
+      if (/VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      throw new Error(`Versioned save failed: ${text || response.statusText}`);
     }
     try {
-      const response = await fetchSupabaseJson('/rest/v1/settings?id=eq.app_settings&select=*', 'Settings', {
-        timeoutMs: attempt.timeoutMs,
-      });
-      return Array.isArray(response) ? response : null;
-    } catch (error) {
-      lastError = error;
+      const result = text ? JSON.parse(text) : [];
+      return Array.isArray(result) ? result : [];
+    } catch {
+      throw new Error('Versioned save returned invalid JSON.');
     }
+  });
+}
+
+function buildVersionedCollectionOperations(table, nextItems, previousItems) {
+  const previousMap = new Map((previousItems || []).map((item) => [item.id, item]));
+  const nextMap = new Map((nextItems || []).map((item) => [item.id, item]));
+  const operations = [];
+  (nextItems || []).forEach((item) => {
+    const previous = previousMap.get(item.id);
+    if (previous && recordsMatch(previous, item)) return;
+    operations.push({
+      table,
+      id: item.id,
+      data: stripRecordMetadata(item),
+      expectedVersion: Number(previous?._version) || 0,
+      delete: false,
+    });
+  });
+  (previousItems || []).forEach((item) => {
+    if (nextMap.has(item.id)) return;
+    operations.push({ table, id: item.id, expectedVersion: Number(item?._version) || 0, delete: true });
+  });
+  return operations;
+}
+
+function applyReturnedVersions(table, items, results) {
+  const versions = new Map(
+    results.filter((result) => !result.deleted).map((result) => [`${result.table}:${result.id}`, Number(result.version) || 0]),
+  );
+  return (items || []).map((item) => {
+    const version = versions.get(`${table}:${item.id}`);
+    return version ? { ...item, _version: version } : item;
+  });
+}
+
+async function persistVersionedCollection({
+  table,
+  nextItems,
+  previousItems,
+  storageMode,
+  concurrencyEnabled,
+  deletedId = null,
+}) {
+  const remoteSaveError = getRemoteSaveError(storageMode, 'save');
+  if (remoteSaveError) throw remoteSaveError;
+  if (!concurrencyEnabled) {
+    const nextStorageMode = await persistCollection(nextItems, '', table, storageMode, deletedId);
+    return { items: nextItems, storageMode: nextStorageMode };
   }
-  throw (lastError instanceof Error ? lastError : new Error('Unknown settings load error.'));
+
+  const operations = buildVersionedCollectionOperations(table, nextItems, previousItems);
+  const results = await applyVersionedOperations(operations);
+  return {
+    items: applyReturnedVersions(table, nextItems, results),
+    storageMode: 'supabase',
+  };
+}
+
+async function persistVersionedProjectAndTasks(currentState, projects, tasks) {
+  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'save project changes');
+  if (remoteSaveError) throw remoteSaveError;
+  if (!currentState.concurrencyEnabled) {
+    const storageMode = await persistProjects(projects, currentState.storageMode);
+    await upsertCollection('tasks', tasks);
+    return { projects, tasks, storageMode };
+  }
+  const operations = [
+    ...buildVersionedCollectionOperations('projects', projects, currentState.projects),
+    ...buildVersionedCollectionOperations('tasks', tasks, currentState.tasks),
+  ];
+  const results = await applyVersionedOperations(operations);
+  return {
+    projects: applyReturnedVersions('projects', projects, results),
+    tasks: applyReturnedVersions('tasks', tasks, results),
+    storageMode: 'supabase',
+  };
+}
+
+async function loadSupabaseSettingsWithRetry() {
+  const response = await querySupabaseJson(
+    ['settings'],
+    '/rest/v1/settings?id=eq.app_settings&select=*',
+    'Settings',
+    { retryDelay: (attempt) => [900, 1800, 2500][attempt] || 2500 },
+  );
+  return Array.isArray(response) ? response : null;
 }
 
 function getRemoteSaveError(storageMode, context = 'save') {
@@ -973,20 +1120,19 @@ async function persistSettings(settings, storageMode, canWriteRemote = false) {
   if (!canWriteRemote) {
     throw new Error('Settings are not ready to save yet. Refresh the app after Supabase finishes loading and try again.');
   }
-  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/settings`, {
-    method: 'POST',
-    headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
-    body: JSON.stringify([{ id: 'app_settings', data: settings }]),
-  }, 'Settings save');
-
-  if (!response.ok) {
-    throw new Error(`settings upsert failed: ${await response.text()}`);
-  }
+  await runTrackerMutation(['settings', 'upsert'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/settings`, {
+      method: 'POST',
+      headers: buildHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([{ id: 'app_settings', data: settings }]),
+    }, 'Settings save');
+    if (!response.ok) throw new Error(`settings upsert failed: ${await response.text()}`);
+  });
 
   return 'supabase';
 }
 
-export async function loadTrackerData() {
+async function fetchTrackerData() {
   if (!isSupabaseConfigured()) {
     return getFallbackData({
       storageMode: 'local-unconfigured',
@@ -997,10 +1143,10 @@ export async function loadTrackerData() {
   try {
     const [projectsResponse, tasksResponse, subsResponse, employeesResponse] =
       await Promise.all([
-        fetchSupabaseJson('/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
-        fetchSupabaseJson('/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
-        fetchSupabaseJson('/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
-        fetchSupabaseJson('/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
+        querySupabaseJson(['projects'], '/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
+        querySupabaseJson(['tasks'], '/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
+        querySupabaseJson(['subs'], '/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
+        querySupabaseJson(['employees'], '/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
       ]);
 
     if (
@@ -1021,19 +1167,27 @@ export async function loadTrackerData() {
       console.warn('Settings load failed; using cached/default settings for this session.', error);
     }
 
-    const projects = projectsResponse.map((row) => normalizeProject(row.data || row));
-    const tasks = tasksResponse.map((row) => normalizeTask(row.data || row));
+    const projects = projectsResponse.map((row) => normalizeProject({ ...(row.data || row), _version: Number(row.version) || 0 }));
+    const tasks = tasksResponse.map((row) => normalizeTask({ ...(row.data || row), _version: Number(row.version) || 0 }));
     const subs = Array.isArray(subsResponse)
-      ? subsResponse.map((row) => normalizePerson('sub', row.data || row))
+      ? subsResponse.map((row) => normalizePerson('sub', { ...(row.data || row), _version: Number(row.version) || 0 }))
       : [];
     const employees = Array.isArray(employeesResponse)
-      ? employeesResponse.map((row) => normalizePerson('emp', row.data || row))
+      ? employeesResponse.map((row) => normalizePerson('emp', { ...(row.data || row), _version: Number(row.version) || 0 }))
       : [];
     const settings =
       Array.isArray(settingsResponse) && settingsResponse.length
         ? normalizeSettings(settingsResponse[0].data || EMPTY_SETTINGS)
         : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
     const settingsLoadedFromSupabase = Array.isArray(settingsResponse) && settingsResponse.length > 0;
+    const settingsVersion = Number(settingsResponse?.[0]?.version) || 0;
+    const concurrencyEnabled = [
+      ...projectsResponse,
+      ...tasksResponse,
+      ...subsResponse,
+      ...employeesResponse,
+      ...(Array.isArray(settingsResponse) ? settingsResponse : []),
+    ].some((row) => Number(row?.version) > 0);
     if (settingsLoadedFromSupabase) {
       writeStorage('cx_settings', settings);
     }
@@ -1044,6 +1198,8 @@ export async function loadTrackerData() {
       subs,
       employees,
       settings,
+      settingsVersion,
+      concurrencyEnabled,
       settingsLoadedFromSupabase,
       storageMode: 'supabase',
       storageIssue: settingsIssue,
@@ -1051,8 +1207,43 @@ export async function loadTrackerData() {
   } catch (error) {
     const storageIssue = error instanceof Error ? error.message : 'Unknown Supabase load error.';
     console.error('Supabase load failed.', error);
-    throw new Error(storageIssue);
+    const loadError = new Error(storageIssue);
+    loadError.status = Number(error?.status) || 0;
+    loadError.cause = error;
+    throw loadError;
   }
+}
+
+export async function loadTrackerData({ force = false } = {}) {
+  if (force) invalidateTrackerQueries();
+  return trackerQueryClient.query({
+    key: ['tracker', 'data'],
+    staleTime: 15000,
+    retry: 2,
+    force,
+    queryFn: fetchTrackerData,
+  });
+}
+
+export async function loadAuditEvents({ limit = 250, projectId = '', entityType = '' } = {}) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured for audit history in this build.');
+  }
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 250));
+  const params = new URLSearchParams({
+    select: 'id,created_at,actor_user_id,actor_email,entity_type,entity_id,project_id,action,before_data,after_data',
+    order: 'created_at.desc',
+    limit: String(safeLimit),
+  });
+  if (projectId) params.set('project_id', `eq.${projectId}`);
+  if (entityType) params.set('entity_type', `eq.${entityType}`);
+  const rows = await trackerQueryClient.query({
+    key: ['audit', projectId || 'all', entityType || 'all', safeLimit],
+    staleTime: 10000,
+    retry: 2,
+    queryFn: () => fetchSupabaseJson(`/rest/v1/audit_events?${params.toString()}`, 'Audit trail'),
+  });
+  return Array.isArray(rows) ? rows : [];
 }
 
 export async function createTask(currentState, payload) {
@@ -1060,7 +1251,7 @@ export async function createTask(currentState, payload) {
     id: payload.id || `t${Date.now()}`,
     label: payload.label.trim(),
     projectId: payload.projectId || '',
-    done: false,
+    done: !!payload.done,
     due: payload.due || '',
     assignee: payload.assignee || '',
     sourceSelectionId: payload.sourceSelectionId || '',
@@ -1070,8 +1261,11 @@ export async function createTask(currentState, payload) {
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   });
   const tasks = [...currentState.tasks, task];
-  const storageMode = await persistTasks(tasks, currentState.storageMode);
-  return { ...currentState, tasks, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function updateTask(currentState, taskId, updates) {
@@ -1080,31 +1274,42 @@ export async function updateTask(currentState, taskId, updates) {
     task.id === taskId ? normalizeTask({ ...task, ...updates }) : normalizeTask(task),
   );
   const nextTask = tasks.find((task) => task.id === taskId) || null;
+  const nextAttachmentIds = new Set((nextTask?.attachments || []).map((attachment) => attachment.id));
+  const removedAttachments = (existingTask?.attachments || []).filter(
+    (attachment) => attachment?.storagePath && !nextAttachmentIds.has(attachment.id),
+  );
 
-  if (existingTask) {
-    const nextAttachmentIds = new Set((nextTask?.attachments || []).map((attachment) => attachment.id));
-    const removedAttachments = (existingTask.attachments || []).filter(
-      (attachment) => attachment?.storagePath && !nextAttachmentIds.has(attachment.id),
-    );
-    for (const attachment of removedAttachments) {
+  const persisted = await persistVersionedCollection({
+    table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  for (const attachment of removedAttachments) {
+    try {
       await deleteProjectFileFromStorage(attachment);
+    } catch (error) {
+      console.warn('Task attachment metadata was saved, but storage cleanup failed.', error);
     }
   }
-
-  const storageMode = await persistTasks(tasks, currentState.storageMode);
-  return { ...currentState, tasks, storageMode };
+  return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
-export async function deleteTask(currentState, taskId) {
+export async function deleteTask(currentState, taskId, options = {}) {
   const existingTask = currentState.tasks.find((task) => task.id === taskId) || null;
-  if (existingTask?.attachments?.length) {
+  const tasks = currentState.tasks.filter((task) => task.id !== taskId);
+  const persisted = await persistVersionedCollection({
+    table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled, deletedId: taskId,
+  });
+  if (!options.preserveAttachments && existingTask?.attachments?.length) {
     for (const attachment of existingTask.attachments) {
-      await deleteProjectFileFromStorage(attachment);
+      try {
+        await deleteProjectFileFromStorage(attachment);
+      } catch (error) {
+        console.warn('Task deletion was saved, but attachment storage cleanup failed.', error);
+      }
     }
   }
-  const tasks = currentState.tasks.filter((task) => task.id !== taskId);
-  const storageMode = await persistTasks(tasks, currentState.storageMode, taskId);
-  return { ...currentState, tasks, storageMode };
+  return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function createProject(currentState, payload) {
@@ -1135,8 +1340,11 @@ export async function createProject(currentState, payload) {
     selections: payload.selections || [],
   });
   const projects = [...currentState.projects, project];
-  const storageMode = await persistProjects(projects, currentState.storageMode);
-  return { ...currentState, projects, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: 'projects', nextItems: projects, previousItems: currentState.projects,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function updateProject(currentState, projectId, updates) {
@@ -1163,30 +1371,49 @@ export async function updateProject(currentState, projectId, updates) {
         })
       : project,
   );
-  const storageMode = await persistProjects(projects, currentState.storageMode);
-  return { ...currentState, projects, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: 'projects', nextItems: projects, previousItems: currentState.projects,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
+}
+
+export async function updateProjects(currentState, projectUpdates) {
+  const updatesById = new Map((projectUpdates || []).filter((project) => project?.id).map((project) => [project.id, project]));
+  const projects = currentState.projects.map((project) => {
+    const updates = updatesById.get(project.id);
+    return updates ? normalizeProject({ ...project, ...updates }) : project;
+  });
+  const persisted = await persistVersionedCollection({
+    table: 'projects', nextItems: projects, previousItems: currentState.projects,
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function updateProjectAndTasks(currentState, projectId, projectUpdates, nextTasks) {
-  const projects = currentState.projects.map((project) =>
-    project.id === projectId ? normalizeProject({ ...project, ...projectUpdates }) : project,
-  );
-  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'save project changes');
-  if (remoteSaveError) {
-    throw remoteSaveError;
-  }
-  const storageMode = await persistProjects(projects, currentState.storageMode);
-  await upsertCollection('tasks', nextTasks);
-  return { ...currentState, projects, tasks: nextTasks, storageMode };
+  return updateProjectsAndTasks(currentState, [{ ...projectUpdates, id: projectId }], nextTasks);
+}
+
+export async function updateProjectsAndTasks(currentState, projectUpdates, nextTasks) {
+  const updatesById = new Map((projectUpdates || []).filter((project) => project?.id).map((project) => [project.id, project]));
+  const projects = currentState.projects.map((project) => {
+    const updates = updatesById.get(project.id);
+    return updates ? normalizeProject({ ...project, ...updates }) : project;
+  });
+  const persisted = await persistVersionedProjectAndTasks(currentState, projects, nextTasks);
+  return { ...currentState, ...persisted };
 }
 
 export async function deleteProject(currentState, projectId) {
   const projects = currentState.projects.filter((project) => project.id !== projectId);
   const tasks = currentState.tasks.filter((task) => task.projectId !== projectId);
-  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'delete this project');
-  if (remoteSaveError) {
-    throw remoteSaveError;
+  if (currentState.concurrencyEnabled) {
+    const persisted = await persistVersionedProjectAndTasks(currentState, projects, tasks);
+    return { ...currentState, ...persisted };
   }
+  const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'delete this project');
+  if (remoteSaveError) throw remoteSaveError;
   const storageMode = await persistProjects(projects, currentState.storageMode, projectId);
   await upsertCollection('tasks', tasks);
   return { ...currentState, projects, tasks, storageMode };
@@ -1228,13 +1455,11 @@ export async function createPerson(currentState, type, payload) {
   const config = getPeopleConfig(type);
   const person = buildPerson(type, payload);
   const people = [...currentState[config.key], person];
-  const storageMode = await persistCollection(
-    people,
-    config.storageKey,
-    config.table,
-    currentState.storageMode,
-  );
-  return { ...currentState, [config.key]: people, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: config.table, nextItems: people, previousItems: currentState[config.key],
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, [config.key]: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function updatePerson(currentState, type, personId, updates) {
@@ -1248,26 +1473,21 @@ export async function updatePerson(currentState, type, personId, updates) {
         }
       : person,
   );
-  const storageMode = await persistCollection(
-    people,
-    config.storageKey,
-    config.table,
-    currentState.storageMode,
-  );
-  return { ...currentState, [config.key]: people, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: config.table, nextItems: people, previousItems: currentState[config.key],
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, [config.key]: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function deletePerson(currentState, type, personId) {
   const config = getPeopleConfig(type);
   const people = currentState[config.key].filter((person) => person.id !== personId);
-  const storageMode = await persistCollection(
-    people,
-    config.storageKey,
-    config.table,
-    currentState.storageMode,
-    personId,
-  );
-  return { ...currentState, [config.key]: people, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: config.table, nextItems: people, previousItems: currentState[config.key],
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled, deletedId: personId,
+  });
+  return { ...currentState, [config.key]: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function importPeople(currentState, type, payloads) {
@@ -1277,13 +1497,11 @@ export async function importPeople(currentState, type, payloads) {
     id: `${type === 'sub' ? 'sub' : normalizePeopleType(type)}${Date.now()}${index}`,
   }));
   const people = [...currentState[config.key], ...imported];
-  const storageMode = await persistCollection(
-    people,
-    config.storageKey,
-    config.table,
-    currentState.storageMode,
-  );
-  return { ...currentState, [config.key]: people, storageMode };
+  const persisted = await persistVersionedCollection({
+    table: config.table, nextItems: people, previousItems: currentState[config.key],
+    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+  });
+  return { ...currentState, [config.key]: persisted.items, storageMode: persisted.storageMode };
 }
 
 export async function updateSettings(currentState, updates) {
@@ -1322,16 +1540,33 @@ export async function updateSettings(currentState, updates) {
       ? updates.holidays
       : baselineSettings.holidays,
   });
-  const storageMode = await persistSettings(
-    settings,
-    currentState.storageMode,
-    currentState.settingsLoadedFromSupabase === true,
-  );
+  let storageMode = currentState.storageMode;
+  let settingsVersion = Number(currentState.settingsVersion) || 0;
+  if (currentState.concurrencyEnabled) {
+    const remoteSaveError = getRemoteSaveError(currentState.storageMode, 'save settings');
+    if (remoteSaveError) throw remoteSaveError;
+    const results = await applyVersionedOperations([{
+      table: 'settings',
+      id: 'app_settings',
+      data: settings,
+      expectedVersion: settingsVersion,
+      delete: false,
+    }]);
+    settingsVersion = Number(results[0]?.version) || settingsVersion;
+    storageMode = 'supabase';
+  } else {
+    storageMode = await persistSettings(
+      settings,
+      currentState.storageMode,
+      currentState.settingsLoadedFromSupabase === true,
+    );
+  }
   writeStorage('cx_settings', settings);
   return {
     ...currentState,
     settings,
     settingsLoadedFromSupabase: currentState.settingsLoadedFromSupabase === true,
+    settingsVersion,
     storageMode,
   };
 }

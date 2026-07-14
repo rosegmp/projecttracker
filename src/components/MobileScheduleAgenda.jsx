@@ -12,6 +12,7 @@ export default function MobileScheduleAgenda({
   rows,
   className = '',
   agendaRef = null,
+  expansionLocked = false,
   onToggle,
   onAddPhase,
   onAddStep,
@@ -31,7 +32,7 @@ export default function MobileScheduleAgenda({
           return (
             <section className="mobile-agenda-project" key={row.id}>
               <div className="mobile-agenda-heading">
-                <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded}>
+                <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded} disabled={expansionLocked}>
                   <span aria-hidden="true">{row.expanded ? '-' : '+'}</span>
                   <strong>{row.label}</strong>
                 </button>
@@ -45,7 +46,7 @@ export default function MobileScheduleAgenda({
           return (
             <section className="mobile-agenda-phase" key={row.id}>
               <div className="mobile-agenda-heading">
-                <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded}>
+                <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded} disabled={expansionLocked}>
                   <span aria-hidden="true">{row.expanded ? '-' : '+'}</span>
                   <span><strong>{row.label}</strong>{row.subtitle ? <small>{row.subtitle}</small> : null}</span>
                 </button>

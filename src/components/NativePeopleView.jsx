@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { createPerson, deletePerson, importPeople, updatePerson } from '../services/trackerData.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import PersonModal from './PersonModal.jsx';
+import { useVirtualRange } from '../utils/virtualization.js';
+import { deliverBlob, isShareDismissed } from '../platform/platformAdapter.js';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+const PersonModal = lazy(() => import('./PersonModal.jsx'));
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
@@ -142,7 +145,7 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
   );
 }
 
-function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete, saving }) {
+function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete, isPersonSaving }) {
   const typeMeta = getPeopleTypeMeta(type);
   const activeColumnIds = Array.isArray(columns) && columns.length
     ? columns
@@ -154,10 +157,19 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
     Object.fromEntries(PEOPLE_LIST_COLUMN_DEFS.map((column) => [column.id, column.width])),
   );
   const resizeStateRef = useRef(null);
+  const listRef = useRef(null);
   const gridTemplateColumns = `${activeColumns
     .map((column) => `${Math.max(140, columnWidths[column.id] || column.width)}px`)
     .join(' ')} ${PEOPLE_LIST_ACTIONS_WIDTH}px`;
   const boldColumnSet = new Set(Array.isArray(boldColumns) ? boldColumns : ['name']);
+  const virtualRange = useVirtualRange({
+    count: people.length,
+    getSize: () => 57,
+    scrollRef: listRef,
+    headerOffset: 49,
+    threshold: 40,
+  });
+  const visiblePeople = people.slice(virtualRange.startIndex, virtualRange.endIndex);
 
   useEffect(() => {
     setColumnWidths((current) => {
@@ -221,7 +233,12 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
   }
 
   return (
-    <div className="people-list" role="table" aria-label={`${typeMeta.plural} list`}>
+    <div
+      ref={listRef}
+      className={`people-list${people.length >= 40 ? ' virtualized' : ''}`}
+      role="table"
+      aria-label={`${typeMeta.plural} list`}
+    >
       <div className="people-list-header" role="row" style={{ gridTemplateColumns }}>
         {activeColumns.map((column) => (
           <span key={column.id} className="people-list-header-cell">
@@ -237,7 +254,8 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
         ))}
         <span>Actions</span>
       </div>
-      {people.map((person) => (
+      {virtualRange.beforeSize ? <div className="virtual-list-spacer" style={{ height: `${virtualRange.beforeSize}px` }} aria-hidden="true" /> : null}
+      {visiblePeople.map((person) => (
         <div key={person.id} className="people-list-row" role="row" style={{ gridTemplateColumns }}>
           {activeColumns.map((column) => (
             <span key={column.id}>
@@ -255,7 +273,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
               className="button secondary gantt-icon-button"
               type="button"
               onClick={() => onEdit(person)}
-              disabled={saving}
+              disabled={isPersonSaving(person.id)}
               aria-label={`Edit ${personDisplayName(person)}`}
               title="Edit"
             >
@@ -265,7 +283,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
               className="button secondary gantt-icon-button person-delete-button"
               type="button"
               onClick={() => onDelete(person)}
-              disabled={saving}
+              disabled={isPersonSaving(person.id)}
               aria-label={`Delete ${personDisplayName(person)}`}
               title="Delete"
             >
@@ -274,6 +292,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
           </span>
         </div>
       ))}
+      {virtualRange.afterSize ? <div className="virtual-list-spacer" style={{ height: `${virtualRange.afterSize}px` }} aria-hidden="true" /> : null}
     </div>
   );
 }
@@ -287,7 +306,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     return stored === 'cards' || stored === 'list' ? stored : 'list';
   });
   const [personDraft, setPersonDraft] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const { runMutation, isMutating } = useEntityMutations();
   const importInputRef = useRef(null);
 
   useEffect(() => {
@@ -400,15 +419,13 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     });
   }
 
-  async function runPeopleMutation(mutation) {
-    setSaving(true);
-    try {
+  async function runPeopleMutation(key, mutation) {
+    return runMutation(key, async () => {
       const nextState = await mutation();
       onStateChange(nextState);
       setPersonDraft(null);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
   }
 
   async function handleSavePerson() {
@@ -416,11 +433,11 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     if (!personDraft.first.trim() && !personDraft.last.trim() && !personDraft.company.trim()) return;
 
     if (personDraft.id) {
-      await runPeopleMutation(() => updatePerson(data, personDraft.type, personDraft.id, personDraft));
+      await runPeopleMutation(['person', personDraft.id], () => updatePerson(data, personDraft.type, personDraft.id, personDraft));
       return;
     }
 
-    await runPeopleMutation(() => createPerson(data, personDraft.type, personDraft));
+    await runPeopleMutation('person:create', () => createPerson(data, personDraft.type, personDraft));
   }
 
   async function handleDeletePerson(person) {
@@ -431,7 +448,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       tone: 'danger',
     });
     if (!confirmed) return;
-    await runPeopleMutation(() => deletePerson(data, personType, person.id));
+    await runPeopleMutation(['person', person.id], () => deletePerson(data, personType, person.id));
   }
 
   async function handleDeleteDraft() {
@@ -443,7 +460,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       tone: 'danger',
     });
     if (!confirmed) return;
-    await runPeopleMutation(() => deletePerson(data, personDraft.type, personDraft.id));
+    await runPeopleMutation(['person', personDraft.id], () => deletePerson(data, personDraft.type, personDraft.id));
   }
 
   function handleExportPeople() {
@@ -457,12 +474,10 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       ),
     ].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${typeMeta.fileName}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    void deliverBlob(blob, `${typeMeta.fileName}.csv`).catch((error) => {
+      if (isShareDismissed(error)) return;
+      void showAppAlert(error instanceof Error ? error.message : 'Unable to export people.', 'Export failed');
+    });
   }
 
   function triggerImport() {
@@ -508,17 +523,22 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
         return;
       }
 
-      await runPeopleMutation(() => importPeople(data, personType, imported));
+      await runPeopleMutation(['people', personType, 'import'], () => importPeople(data, personType, imported));
     } finally {
       event.target.value = '';
     }
   }
 
+  const importSaving = isMutating(['people', personType, 'import']);
+  const draftSaving = personDraft?.id
+    ? isMutating(['person', personDraft.id])
+    : isMutating('person:create');
+
   return (
     <section className="panel native-panel workspace-page top-level-people-page">
       <div className="panel-actions people-page-actions">
-        <button className="button secondary" type="button" onClick={triggerImport} disabled={saving}>
-          Import CSV
+        <button className="button secondary" type="button" onClick={triggerImport} disabled={importSaving}>
+          {importSaving ? 'Importing...' : 'Import CSV'}
         </button>
         <button className="button secondary" type="button" onClick={handleExportPeople} disabled={!filteredPeople.length}>
           Export CSV
@@ -590,7 +610,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
                   type={personType}
                   onEdit={startEdit}
                   onDelete={handleDeletePerson}
-                  saving={saving}
+                  saving={isMutating(['person', person.id])}
                 />
               ))}
             </div>
@@ -602,7 +622,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
               boldColumns={peopleListBoldColumns}
               onEdit={startEdit}
               onDelete={handleDeletePerson}
-              saving={saving}
+              isPersonSaving={(personId) => isMutating(['person', personId])}
             />
           )
         ) : (
@@ -617,18 +637,20 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
         )}
       </section>
 
+      <Suspense fallback={null}>
       {personDraft ? (
         <PersonModal
           draft={personDraft}
           type={personDraft.type}
           isEditing={!!personDraft.id}
-          saving={saving}
+          saving={draftSaving}
           onChange={(field, value) => setPersonDraft((current) => ({ ...current, [field]: value }))}
           onClose={() => setPersonDraft(null)}
           onSave={handleSavePerson}
           onDelete={handleDeleteDraft}
         />
       ) : null}
+      </Suspense>
       <PageStats settings={data.settings}>
         <DashboardStat label="Subcontractors" value={totals.subs} tone="brand" />
         <DashboardStat label="Employees" value={totals.employees} />
@@ -639,13 +661,10 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
         <DashboardStat label="Tagged contacts" value={totals.tagged} />
       </PageStats>
       <div className="page-refresh-footer">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-          {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
         </button>
       </div>
     </section>
   );
 }
-
-
-

@@ -13,7 +13,7 @@ import {
   wouldCreatePhaseCycleFromPreds,
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
-import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
+import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, filterScheduleRows, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
 import { getCalendarWeekLayout } from '../src/utils/calendarUi.js';
 import {
   buildTaskAssigneeDirectory,
@@ -22,6 +22,15 @@ import {
   getVisibleTasksForUser,
   normalizeProjectAccessUserIds,
 } from '../src/utils/accessUi.js';
+import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
+import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
+import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
+import { normalizeMutationKey } from '../src/hooks/useEntityMutations.js';
+import {
+  calculateHorizontalWindow,
+  calculateVirtualRange,
+  timelineItemIntersectsWindow,
+} from '../src/utils/virtualization.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -29,6 +38,32 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'entity mutation keys normalize consistently',
+    run() {
+      assert.equal(normalizeMutationKey(['project', 'p1', '', 'step', 's1']), 'project:p1:step:s1');
+      assert.equal(normalizeMutationKey('task:t1'), 'task:t1');
+      assert.equal(normalizeMutationKey(null), 'default');
+    },
+  },
+  {
+    name: 'workspace components use keyed mutations instead of global saving flags',
+    async run() {
+      const componentNames = [
+        'NativeTasksView', 'NativePeopleView', 'NativeProjectsView', 'NativeScheduleView',
+        'NativeInspectionsView', 'NativeSettingsView', 'ProjectFilesManager',
+        'ProjectPhotosManager', 'ProjectSelectionsManager',
+      ];
+      const sources = await Promise.all(componentNames.map(async (name) => ({
+        name,
+        source: await readFile(new URL(`../src/components/${name}.jsx`, import.meta.url), 'utf8'),
+      })));
+      sources.forEach(({ name, source }) => {
+        assert.doesNotMatch(source, /\[saving,\s*setSaving\]/, `${name} still has a global saving flag`);
+        assert.match(source, /useEntityMutations/, `${name} is missing keyed mutation state`);
+      });
+    },
+  },
   {
     name: 'project access normalization removes blanks and duplicates',
     run() {
@@ -70,14 +105,322 @@ const tests = [
     },
   },
   {
-    name: 'top-level pages remain lazy-loaded behind Suspense',
+    name: 'workspaces, project tabs, and modal suites remain lazy-loaded',
     async run() {
       const appSource = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+      const projectDetailSource = await readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8');
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
       for (const moduleName of ['NativeProjectsView', 'NativeScheduleView', 'NativeTasksView', 'NativePeopleView', 'NativeSettingsView']) {
         assert.match(appSource, new RegExp(`const ${moduleName} = lazy\\(`));
       }
+      for (const moduleName of ['NativeTasksView', 'ProjectDetailCalendar', 'ProjectFilesManager', 'ProjectPhotosManager', 'ProjectSelectionsManager']) {
+        assert.match(projectDetailSource, new RegExp(`const ${moduleName} = lazy\\(`));
+      }
+      for (const moduleName of ['ScheduleItemModal', 'DelayModal', 'DependencyModal', 'TaskModal', 'InspectionModal', 'PersonModal']) {
+        assert.match(scheduleSource, new RegExp(`const ${moduleName} = lazy\\(`));
+      }
+      assert.match(appSource, /import\('\.\/services\/trackerData\.js'\)/);
+      assert.doesNotMatch(appSource, /from ['"]\.\/services\/trackerData\.js['"]/);
       assert.match(appSource, /<Suspense/);
       assert.match(appSource, /Loading workspace/);
+    },
+  },
+  {
+    name: 'long lists render a buffered window while preserving full scroll height',
+    run() {
+      const range = calculateVirtualRange({
+        count: 1000,
+        getSize: () => 50,
+        scrollOffset: 20000,
+        viewportSize: 500,
+        overscan: 100,
+        threshold: 40,
+      });
+      assert.equal(range.virtualized, true);
+      assert.ok(range.startIndex > 0);
+      assert.ok(range.endIndex < 1000);
+      assert.equal(range.totalSize, 50000);
+      assert.equal(range.beforeSize + (range.endIndex - range.startIndex) * 50 + range.afterSize, 50000);
+    },
+  },
+  {
+    name: 'tasks people and Gantt use the shared virtual range',
+    async run() {
+      const sources = await Promise.all(
+        ['NativeTasksView', 'NativePeopleView', 'NativeScheduleView']
+          .map((name) => readFile(new URL(`../src/components/${name}.jsx`, import.meta.url), 'utf8')),
+      );
+      sources.forEach((source) => assert.match(source, /useVirtualRange/));
+      assert.match(sources[0], /VirtualTaskRows/);
+      assert.match(sources[1], /visiblePeople/);
+      assert.match(sources[2], /visibleGanttRows/);
+      assert.match(sources[2], /visibleTimelineDays/);
+      assert.match(sources[2], /visibleTimelineWeeks/);
+    },
+  },
+  {
+    name: 'Gantt date elements are limited to the horizontal viewport with overscan',
+    run() {
+      const window = calculateHorizontalWindow({
+        contentSize: 12000,
+        scrollOffset: 4800,
+        viewportSize: 1200,
+        overscan: 300,
+      });
+      assert.deepEqual(window, { start: 4500, end: 6300, virtualized: true });
+      assert.equal(timelineItemIntersectsWindow({ left: 40, width: 1 }, window, 12000), true);
+      assert.equal(timelineItemIntersectsWindow({ left: 10, width: 1 }, window, 12000), false);
+      assert.equal(timelineItemIntersectsWindow({ left: 52, width: 4 }, window, 12000), true);
+    },
+  },
+  {
+    name: 'destructive actions expose a recoverable undo window',
+    async run() {
+      const dialogSource = await readFile(new URL('../src/components/AppDialogs.jsx', import.meta.url), 'utf8');
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const destructiveViews = await Promise.all(
+        ['NativeTasksView', 'NativeScheduleView', 'NativeProjectsView', 'ProjectFilesManager', 'ProjectPhotosManager']
+          .map((name) => readFile(new URL(`../src/components/${name}.jsx`, import.meta.url), 'utf8')),
+      );
+
+      assert.match(dialogSource, /export function showUndoAction/);
+      assert.match(dialogSource, /role="status"/);
+      assert.match(dialogSource, /['"]Undo['"]/);
+      assert.match(dialogSource, /onCommit/);
+      assert.match(trackerSource, /options\.preserveAttachments/);
+      destructiveViews.forEach((source) => assert.match(source, /showUndoAction/));
+    },
+  },
+  {
+    name: 'Android downloads offer Save and Share with visible progress',
+    async run() {
+      const dialogSource = await readFile(new URL('../src/components/AppDialogs.jsx', import.meta.url), 'utf8');
+      const downloadSource = await readFile(new URL('../src/utils/downloadUi.js', import.meta.url), 'utf8');
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const nativeSource = await readFile(new URL('../android/app/src/main/java/com/destinyhomes/projecthub/DownloadsPlugin.java', import.meta.url), 'utf8');
+      const activitySource = await readFile(new URL('../android/app/src/main/java/com/destinyhomes/projecthub/MainActivity.java', import.meta.url), 'utf8');
+
+      assert.match(dialogSource, /export function beginDownloadProgress/);
+      assert.match(dialogSource, /className="download-progress-bar"/);
+      assert.match(downloadSource, /label: 'Save to Downloads'/);
+      assert.match(downloadSource, /label: 'Share'/);
+      assert.match(trackerSource, /response\.body\.getReader\(\)/);
+      assert.match(trackerSource, /onProgress\(loaded, total\)/);
+      assert.match(nativeSource, /MediaStore\.Downloads\.EXTERNAL_CONTENT_URI/);
+      assert.match(nativeSource, /Environment\.DIRECTORY_DOWNLOADS/);
+      assert.match(activitySource, /registerPlugin\(DownloadsPlugin\.class\)/);
+    },
+  },
+  {
+    name: 'platform downloads sharing previews mail and navigation stay behind one adapter',
+    async run() {
+      const platformSource = await readFile(new URL('../src/platform/platformAdapter.js', import.meta.url), 'utf8');
+      const fileSource = await readFile(new URL('../src/utils/fileUi.js', import.meta.url), 'utf8');
+      const migratedSources = await Promise.all(
+        [
+          '../src/App.jsx',
+          '../src/components/NativeProjectsView.jsx',
+          '../src/components/NativeTasksView.jsx',
+          '../src/components/NativePeopleView.jsx',
+          '../src/components/NativeInspectionsView.jsx',
+          '../src/components/ProjectPhotosManager.jsx',
+          '../src/components/ProjectSelectionsManager.jsx',
+        ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')),
+      );
+
+      assert.match(platformSource, /export async function deliverBlob/);
+      assert.match(platformSource, /export function openPreview/);
+      assert.match(platformSource, /export function openMailComposer/);
+      assert.match(platformSource, /export function updateCurrentUrl/);
+      assert.match(platformSource, /import\('@capacitor\/filesystem'\)/);
+      assert.doesNotMatch(fileSource, /@capacitor|window\.|document\./);
+      migratedSources.forEach((source) => assert.match(source, /platformAdapter\.js/));
+    },
+  },
+  {
+    name: 'query cache deduplicates reads retries failures and invalidates by prefix',
+    async run() {
+      const client = new QueryClient();
+      let calls = 0;
+      const query = () => client.query({
+        key: ['tracker', 'data'],
+        staleTime: 60000,
+        retryDelay: 0,
+        queryFn: async () => {
+          calls += 1;
+          await Promise.resolve();
+          return { calls };
+        },
+      });
+      const [first, concurrent] = await Promise.all([query(), query()]);
+      assert.deepEqual(first, concurrent);
+      assert.equal(calls, 1);
+      assert.deepEqual(await query(), { calls: 1 });
+      client.invalidateQueries(['tracker']);
+      assert.deepEqual(await query(), { calls: 2 });
+
+      let attempts = 0;
+      const retried = await client.query({
+        key: ['retry'],
+        retry: 2,
+        retryDelay: 0,
+        queryFn: async () => {
+          attempts += 1;
+          if (attempts < 3) throw new Error('temporary');
+          return 'ready';
+        },
+      });
+      assert.equal(retried, 'ready');
+      assert.equal(attempts, 3);
+      assert.equal(isRetryableQueryError({ status: 401 }), false);
+      assert.equal(isRetryableQueryError(new Error('offline')), true);
+    },
+  },
+  {
+    name: 'query mutations expose scoped pending state and invalidate reads',
+    async run() {
+      const client = new QueryClient();
+      client.setQueryData(['tracker', 'data'], { revision: 1 });
+      await client.mutate({
+        key: ['tracker', 'task', 'task-1'],
+        invalidate: [['tracker']],
+        mutationFn: async () => {
+          assert.equal(client.getMutationState(['tracker', 'task']).pending, true);
+          assert.equal(client.getMutationState(['tracker', 'task']).count, 1);
+          return 'saved';
+        },
+      });
+      assert.equal(client.getMutationState(['tracker', 'task']).pending, false);
+      let refreshed = false;
+      await client.query({
+        key: ['tracker', 'data'],
+        queryFn: async () => {
+          refreshed = true;
+          return { revision: 2 };
+        },
+      });
+      assert.equal(refreshed, true);
+    },
+  },
+  {
+    name: 'projects tasks calendar and schedule expose named saved filters',
+    async run() {
+      const controlsSource = await readFile(new URL('../src/components/SavedFiltersControls.jsx', import.meta.url), 'utf8');
+      const projectsSource = await readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8');
+      const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+
+      assert.match(controlsSource, /localStorage\.setItem\(storageKey/);
+      assert.match(controlsSource, /Save current filter/);
+      assert.match(controlsSource, /Delete saved filter/);
+      assert.match(projectsSource, /saved-filters:projects/);
+      assert.match(projectsSource, /projectStatusFilter/);
+      assert.match(tasksSource, /saved-filters:tasks/);
+      assert.match(tasksSource, /currentValue=\{\{ projectId: projectFilter, status: statusFilter, groupBy \}\}/);
+      assert.match(scheduleSource, /saved-filters:schedule/);
+      assert.match(scheduleSource, /saved-filters:calendar/);
+      assert.match(scheduleSource, /calendarItemFilter/);
+    },
+  },
+  {
+    name: 'Android reminders include upcoming tasks inspections and overdue summaries',
+    run() {
+      const notifications = buildAndroidReminderNotifications({
+        data: {
+          settings: {},
+          projects: [
+            {
+              id: 'project-1',
+              name: 'Lake House',
+              inspections: [
+                { id: 'inspection-upcoming', date: '2026-07-14', status: 'scheduled', subcode: 'FRAME-220' },
+                { id: 'inspection-overdue', date: '2026-07-12', status: 'requested', subcode: 'FOOT-101' },
+                { id: 'inspection-passed', date: '2026-07-14', status: 'passed', subcode: 'ELEC-310' },
+              ],
+            },
+          ],
+          tasks: [
+            { id: 'task-upcoming', projectId: 'project-1', label: 'Order windows', due: '2026-07-14', done: false },
+            { id: 'task-overdue', projectId: 'project-1', label: 'Submit permit', due: '2026-07-12', done: false },
+            { id: 'task-done', projectId: 'project-1', label: 'Completed work', due: '2026-07-14', done: true },
+          ],
+        },
+        activeUser: { id: 'user-1', role: 'Admin' },
+        preferences: {
+          enabled: true,
+          upcomingTasks: true,
+          inspections: true,
+          overdueWork: true,
+          reminderDays: 1,
+          reminderTime: '08:00',
+        },
+        now: new Date(2026, 6, 13, 7, 0, 0),
+      });
+
+      assert.deepEqual(notifications.map((notification) => notification.extra.kind), ['task', 'inspection', 'overdue']);
+      assert.equal(notifications[0].schedule.at.getHours(), 8);
+      assert.match(notifications[2].body, /1 overdue task/);
+      assert.match(notifications[2].body, /1 overdue inspection/);
+      notifications.forEach((notification) => assert.ok(notification.id >= 100_000_000 && notification.id <= 399_999_999));
+    },
+  },
+  {
+    name: 'audit history expands project dates dependencies statuses and file changes',
+    run() {
+      const [event] = buildAuditTrailEntries([{
+        id: 12,
+        created_at: '2026-07-13T16:00:00Z',
+        actor_user_id: 'auth-1',
+        actor_email: 'alex@example.com',
+        entity_type: 'project',
+        entity_id: 'project-1',
+        project_id: 'project-1',
+        action: 'update',
+        before_data: { id: 'project-1', name: 'Lake House', status: 'planning', start: '2026-07-10' },
+        after_data: { id: 'project-1', name: 'Lake House', status: 'active', start: '2026-07-11' },
+      }]);
+      assert.equal(event.actorEmail, 'alex@example.com');
+
+      const entries = buildAuditTrailEntries([{
+        id: 13,
+        created_at: '2026-07-13T16:05:00Z',
+        actor_email: 'alex@example.com',
+        entity_type: 'project',
+        entity_id: 'project-1',
+        project_id: 'project-1',
+        action: 'update',
+        before_data: {
+          id: 'project-1', name: 'Lake House', phases: [{ id: 'phase-1', name: 'Framing', steps: [{ id: 'step-1', name: 'Walls', predecessors: [] }] }],
+          files: { folders: [{ id: 'folder-1', name: 'Plans', files: [] }] },
+        },
+        after_data: {
+          id: 'project-1', name: 'Lake House', phases: [{ id: 'phase-1', name: 'Framing', steps: [{ id: 'step-1', name: 'Walls', predecessors: [{ id: 'step-0', lag: 1 }] }] }],
+          files: { folders: [{ id: 'folder-1', name: 'Plans', files: [{ id: 'file-1', name: 'Framing plan.pdf' }] }] },
+        },
+      }]);
+      assert.deepEqual(entries.map((entry) => entry.category), ['dependencies', 'files']);
+      assert.match(entries[1].label, /added/i);
+    },
+  },
+  {
+    name: 'optimistic concurrency uses atomic version checks and preserves record metadata',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260713150000_add_optimistic_concurrency.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(trackerSource, /rpc\/apply_tracker_batch/);
+      assert.match(trackerSource, /expectedVersion: Number\(previous\?\._version\) \|\| 0/);
+      assert.match(trackerSource, /if \(previous && recordsMatch\(previous, item\)\) return/);
+      assert.match(trackerSource, /const \{ _version, \.\.\.data \} = item/);
+      assert.match(trackerSource, /persistVersionedProjectAndTasks/);
+      assert.match(trackerSource, /code = 'concurrency-conflict'/);
+      assert.match(migrationSource, /create or replace function public\.apply_tracker_batch/);
+      assert.match(migrationSource, /VERSION_CONFLICT/);
+      assert.match(migrationSource, /version = version \+ 1/);
+      assert.match(migrationSource, /create or replace function public\.bump_tracker_record_version/);
+      assert.match(migrationSource, /actor_role = 'Edit'/);
     },
   },
   {
@@ -196,6 +539,79 @@ const tests = [
       assert.match(source, /const \[ganttZoomValue, setGanttZoomValue\] = useState\(getStoredScheduleZoom\)/);
       assert.match(source, /localStorage\.setItem\(SCHEDULE_VIEW_STORAGE_KEY, scheduleDisplayMode\)/);
       assert.match(source, /localStorage\.setItem\(SCHEDULE_ZOOM_STORAGE_KEY, String\(ganttZoomValue\)\)/);
+    },
+  },
+  {
+    name: 'desktop schedule remembers project and phase expansion',
+    async run() {
+      const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(source, /const SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-project-expansion'/);
+      assert.match(source, /const SCHEDULE_PHASE_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-phase-expansion'/);
+      assert.match(source, /useState\(\(\) => getStoredExpansion\(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY\)\)/);
+      assert.match(source, /\.\.\.getDefaultPhaseExpansion\(data\.projects\),\s+\.\.\.getStoredExpansion\(SCHEDULE_PHASE_EXPANSION_STORAGE_KEY\)/);
+      assert.match(source, /localStorage\.setItem\(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY, JSON\.stringify\(expandedProjects\)\)/);
+      assert.match(source, /localStorage\.setItem\(SCHEDULE_PHASE_EXPANSION_STORAGE_KEY, JSON\.stringify\(expandedPhases\)\)/);
+    },
+  },
+  {
+    name: 'schedule can hide past items and remembers the filter',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /const SCHEDULE_HIDE_PAST_STORAGE_KEY = 'project-tracker:schedule-hide-past'/);
+      assert.match(scheduleSource, /const \[hidePastScheduleItems, setHidePastScheduleItems\] = useState/);
+      assert.match(scheduleSource, /showCurrentAndFutureOnly: hidePastScheduleItems/);
+      assert.match(scheduleSource, /className="schedule-history-filter"/);
+      assert.match(scheduleSource, /<span>Hide past<\/span>/);
+      assert.match(scheduleSource, /localStorage\.setItem\(SCHEDULE_HIDE_PAST_STORAGE_KEY, String\(hidePastScheduleItems\)\)/);
+      assert.match(styleSource, /\.schedule-history-filter\s*\{/);
+    },
+  },
+  {
+    name: 'schedule search includes matching items with project and phase context',
+    run() {
+      const rows = [
+        { id: 'project-1', type: 'project', label: 'Lake House' },
+        { id: 'phase-1', type: 'phase', label: 'Roughs' },
+        { id: 'step-1', type: 'step', label: 'Rough electric', assign: 'Bright Electric' },
+        { id: 'delay-1', type: 'delay', label: 'Weather delay', stepName: 'Rough electric' },
+        { id: 'phase-2', type: 'phase', label: 'Finishes' },
+        { id: 'step-2', type: 'step', label: 'Paint' },
+        { id: 'task-1', type: 'task', label: 'Order fixtures', assignee: 'Ari' },
+      ];
+      assert.deepEqual(filterScheduleRows(rows, 'bright').map((row) => row.id), ['project-1', 'phase-1', 'step-1']);
+      assert.deepEqual(filterScheduleRows(rows, 'weather').map((row) => row.id), ['project-1', 'phase-1', 'step-1', 'delay-1']);
+      assert.deepEqual(filterScheduleRows(rows, 'finishes').map((row) => row.id), ['project-1', 'phase-2', 'step-2']);
+      assert.deepEqual(filterScheduleRows(rows, 'lake').map((row) => row.id), rows.map((row) => row.id));
+      assert.deepEqual(filterScheduleRows(rows, 'ari').map((row) => row.id), ['project-1', 'task-1']);
+    },
+  },
+  {
+    name: 'schedule search expands matches in Gantt and agenda without changing saved expansion',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /aria-label="Search schedule"/);
+      assert.match(scheduleSource, /filterScheduleRows\(scheduleRows, scheduleSearchQuery\)/);
+      assert.match(scheduleSource, /expansionLocked=\{scheduleSearchActive\}/);
+      assert.match(scheduleSource, /disabled=\{scheduleSearchActive\}/);
+      assert.match(agendaSource, /disabled=\{expansionLocked\}/);
+    },
+  },
+  {
+    name: 'schedule assignees use the same People-backed options as task assignees',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const dialogSource = await readFile(new URL('../src/components/ScheduleDialogs.jsx', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /personAssignmentLabel/);
+      assert.match(scheduleSource, /<ScheduleItemModal[\s\S]*?assigneeOptions=\{taskAssigneeOptions\}/);
+      assert.match(scheduleSource, /onAddPerson=\{\(\) => startCreateTaskAssignee\('schedule'\)\}/);
+      assert.match(scheduleSource, /personAssignmentTarget === 'schedule'/);
+      assert.match(scheduleSource, /setEditorDraft\(\(current\) => \(current \? \{ \.\.\.current, assign: nextAssignee \}/);
+      assert.match(dialogSource, /const resolvedAssigneeOptions = draft\.assign/);
+      assert.match(dialogSource, /<select value=\{draft\.assign \|\| ''\}/);
+      assert.match(dialogSource, /<option value="">Unassigned<\/option>/);
+      assert.match(dialogSource, />\s*Add person\s*<\/button>/);
     },
   },
   {

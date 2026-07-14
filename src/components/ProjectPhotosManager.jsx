@@ -1,20 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, formatFileSize, isImageFile, isShareDismissed } from '../utils/fileUi.js';
-import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
+import { formatFileSize, isImageFile } from '../utils/fileUi.js';
+import { openPreview } from '../platform/platformAdapter.js';
+import { downloadFileWithUi } from '../utils/downloadUi.js';
+import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
 export default function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }) {
-  const [saving, setSaving] = useState(false);
+  const { beginMutation, endMutation, runMutation, isMutating } = useEntityMutations();
   const [photoNameDrafts, setPhotoNameDrafts] = useState({});
   const [editingPhotoNames, setEditingPhotoNames] = useState({});
   const [storageNotice, setStorageNotice] = useState('');
   const [previewUrls, setPreviewUrls] = useState({});
   const previewUrlsRef = useRef({});
+  const dataRef = useRef(data);
   const uploadInputRef = useRef(null);
   const replacePhotoInputRefs = useRef({});
 
   const photos = project?.photos || [];
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   useEffect(() => {
     previewUrlsRef.current = previewUrls;
@@ -78,18 +86,16 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     };
   }, [photos, previewUrls]);
 
-  async function runPhotosMutation(buildNextProject) {
+  async function runPhotosMutation(key, buildNextProject) {
     if (!project?.id) return;
-    setSaving(true);
-    try {
+    return runMutation(key, async () => {
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
       const nextProject = buildNextProject(currentProject);
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
-    } finally {
-      setSaving(false);
-    }
+      return nextState;
+    });
   }
 
   async function createProjectPhotoRecord(file) {
@@ -124,7 +130,8 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     const files = Array.from(fileList || []).filter((file) => String(file.type || '').startsWith('image/'));
     if (!files.length || !project?.id) return;
 
-    setSaving(true);
+    const mutationKey = ['project', project.id, 'photos-upload'];
+    beginMutation(mutationKey);
     try {
       const uploadResults = await Promise.all(files.map((file) => createProjectPhotoRecord(file)));
       const uploads = uploadResults.map((result) => result.photoRecord);
@@ -142,7 +149,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
       await showAppAlert(error instanceof Error ? error.message : 'Failed to upload photo.', 'Upload failed');
     } finally {
       if (uploadInputRef.current) uploadInputRef.current.value = '';
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -150,7 +157,8 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     const replacement = Array.from(fileList || [])[0];
     if (!replacement || !project?.id || !existingPhoto) return;
 
-    setSaving(true);
+    const mutationKey = ['photo', existingPhoto.id];
+    beginMutation(mutationKey);
     try {
       const uploadResult = await createProjectPhotoRecord(replacement);
       const nextPhoto = {
@@ -160,10 +168,6 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
         name: existingPhoto.name || uploadResult.photoRecord.name,
       };
 
-      if (existingPhoto?.storagePath) {
-        await deleteProjectFileFromStorage(existingPhoto);
-      }
-
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
       const nextProject = {
@@ -172,6 +176,13 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
       };
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
+      if (existingPhoto?.storagePath) {
+        try {
+          await deleteProjectFileFromStorage(existingPhoto);
+        } catch (error) {
+          console.warn('Photo replacement was saved, but old storage cleanup failed.', error);
+        }
+      }
       setStorageNotice(
         '',
       );
@@ -180,7 +191,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     } finally {
       const input = replacePhotoInputRefs.current[existingPhoto.id];
       if (input) input.value = '';
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -238,7 +249,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
 
   function persistPhotoName(photoId, fallbackValue = '') {
     const nextName = String(photoNameDrafts[photoId] ?? fallbackValue ?? '').trim();
-    void runPhotosMutation((currentProject) => ({
+    void runPhotosMutation(['photo', photoId], (currentProject) => ({
       ...currentProject,
       photos: (currentProject.photos || []).map((photo) =>
         photo.id === photoId
@@ -270,66 +281,63 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     });
     if (!confirmed) return;
     void (async () => {
-      setSaving(true);
+      const mutationKey = ['photo', photoId];
+      beginMutation(mutationKey);
       try {
-        const currentProject = data.projects.find((item) => item.id === project.id);
+        const currentState = dataRef.current;
+        const currentProject = currentState.projects.find((item) => item.id === project.id);
         if (!currentProject) return;
-        const existing = (currentProject.photos || []).find((photo) => photo.id === photoId);
-        if (existing?.storagePath) {
-          await deleteProjectFileFromStorage(existing);
-        }
+        const photoIndex = (currentProject.photos || []).findIndex((photo) => photo.id === photoId);
+        const existing = (currentProject.photos || [])[photoIndex];
+        if (!existing) return;
         const nextProject = {
           ...currentProject,
           photos: (currentProject.photos || []).filter((photo) => photo.id !== photoId),
         };
-        const nextState = await updateProject(data, project.id, nextProject);
+        const nextState = await updateProject(currentState, project.id, nextProject);
+        dataRef.current = nextState;
         onStateChange(nextState);
+        showUndoAction({
+          message: `Deleted "${getDisplayPhotoName(existing)}".`,
+          onUndo: async () => {
+            const undoState = dataRef.current;
+            const undoProject = undoState.projects.find((item) => item.id === project.id);
+            if (!undoProject) return;
+            const restoredPhotos = [...(undoProject.photos || [])];
+            restoredPhotos.splice(Math.min(photoIndex, restoredPhotos.length), 0, existing);
+            const restoredState = await updateProject(undoState, project.id, {
+              ...undoProject,
+              photos: restoredPhotos,
+            });
+            dataRef.current = restoredState;
+            onStateChange(restoredState);
+          },
+          onCommit: () => existing.storagePath ? deleteProjectFileFromStorage(existing) : undefined,
+        });
       } catch (error) {
         await showAppAlert(error instanceof Error ? error.message : 'Failed to delete photo.', 'Delete failed');
       } finally {
-        setSaving(false);
+        endMutation(mutationKey);
       }
     })();
   }
 
   function downloadPhoto(photo) {
-    void (async () => {
-      try {
-        let blob = null;
-        if (photo?.storagePath && photo?.storageBucket) {
-          blob = await downloadProjectFileFromStorage(photo);
-        } else if (photo?.dataUrl) {
-          blob = await dataUrlToBlob(photo.dataUrl);
-        } else {
-          return;
-        }
-
-        await downloadBlobForCurrentPlatform(blob, photo.originalName || photo.name || 'photo');
-      } catch (error) {
-        if (isShareDismissed(error)) return;
-        await showAppAlert(error instanceof Error ? error.message : 'Failed to download photo.', 'Download failed');
-      }
-    })();
+    void downloadFileWithUi(photo, { failureMessage: 'Failed to download photo.' });
   }
 
   function openPhoto(photo) {
     void (async () => {
       try {
-        let objectUrl = '';
+        let previewSource = '';
         if (photo?.storagePath && photo?.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(photo);
-          objectUrl = URL.createObjectURL(blob);
+          previewSource = await downloadProjectFileFromStorage(photo);
         } else if (photo?.dataUrl) {
-          objectUrl = photo.dataUrl;
+          previewSource = photo.dataUrl;
         } else {
           return;
         }
-
-        window.open(objectUrl, '_blank', 'noopener');
-
-        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-        }
+        openPreview(previewSource, { features: 'noopener' });
       } catch (error) {
         await showAppAlert(error instanceof Error ? error.message : 'Failed to open photo.', 'Open failed');
       }
@@ -360,8 +368,8 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
             multiple
             onChange={(event) => handleUploadPhotos(event.target.files)}
           />
-          <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={saving || readOnly}>
-            Add photos
+          <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={isMutating(['project', project.id, 'photos-upload']) || readOnly}>
+            {isMutating(['project', project.id, 'photos-upload']) ? 'Uploading...' : 'Add photos'}
           </button>
         </div>
       </div>
@@ -392,7 +400,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     className="inline-save-row"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (saving || !hasPendingPhotoName(photo)) return;
+                      if (isMutating(['photo', photo.id]) || !hasPendingPhotoName(photo)) return;
                       persistPhotoName(photo.id, getDisplayPhotoName(photo));
                     }}
                   >
@@ -443,7 +451,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     className="button secondary gantt-icon-button"
                     type="button"
                     onClick={() => triggerReplacePhoto(photo.id)}
-                    disabled={saving}
+                    disabled={isMutating(['photo', photo.id])}
                     title="Replace photo"
                     aria-label={`Replace ${getDisplayPhotoName(photo)}`}
                   >
@@ -453,7 +461,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     className="button secondary gantt-icon-button"
                     type="button"
                     onClick={() => (isEditingPhotoName(photo.id) ? cancelPhotoRename(photo.id) : beginPhotoRename(photo))}
-                    disabled={saving}
+                    disabled={isMutating(['photo', photo.id])}
                     title={isEditingPhotoName(photo.id) ? 'Cancel rename' : 'Rename photo'}
                     aria-label={`${isEditingPhotoName(photo.id) ? 'Cancel rename for' : 'Rename'} ${getDisplayPhotoName(photo)}`}
                   >
@@ -463,7 +471,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     className="button secondary gantt-icon-button gantt-trash-button"
                     type="button"
                     onClick={() => deletePhoto(photo.id)}
-                    disabled={saving}
+                    disabled={isMutating(['photo', photo.id])}
                     title="Delete photo"
                     aria-label={`Delete ${getDisplayPhotoName(photo)}`}
                   >
@@ -483,5 +491,3 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     </div>
   );
 }
-
-

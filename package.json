@@ -17,6 +17,7 @@
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
     "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/local-notifications": "^8.2.0",
     "@capacitor/share": "^8.0.1",
     "@fluentui/react-icons": "^2.0.328",
     "react": "^18.3.1",

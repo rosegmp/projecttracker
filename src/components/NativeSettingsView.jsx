@@ -1,9 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { inviteAuthUser, updateProject, updateSettings, USER_ROLE_OPTIONS } from '../services/trackerData.js';
+import { inviteAuthUser, loadAuditEvents, updateProject, updateSettings, USER_ROLE_OPTIONS } from '../services/trackerData.js';
 import { addDays, toIsoDate } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
+import { getAppRedirectUrl, isNativeAndroidApp } from '../platform/platformAdapter.js';
+import {
+  getAndroidNotificationPreferences,
+  saveAndroidNotificationPreferences,
+  syncAndroidNotifications,
+} from '../utils/androidNotifications.js';
+import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const PEOPLE_LIST_COLUMN_DEFS = [
@@ -177,9 +185,17 @@ function buildNextTwelveMonthsJewishHolidays(today = new Date()) {
 }
 
 
-export default function NativeSettingsView({ data, onStateChange, refresh, loading }) {
-  const [saving, setSaving] = useState(false);
+export default function NativeSettingsView({ data, onStateChange, refresh, loading, activeUser = null }) {
+  const { beginMutation, endMutation, isMutating } = useEntityMutations();
+  const [notificationSaving, setNotificationSaving] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState({ tone: '', message: '' });
+  const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
+  const [auditRows, setAuditRows] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditError, setAuditError] = useState('');
+  const [auditProjectFilter, setAuditProjectFilter] = useState('');
+  const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
   const [schedulingDraft, setSchedulingDraft] = useState(() => ({
     weekdaysOnly: !!data.settings?.weekdaysOnly,
     showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (data.settings?.showTaskDueDates !== false),
@@ -190,7 +206,6 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   }));
   const settingsStateRef = useRef(data);
   const settingsSaveChainRef = useRef(Promise.resolve());
-  const pendingSettingsSavesRef = useRef(0);
 
   const settings = useMemo(
     () => {
@@ -263,6 +278,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   }, [data]);
 
   useEffect(() => {
+    setNotificationDraft(getAndroidNotificationPreferences(activeUser?.id));
+    setNotificationStatus({ tone: '', message: '' });
+  }, [activeUser?.id]);
+
+  useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
   }, [settings.holidays]);
 
@@ -325,10 +345,41 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   }, [data.projects, settings.users]);
 
   const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
+  const auditEntries = useMemo(() => {
+    const entries = buildAuditTrailEntries(auditRows);
+    return auditCategoryFilter === 'all'
+      ? entries
+      : entries.filter((entry) => entry.category === auditCategoryFilter);
+  }, [auditCategoryFilter, auditRows]);
+  const auditActorNames = useMemo(
+    () => new Map(settings.users.map((user) => [String(user.email || '').trim().toLowerCase(), user.name])),
+    [settings.users],
+  );
 
-  function runSettingsMutation(nextSettings) {
-    pendingSettingsSavesRef.current += 1;
-    setSaving(true);
+  async function refreshAuditTrail(projectId = auditProjectFilter) {
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const rows = await loadAuditEvents({ projectId, limit: 250 });
+      setAuditRows(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load audit history.';
+      setAuditError(
+        /audit_events|404|does not exist|schema cache/i.test(message)
+          ? 'Audit storage is not installed yet. Apply the included Supabase audit-events migration, then refresh.'
+          : message,
+      );
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshAuditTrail(auditProjectFilter);
+  }, [auditProjectFilter]);
+
+  function runSettingsMutation(nextSettings, mutationKey = ['settings', ...Object.keys(nextSettings).sort()]) {
+    beginMutation(mutationKey);
 
     const queuedSave = settingsSaveChainRef.current.then(async () => {
       const nextState = await updateSettings(settingsStateRef.current, nextSettings);
@@ -339,12 +390,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
     settingsSaveChainRef.current = queuedSave.catch(() => {});
 
-    return queuedSave.finally(() => {
-      pendingSettingsSavesRef.current = Math.max(0, pendingSettingsSavesRef.current - 1);
-      if (pendingSettingsSavesRef.current === 0) {
-        setSaving(false);
-      }
-    });
+    return queuedSave.finally(() => endMutation(mutationKey));
   }
 
   function handleToggle(field, value) {
@@ -377,7 +423,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       showCalendarPhases: schedulingDraft.showCalendarPhases,
       showCalendarHebrewDates: schedulingDraft.showCalendarHebrewDates,
       showPageStats: schedulingDraft.showPageStats,
-    });
+    }, ['settings', 'scheduling']);
   }
 
   function handleHolidayDraftChange(index, field, value) {
@@ -410,7 +456,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
             holidayIndex === existingIndex ? draft : holiday,
           )
         : [...settings.holidays, draft];
-    runSettingsMutation({ holidays: sortHolidays(holidays) });
+    runSettingsMutation({ holidays: sortHolidays(holidays) }, ['settings', 'holiday', draft.id]);
   }
 
   function handleAddHoliday() {
@@ -431,7 +477,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       return;
     }
     const holidays = settings.holidays.filter((_, holidayIndex) => holidayIndex !== existingIndex);
-    runSettingsMutation({ holidays });
+    runSettingsMutation({ holidays }, ['settings', 'holiday', draft.id]);
   }
 
   async function handleAddStandardLegalHolidays() {
@@ -534,7 +580,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       .filter((item) => item.persisted || item.id === draftId)
       .map((item) => (item.id === draftId ? nextValue : String(item.savedValue || '').trim()))
       .filter(Boolean);
-    await runSettingsMutation({ inspectionSubcodes });
+    await runSettingsMutation({ inspectionSubcodes }, ['settings', 'subcode', draftId]);
     setInspectionSubcodeDrafts((current) =>
       current.map((item) =>
         item.id === draftId
@@ -572,7 +618,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       .filter((item) => item.persisted && item.id !== draftId)
       .map((item) => String(item.savedValue || '').trim())
       .filter(Boolean);
-    runSettingsMutation({ inspectionSubcodes });
+    runSettingsMutation({ inspectionSubcodes }, ['settings', 'subcode', draftId]);
   }
 
   function handleUserFieldChange(userId, field, value) {
@@ -649,7 +695,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               role: normalizeAppUserRole(user.savedRole),
             },
       );
-    let nextState = await runSettingsMutation({ users });
+    let nextState = await runSettingsMutation({ users }, ['settings', 'user', userId]);
     const selectedProjectIds = normalizeProjectAccessUserIds(targetUser.projectIds);
     for (const project of nextState.projects || []) {
       const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
@@ -707,7 +753,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       [user.id]: { status: 'sending', message: 'Sending login invite...' },
     }));
     try {
-      await inviteAuthUser(email, user.name, window.location.origin + window.location.pathname);
+      await inviteAuthUser(email, user.name, getAppRedirectUrl());
       setAuthInviteStatus((current) => ({
         ...current,
         [user.id]: { status: 'success', message: `Login invite sent to ${email}.` },
@@ -761,7 +807,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     const users = settings.users.filter((item) => item.id !== userId);
     const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
     void (async () => {
-      let nextState = await runSettingsMutation({ users, currentUserId });
+      let nextState = await runSettingsMutation({ users, currentUserId }, ['settings', 'user', userId]);
       for (const project of nextState.projects || []) {
         const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
         if (!currentAccess.includes(userId)) continue;
@@ -775,11 +821,50 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     })();
   }
 
+  async function handleSaveNotificationSettings() {
+    setNotificationSaving(true);
+    setNotificationStatus({ tone: '', message: '' });
+    try {
+      const preferences = saveAndroidNotificationPreferences(activeUser?.id, notificationDraft);
+      setNotificationDraft(preferences);
+      const result = await syncAndroidNotifications({
+        data,
+        activeUser,
+        requestPermission: preferences.enabled,
+      });
+      if (result.status === 'permission-denied') {
+        setNotificationStatus({ tone: 'error', message: 'Android notification permission was not granted.' });
+      } else if (result.status === 'disabled') {
+        setNotificationStatus({ tone: 'success', message: 'Android reminders are disabled and pending reminders were cleared.' });
+      } else {
+        setNotificationStatus({
+          tone: 'success',
+          message: `${result.scheduled} reminder${result.scheduled === 1 ? '' : 's'} scheduled on this device.`,
+        });
+      }
+    } catch (error) {
+      setNotificationStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to update Android reminders.',
+      });
+    } finally {
+      setNotificationSaving(false);
+    }
+  }
+
+  const schedulingSaving = isMutating(['settings', 'scheduling']);
+  const holidaysSaving = isMutating(['settings', 'holidays']);
+  const peopleColumnsSaving =
+    isMutating(['settings', 'peopleListColumns']) || isMutating(['settings', 'peopleListBoldColumns']);
+  const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
+  const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
+  const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
+
   return (
     <section className="panel native-panel top-level-settings-page">
       <div className="panel-header">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-          {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
         </button>
       </div>
 
@@ -802,7 +887,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                     className="button secondary gantt-icon-button inline-save-button"
                     type="button"
                     onClick={handleSaveSchedulingDefaults}
-                    disabled={saving || !hasPendingSchedulingDefaults()}
+                    disabled={schedulingSaving || !hasPendingSchedulingDefaults()}
                     title="Save scheduling defaults"
                     aria-label="Save scheduling defaults"
                   >
@@ -816,7 +901,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.weekdaysOnly}
                   onChange={(event) => handleSchedulingDraftToggle('weekdaysOnly', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Use weekdays only</strong>
@@ -829,7 +914,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.showGanttTaskDueDates}
                   onChange={(event) => handleSchedulingDraftToggle('showGanttTaskDueDates', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Show task due dates in Gantt</strong>
@@ -842,7 +927,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.showCalendarTaskDueDates}
                   onChange={(event) => handleSchedulingDraftToggle('showCalendarTaskDueDates', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Show task due dates in Calendar</strong>
@@ -855,7 +940,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.showCalendarPhases}
                   onChange={(event) => handleSchedulingDraftToggle('showCalendarPhases', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Show phases in calendar</strong>
@@ -868,7 +953,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.showCalendarHebrewDates}
                   onChange={(event) => handleSchedulingDraftToggle('showCalendarHebrewDates', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Show Jewish lunar dates in Calendar</strong>
@@ -881,7 +966,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   type="checkbox"
                   checked={schedulingDraft.showPageStats}
                   onChange={(event) => handleSchedulingDraftToggle('showPageStats', event.target.checked)}
-                  disabled={saving}
+                  disabled={schedulingSaving}
                 />
                 <span>
                   <strong>Show page stats</strong>
@@ -896,7 +981,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   <h3>Inspection subcodes</h3>
                   <p>Manage the dropdown list used in the inspection editor.</p>
                 </div>
-                <button className="button primary" type="button" onClick={handleAddInspectionSubcode} disabled={saving}>
+                <button className="button primary" type="button" onClick={handleAddInspectionSubcode}>
                   Add subcode
                 </button>
               </div>
@@ -910,13 +995,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         value={draft.value}
                         placeholder="Inspection subcode"
                         onChange={(event) => handleInspectionSubcodeChange(draft.id, event.target.value)}
-                        disabled={saving}
+                        disabled={isSubcodeSaving(draft.id)}
                       />
                       <button
                         className="button secondary gantt-icon-button inline-save-button"
                         type="button"
                         onClick={() => void saveInspectionSubcode(draft.id)}
-                        disabled={saving || !hasPendingInspectionSubcode(draft)}
+                        disabled={isSubcodeSaving(draft.id) || !hasPendingInspectionSubcode(draft)}
                         title="Save subcode"
                         aria-label="Save subcode"
                       >
@@ -926,7 +1011,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         className="button secondary danger gantt-icon-button"
                         type="button"
                         onClick={() => handleRemoveInspectionSubcode(draft.id)}
-                        disabled={saving}
+                        disabled={isSubcodeSaving(draft.id)}
                         title="Remove subcode"
                         aria-label="Remove subcode"
                       >
@@ -954,7 +1039,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                     className="button secondary"
                     type="button"
                     onClick={handleAddStandardLegalHolidays}
-                    disabled={saving}
+                    disabled={holidaysSaving}
                   >
                     Add legal holidays
                   </button>
@@ -962,11 +1047,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                     className="button secondary"
                     type="button"
                     onClick={handleAddJewishHolidays}
-                    disabled={saving}
+                    disabled={holidaysSaving}
                   >
                     Add Jewish holidays
                   </button>
-                  <button className="button primary" type="button" onClick={handleAddHoliday} disabled={saving}>
+                  <button className="button primary" type="button" onClick={handleAddHoliday}>
                     Add holiday
                   </button>
                 </div>
@@ -986,7 +1071,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             type="date"
                             value={holiday.date || ''}
                             onChange={(event) => handleHolidayDraftChange(index, 'date', event.target.value)}
-                            disabled={saving}
+                            disabled={isHolidaySaving(holiday.id)}
                           />
                         </label>
 
@@ -995,7 +1080,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             type="checkbox"
                             checked={isRange}
                             onChange={(event) => handleToggleHolidayRange(index, event.target.checked)}
-                            disabled={saving}
+                            disabled={isHolidaySaving(holiday.id)}
                           />
                           <span>Range</span>
                         </label>
@@ -1007,7 +1092,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             value={holiday.endDate || ''}
                             min={holiday.date || ''}
                             onChange={(event) => handleHolidayDraftChange(index, 'endDate', event.target.value)}
-                            disabled={saving || !isRange}
+                            disabled={isHolidaySaving(holiday.id) || !isRange}
                           />
                         </label>
 
@@ -1018,7 +1103,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             value={holiday.name || ''}
                             placeholder="Name (optional)"
                             onChange={(event) => handleHolidayDraftChange(index, 'name', event.target.value)}
-                            disabled={saving}
+                            disabled={isHolidaySaving(holiday.id)}
                           />
                         </label>
 
@@ -1027,7 +1112,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             type="checkbox"
                             checked={holiday.nonWorkday !== false}
                             onChange={(event) => handleHolidayDraftChange(index, 'nonWorkday', event.target.checked)}
-                            disabled={saving}
+                            disabled={isHolidaySaving(holiday.id)}
                           />
                           <span>Non-workday</span>
                         </label>
@@ -1037,7 +1122,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             className="button secondary gantt-icon-button"
                             type="button"
                             onClick={() => handleSaveHoliday(index)}
-                            disabled={saving || !isDirty}
+                            disabled={isHolidaySaving(holiday.id) || !isDirty}
                             title="Save holiday"
                             aria-label={`Save ${holiday.name || 'holiday'}`}
                           >
@@ -1047,7 +1132,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             className="button secondary danger gantt-icon-button"
                             type="button"
                             onClick={() => handleRemoveHoliday(index)}
-                            disabled={saving}
+                            disabled={isHolidaySaving(holiday.id)}
                             title="Remove holiday"
                             aria-label={`Remove ${holiday.name || 'holiday'}`}
                           >
@@ -1068,6 +1153,192 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           </div>
         </section>
 
+        {isNativeAndroidApp() ? (
+          <section className="settings-section">
+            <div className="settings-section-header">
+              <div>
+                <h3>Android Notifications</h3>
+                <p>Schedule reminders on this device for visible project work.</p>
+              </div>
+            </div>
+            <div className="settings-grid settings-grid-single">
+              <section className="settings-card android-notification-settings">
+                <div className="settings-card-header">
+                  <div>
+                    <h3>Project reminders</h3>
+                    <p>Reminder preferences are stored separately for each signed-in user on this Android device.</p>
+                  </div>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={() => void handleSaveNotificationSettings()}
+                    disabled={notificationSaving}
+                  >
+                    {notificationSaving ? 'Updating...' : 'Save reminder settings'}
+                  </button>
+                </div>
+
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={notificationDraft.enabled}
+                    onChange={(event) => setNotificationDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                    disabled={notificationSaving}
+                  />
+                  <span>
+                    <strong>Enable Android reminders</strong>
+                    <small>Android will ask for notification permission when you save this setting.</small>
+                  </span>
+                </label>
+
+                <div className="android-notification-options">
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={notificationDraft.upcomingTasks}
+                      onChange={(event) => setNotificationDraft((current) => ({ ...current, upcomingTasks: event.target.checked }))}
+                      disabled={notificationSaving}
+                    />
+                    <span><strong>Upcoming tasks</strong><small>Notify before incomplete task due dates.</small></span>
+                  </label>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={notificationDraft.inspections}
+                      onChange={(event) => setNotificationDraft((current) => ({ ...current, inspections: event.target.checked }))}
+                      disabled={notificationSaving}
+                    />
+                    <span><strong>Upcoming inspections</strong><small>Notify before inspections that have not passed.</small></span>
+                  </label>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={notificationDraft.overdueWork}
+                      onChange={(event) => setNotificationDraft((current) => ({ ...current, overdueWork: event.target.checked }))}
+                      disabled={notificationSaving}
+                    />
+                    <span><strong>Daily overdue summary</strong><small>Summarize overdue tasks and inspections once each day.</small></span>
+                  </label>
+                </div>
+
+                <div className="android-notification-timing">
+                  <label>
+                    <span>Remind me</span>
+                    <select
+                      value={notificationDraft.reminderDays}
+                      onChange={(event) => setNotificationDraft((current) => ({ ...current, reminderDays: Number(event.target.value) }))}
+                      disabled={notificationSaving}
+                    >
+                      <option value="0">On the due date</option>
+                      <option value="1">1 day before</option>
+                      <option value="2">2 days before</option>
+                      <option value="3">3 days before</option>
+                      <option value="7">1 week before</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Reminder time</span>
+                    <input
+                      type="time"
+                      value={notificationDraft.reminderTime}
+                      onChange={(event) => setNotificationDraft((current) => ({ ...current, reminderTime: event.target.value }))}
+                      disabled={notificationSaving}
+                    />
+                  </label>
+                </div>
+
+                {notificationStatus.message ? (
+                  <div className={`android-notification-status ${notificationStatus.tone}`} role="status">
+                    {notificationStatus.message}
+                  </div>
+                ) : null}
+              </section>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="settings-section audit-trail-section">
+          <div className="settings-section-header audit-trail-header">
+            <div>
+              <h3>Audit Trail</h3>
+              <p>Review who changed project dates, dependencies, statuses, and files.</p>
+            </div>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void refreshAuditTrail()}
+              disabled={auditLoading}
+            >
+              <FluentIcon name="replace" />
+              {auditLoading ? 'Refreshing...' : 'Refresh history'}
+            </button>
+          </div>
+
+          <div className="audit-trail-filters" aria-label="Audit trail filters">
+            <label>
+              <span>Project</span>
+              <select value={auditProjectFilter} onChange={(event) => setAuditProjectFilter(event.target.value)}>
+                <option value="">All projects</option>
+                {[...data.projects]
+                  .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+                  .map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Change type</span>
+              <select value={auditCategoryFilter} onChange={(event) => setAuditCategoryFilter(event.target.value)}>
+                <option value="all">All changes</option>
+                <option value="dates">Dates</option>
+                <option value="dependencies">Dependencies</option>
+                <option value="statuses">Statuses</option>
+                <option value="files">Files</option>
+                <option value="activity">Created and deleted</option>
+              </select>
+            </label>
+          </div>
+
+          {auditError ? (
+            <div className="audit-trail-message error" role="alert">{auditError}</div>
+          ) : auditLoading && !auditRows.length ? (
+            <div className="audit-trail-message">Loading history...</div>
+          ) : auditEntries.length ? (
+            <div className="audit-trail-list">
+              {auditEntries.map((entry) => {
+                const actorEmail = String(entry.actorEmail || '').trim();
+                const actorName = auditActorNames.get(actorEmail.toLowerCase()) || actorEmail || 'Unknown user';
+                const projectName = data.projects.find((project) => project.id === entry.projectId)?.name || 'General';
+                return (
+                  <article key={entry.id} className="audit-trail-row">
+                    <div className={`audit-trail-marker ${entry.category}`} aria-hidden="true" />
+                    <div className="audit-trail-content">
+                      <div className="audit-trail-summary">
+                        <strong>{entry.label}</strong>
+                        <span>{entry.entityName}</span>
+                      </div>
+                      {entry.action === 'update' ? (
+                        <div className="audit-trail-values">
+                          <span>{formatAuditValue(entry.before)}</span>
+                          <FluentIcon name="chevronRight" />
+                          <span>{formatAuditValue(entry.after)}</span>
+                        </div>
+                      ) : null}
+                      <div className="audit-trail-meta">
+                        <span>{actorName}</span>
+                        <span>{projectName}</span>
+                        <time dateTime={entry.createdAt}>
+                          {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Unknown time'}
+                        </time>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="audit-trail-message">No matching changes have been recorded yet.</div>
+          )}
+        </section>
+
         <section className="settings-section">
           <div className="settings-section-header">
             <div>
@@ -1082,7 +1353,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   <h3>Users and roles</h3>
                   <p>Manage who can use the app and which role each person has.</p>
                 </div>
-                <button className="button primary" type="button" onClick={handleAddUser} disabled={saving}>
+                <button className="button primary" type="button" onClick={handleAddUser}>
                   Add user
                 </button>
               </div>
@@ -1092,10 +1363,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   <div key={user.id} className="user-role-card">
                     {(() => {
                       const inviteStatus = authInviteStatus[user.id];
+                      const userSaving = isUserSaving(user.id);
                       const hasPendingChanges = hasPendingUserDraft(user);
                       const hasEmail = !!String(user.email || '').trim();
                       const inviteDisabled =
-                        saving || inviteStatus?.status === 'sending' || hasPendingChanges || !hasEmail;
+                        userSaving || inviteStatus?.status === 'sending' || hasPendingChanges || !hasEmail;
                       const inviteTitle = !hasEmail
                         ? 'Add an email before sending an invite'
                         : hasPendingChanges
@@ -1109,19 +1381,19 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         value={user.name}
                         placeholder="User name"
                         onChange={(event) => handleUserFieldChange(user.id, 'name', event.target.value)}
-                        disabled={saving}
+                        disabled={userSaving}
                       />
                       <input
                         type="email"
                         value={user.email}
                         placeholder="Email (optional)"
                         onChange={(event) => handleUserFieldChange(user.id, 'email', event.target.value)}
-                        disabled={saving}
+                        disabled={userSaving}
                       />
                       <select
                         value={user.role}
                         onChange={(event) => handleUserFieldChange(user.id, 'role', event.target.value)}
-                        disabled={saving}
+                        disabled={userSaving}
                       >
                         {USER_ROLE_OPTIONS.map((role) => (
                           <option key={role} value={role}>
@@ -1133,7 +1405,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         className="button secondary gantt-icon-button inline-save-button"
                         type="button"
                         onClick={() => void saveUserDraft(user.id)}
-                        disabled={saving || !hasPendingUserDraft(user)}
+                        disabled={userSaving || !hasPendingUserDraft(user)}
                         title="Save user"
                         aria-label={`Save ${user.name || 'user'}`}
                       >
@@ -1153,7 +1425,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         className="button secondary danger gantt-icon-button"
                         type="button"
                         onClick={() => handleRemoveUser(user.id)}
-                        disabled={saving || settings.users.length <= 1}
+                        disabled={userSaving || settings.users.length <= 1}
                         title="Remove user"
                         aria-label={`Remove ${user.name || 'user'}`}
                       >
@@ -1176,7 +1448,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                             className="button secondary compact-button"
                             type="button"
                             onClick={() => handleToggleAllUserProjects(user.id)}
-                            disabled={saving}
+                            disabled={isUserSaving(user.id)}
                           >
                             {data.projects.every((project) =>
                               normalizeProjectAccessUserIds(user.projectIds).includes(project.id),
@@ -1196,7 +1468,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                                 onChange={(event) =>
                                   handleUserProjectAccessChange(user.id, project.id, event.target.checked)
                                 }
-                                disabled={saving}
+                                disabled={isUserSaving(user.id)}
                               />
                               <span>{project.name}</span>
                             </label>
@@ -1249,7 +1521,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                           type="checkbox"
                           checked={visible}
                           onChange={(event) => handleTogglePeopleColumn(column.id, event.target.checked)}
-                          disabled={saving}
+                          disabled={peopleColumnsSaving}
                         />
                         <span>
                           <strong>{column.label}</strong>
@@ -1261,7 +1533,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                           type="checkbox"
                           checked={settings.peopleListBoldColumns.includes(column.id)}
                           onChange={(event) => handleTogglePeopleBold(column.id, event.target.checked)}
-                          disabled={saving}
+                          disabled={peopleColumnsSaving}
                         />
                         <span>
                           <strong>Bold</strong>
@@ -1272,7 +1544,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                           className="button secondary gantt-icon-button"
                           type="button"
                           onClick={() => movePeopleColumn(column.id, 'up')}
-                          disabled={saving || !visible || orderIndex <= 0}
+                          disabled={peopleColumnsSaving || !visible || orderIndex <= 0}
                           title="Move up"
                         >
                           <FluentIcon name="arrowUp" />
@@ -1281,7 +1553,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                           className="button secondary gantt-icon-button"
                           type="button"
                           onClick={() => movePeopleColumn(column.id, 'down')}
-                          disabled={saving || !visible || orderIndex < 0 || orderIndex >= settings.peopleListColumns.length - 1}
+                          disabled={peopleColumnsSaving || !visible || orderIndex < 0 || orderIndex >= settings.peopleListColumns.length - 1}
                           title="Move down"
                         >
                           <FluentIcon name="arrowDown" />
@@ -1309,13 +1581,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
       </PageStats>
       <div className="page-refresh-footer">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading || saving}>
-          {loading ? 'Refreshing...' : saving ? 'Saving...' : 'Refresh data'}
+        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh data'}
         </button>
       </div>
     </section>
   );
 }
-
-
-

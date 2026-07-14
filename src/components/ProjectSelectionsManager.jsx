@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskAssigneeOptions, personAssignmentLabel } from '../utils/accessUi.js';
 import {
   createPerson, createTask, deleteProjectFileFromStorage, downloadProjectFileFromStorage,
   isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
-import { dataUrlToBlob, downloadBlobForCurrentPlatform, isImageFile, isShareDismissed } from '../utils/fileUi.js';
+import { isImageFile } from '../utils/fileUi.js';
+import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import PersonModal from './PersonModal.jsx';
-import SelectionModal from './SelectionModal.jsx';
+import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { openPreview } from '../platform/platformAdapter.js';
+
+const PersonModal = lazy(() => import('./PersonModal.jsx'));
+const SelectionModal = lazy(() => import('./SelectionModal.jsx'));
 
 const SELECTION_STATUS_OPTIONS = ['needs decision', 'selected', 'ordered', 'installed'];
 const SELECTION_CATEGORY_OPTIONS = ['Exterior', 'Interior', 'Flooring', 'Cabinets', 'Countertops', 'Plumbing', 'Electrical', 'Paint', 'Appliances', 'Misc'];
@@ -25,7 +29,7 @@ export default function ProjectSelectionsManager({
 }) {
   const [selectionDraft, setSelectionDraft] = useState(null);
   const [personDraft, setPersonDraft] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const [storageNotice, setStorageNotice] = useState('');
   const [previewUrls, setPreviewUrls] = useState({});
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -267,7 +271,8 @@ export default function ProjectSelectionsManager({
   async function handleSaveVendorPerson() {
     if (!personDraft) return;
     if (!personDraft.first.trim() && !personDraft.last.trim() && !personDraft.company.trim()) return;
-    setSaving(true);
+    const mutationKey = ['person', 'create-for-selection'];
+    beginMutation(mutationKey);
     try {
       const nextState = await createPerson(data, personDraft.type, personDraft);
       const createdPerson = (personDraft.type === 'sub' ? nextState.subs : nextState.employees)?.at(-1);
@@ -278,13 +283,14 @@ export default function ProjectSelectionsManager({
       }
       setPersonDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   async function saveSelection() {
     if (!project?.id || !selectionDraft?.itemName.trim()) return;
-    setSaving(true);
+    const mutationKey = ['selection', selectionDraft.id || 'create'];
+    beginMutation(mutationKey);
     try {
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
@@ -342,7 +348,7 @@ export default function ProjectSelectionsManager({
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to save selection.', 'Save failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -354,45 +360,31 @@ export default function ProjectSelectionsManager({
       tone: 'danger',
     });
     if (!confirmed) return;
-    setSaving(true);
+    const mutationKey = ['selection', selectionDraft.id];
+    beginMutation(mutationKey);
     try {
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
       const existingSelection = (currentProject.selections || []).find((item) => item.id === selectionDraft.id);
-      for (const file of [...(existingSelection?.attachments || []), ...(existingSelection?.photos || [])]) {
-        if (file?.storagePath) {
-          await deleteProjectFileFromStorage(file);
-        }
-      }
       const nextProject = {
         ...currentProject,
         selections: (currentProject.selections || []).filter((item) => item.id !== selectionDraft.id),
       };
       const nextState = await updateProject(data, project.id, nextProject);
       onStateChange(nextState);
+      await Promise.allSettled(
+        [...(existingSelection?.attachments || []), ...(existingSelection?.photos || [])]
+          .filter((file) => file?.storagePath)
+          .map((file) => deleteProjectFileFromStorage(file)),
+      );
       setSelectionDraft(null);
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
   function downloadSelectionFile(file) {
-    void (async () => {
-      try {
-        let blob = null;
-        if (file?.storagePath && file?.storageBucket) {
-          blob = await downloadProjectFileFromStorage(file);
-        } else if (file?.dataUrl) {
-          blob = await dataUrlToBlob(file.dataUrl);
-        } else {
-          return;
-        }
-        await downloadBlobForCurrentPlatform(blob, file.originalName || file.name || 'selection-file');
-      } catch (error) {
-        if (isShareDismissed(error)) return;
-        await showAppAlert(error instanceof Error ? error.message : 'Unable to download selection file.', 'Download failed');
-      }
-    })();
+    void downloadFileWithUi(file, { failureMessage: 'Unable to download selection file.' });
   }
 
   function getSelectionPhotoPreview(photo) {
@@ -403,19 +395,15 @@ export default function ProjectSelectionsManager({
   function openSelectionPhoto(photo) {
     void (async () => {
       try {
-        let objectUrl = '';
+        let previewSource = '';
         if (photo?.storagePath && photo?.storageBucket) {
-          const blob = await downloadProjectFileFromStorage(photo);
-          objectUrl = URL.createObjectURL(blob);
+          previewSource = await downloadProjectFileFromStorage(photo);
         } else if (photo?.dataUrl) {
-          objectUrl = photo.dataUrl;
+          previewSource = photo.dataUrl;
         } else {
           return;
         }
-        window.open(objectUrl, '_blank', 'noopener');
-        if (photo?.storagePath && objectUrl.startsWith('blob:')) {
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-        }
+        openPreview(previewSource, { features: 'noopener' });
       } catch (error) {
         await showAppAlert(error instanceof Error ? error.message : 'Unable to open selection photo.', 'Open failed');
       }
@@ -424,7 +412,8 @@ export default function ProjectSelectionsManager({
 
   async function createTaskFromSelection(selection) {
     if (!project?.id || !selection?.itemName) return;
-    setSaving(true);
+    const mutationKey = ['selection', selection.id, 'create-task'];
+    beginMutation(mutationKey);
     try {
       const taskId = `t${Date.now()}`;
       const label = selection.chosenOption
@@ -457,7 +446,7 @@ export default function ProjectSelectionsManager({
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Unable to create task from selection.', 'Task creation failed');
     } finally {
-      setSaving(false);
+      endMutation(mutationKey);
     }
   }
 
@@ -480,7 +469,7 @@ export default function ProjectSelectionsManager({
         </div>
         {!readOnly ? (
           <div className="panel-actions">
-            <button className="button primary" type="button" onClick={startCreateSelection} disabled={saving}>
+            <button className="button primary" type="button" onClick={startCreateSelection}>
               Add selection
             </button>
           </div>
@@ -603,7 +592,7 @@ export default function ProjectSelectionsManager({
                           className="task-attachment-link-chip task-selection-link-chip"
                           type="button"
                           onClick={() => onOpenTask(taskId)}
-                          disabled={saving}
+                          disabled={false}
                           title={label}
                         >
                           {label}
@@ -616,12 +605,12 @@ export default function ProjectSelectionsManager({
                 </div>
                 <div className="task-row-actions">
                   {!readOnly ? (
-                    <button className="button secondary" type="button" onClick={() => void createTaskFromSelection(selection)} disabled={saving}>
-                      Create task
+                    <button className="button secondary" type="button" onClick={() => void createTaskFromSelection(selection)} disabled={isMutating(['selection', selection.id, 'create-task'])}>
+                      {isMutating(['selection', selection.id, 'create-task']) ? 'Creating...' : 'Create task'}
                     </button>
                   ) : null}
                   {!readOnly ? (
-                    <button className="button secondary gantt-icon-button" type="button" onClick={() => startEditSelection(selection)} disabled={saving} title="Edit selection" aria-label={`Edit ${selection.itemName || 'selection'}`}>
+                    <button className="button secondary gantt-icon-button" type="button" onClick={() => startEditSelection(selection)} disabled={isMutating(['selection', selection.id])} title="Edit selection" aria-label={`Edit ${selection.itemName || 'selection'}`}>
                       <FluentIcon name="edit" />
                     </button>
                   ) : null}
@@ -641,12 +630,13 @@ export default function ProjectSelectionsManager({
         </div>
       )}
 
-      {!readOnly ? (
+      <Suspense fallback={null}>
+      {!readOnly && selectionDraft ? (
         <SelectionModal
           draft={selectionDraft}
           projectName={project?.name || ''}
           vendorOptions={vendorOptions}
-          saving={saving}
+          saving={isMutating(['selection', selectionDraft.id || 'create'])}
           onChange={updateSelectionDraft}
           onAddPerson={startCreateVendorPerson}
           onClose={() => setSelectionDraft(null)}
@@ -700,7 +690,7 @@ export default function ProjectSelectionsManager({
           draft={personDraft}
           type={personDraft.type}
           isEditing={false}
-          saving={saving}
+          saving={isMutating(['person', 'create-for-selection'])}
           showTypeSelector
           onChange={(field, value) => setPersonDraft((current) => (current ? { ...current, [field]: value } : current))}
           onClose={() => setPersonDraft(null)}
@@ -708,7 +698,7 @@ export default function ProjectSelectionsManager({
           onDelete={() => {}}
         />
       ) : null}
+      </Suspense>
     </div>
   );
 }
-
