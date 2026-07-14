@@ -17,6 +17,7 @@ import {
   Edit24Regular,
   Eye24Regular,
   Mail24Regular,
+  Navigation24Regular,
   ReOrderDotsVertical24Regular,
   SignOut24Regular,
   Warning24Regular,
@@ -43,6 +44,7 @@ const ICONS = {
   document: Document24Regular,
   add: Add24Regular,
   warning: Warning24Regular,
+  navigation: Navigation24Regular,
 };
 
 export default function FluentIcon({ name, size = 18, className = '' }) {

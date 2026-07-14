@@ -520,6 +520,48 @@ const tests = [
     },
   },
   {
+    name: 'mobile calendars use day and week views instead of the desktop month canvas',
+    async run() {
+      const sharedSource = await readFile(new URL('../src/components/SharedCalendarGrid.jsx', import.meta.url), 'utf8');
+      const mobileSource = await readFile(new URL('../src/components/MobileCalendarView.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(sharedSource, /<MobileCalendarView/);
+      assert.match(mobileSource, /aria-label="Mobile calendar"/);
+      assert.match(mobileSource, /setViewMode\('day'\)/);
+      assert.match(mobileSource, /setViewMode\('week'\)/);
+      assert.match(mobileSource, /onTouchStart=\{handleTouchStart\}/);
+      assert.match(styleSource, /\.calendar-grid-shell > \.desktop-calendar-grid\s*\{\s*display:\s*none;/);
+    },
+  },
+  {
+    name: 'mobile workspace uses a project drawer and touch dependency actions',
+    async run() {
+      const appSource = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(appSource, /const \[projectDrawerOpen, setProjectDrawerOpen\] = useState\(false\)/);
+      assert.match(appSource, /aria-controls="workspace-projects-drawer"/);
+      assert.match(appSource, /className="project-drawer-backdrop"/);
+      assert.match(styleSource, /\.projects-rail\.drawer-open\s*\{\s*transform:\s*translateX\(0\)/);
+      assert.match(agendaSource, />Dependencies<\/button>/);
+      assert.match(agendaSource, /onDependencies\(row\)/);
+    },
+  },
+  {
+    name: 'Android phone toolbar uses a breakpoint-scoped Material app bar',
+    async run() {
+      const appSource = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(appSource, /material-top-app-bar/);
+      assert.match(appSource, /android-material-project-filter/);
+      assert.match(appSource, /android-wide-scope-bar/);
+      assert.match(appSource, /name="navigation"/);
+      assert.match(styleSource, /Compact Material-style Android app bar\. Phone widths only\./);
+      assert.match(styleSource, /@media \(max-width: 720px\) \{\s+\.material-top-app-bar\.android-shell-bar/s);
+      assert.match(styleSource, /\.material-top-app-bar \.android-wide-scope-bar\s*\{\s*display:\s*none;/s);
+    },
+  },
+  {
     name: 'desktop schedule can switch between Gantt and agenda views',
     async run() {
       const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');

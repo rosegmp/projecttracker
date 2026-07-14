@@ -5,6 +5,7 @@ import {
   getCalendarWeekLayout,
   getProjectAccentColor,
 } from '../utils/calendarUi.js';
+import MobileCalendarView from './MobileCalendarView.jsx';
 
 export default function SharedCalendarGrid({
   calendarWeeks,
@@ -18,16 +19,29 @@ export default function SharedCalendarGrid({
   getDayItemSubtitle = (item) => item.projectName || '',
   shellClassName = '',
   swipeHandlers = {},
+  onNavigatePrevious,
+  onNavigateNext,
 }) {
   return (
     <div className={`calendar-grid-shell${shellClassName ? ` ${shellClassName}` : ''}`} {...swipeHandlers}>
-      <div className="calendar-dow-grid">
+      <MobileCalendarView
+        calendarWeeks={calendarWeeks}
+        showHebrewDates={showHebrewDates}
+        onDateClick={onDateClick}
+        onItemClick={onItemClick}
+        isRangeItemClickable={isRangeItemClickable}
+        isDayItemClickable={isDayItemClickable}
+        getDayItemSubtitle={getDayItemSubtitle}
+        onNavigatePrevious={onNavigatePrevious}
+        onNavigateNext={onNavigateNext}
+      />
+      <div className="calendar-dow-grid desktop-calendar-grid">
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
           <div key={day} className="calendar-dow">{day}</div>
         ))}
       </div>
 
-      <div className="calendar-grid">
+      <div className="calendar-grid desktop-calendar-grid">
         {calendarWeeks.map((week) => {
           const {
             holidayBars,

@@ -83,6 +83,8 @@ export default function ProjectDetailCalendar({ project, tasks, settings, onDate
         getDayItemSubtitle={(item) => item.type === 'inspection' ? item.inspectionType || 'Inspection' : ''}
         shellClassName="project-detail-calendar"
         swipeHandlers={calendarSwipeHandlers}
+        onNavigatePrevious={goToPreviousMonth}
+        onNavigateNext={goToNextMonth}
       />
     </section>
   );

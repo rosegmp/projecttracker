@@ -2825,6 +2825,8 @@ export default function NativeScheduleView({
           getDayItemSubtitle={(item) => item.projectName || ''}
           shellClassName="calendar-swipe-shell"
           swipeHandlers={calendarSwipeHandlers}
+          onNavigatePrevious={goToPreviousCalendarMonth}
+          onNavigateNext={goToNextCalendarMonth}
         />
       </section>
       ) : null}

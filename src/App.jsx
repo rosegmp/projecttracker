@@ -208,6 +208,7 @@ export default function App() {
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
+  const [projectDrawerOpen, setProjectDrawerOpen] = useState(false);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState({ taskId: '', token: '' });
   const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
     if (typeof window === 'undefined') return 'all';
@@ -409,7 +410,17 @@ export default function App() {
   useEffect(() => {
     setShowAndroidNavMenu(false);
     setShowAndroidAccountMenu(false);
+    setProjectDrawerOpen(false);
   }, [activeTab, authSession]);
+
+  useEffect(() => {
+    if (!projectDrawerOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setProjectDrawerOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [projectDrawerOpen]);
 
   function goToProjectsHome() {
     if (activeTab === 'projects' && getProjectIdFromLocation()) {
@@ -429,6 +440,7 @@ export default function App() {
     setSessionProjectFilter('all');
     setActiveTab('projects');
     setProjectsHomeSignal((current) => current + 1);
+    setProjectDrawerOpen(false);
     setProjectNavigationTarget({
       action: 'create',
       token: `create-${Date.now()}`,
@@ -666,12 +678,12 @@ export default function App() {
     <main className="app-shell">
       <AppDialogHost />
       {nativeAndroid ? (
-        <section className="workspace-shell-bar android-shell-bar">
+        <section className="workspace-shell-bar android-shell-bar material-top-app-bar">
           <div className="android-shell-main">
             {capabilities.showTabs ? (
               <div className="android-nav-menu-shell">
                 <button
-                  className="button secondary android-nav-trigger"
+                  className="android-app-bar-icon android-nav-trigger"
                   type="button"
                   onClick={() => {
                     setShowAndroidAccountMenu(false);
@@ -680,14 +692,21 @@ export default function App() {
                   aria-expanded={showAndroidNavMenu ? 'true' : 'false'}
                   aria-label="Open navigation menu"
                 >
-                  <span className="android-nav-trigger-copy">
+                  <FluentIcon name="navigation" size={24} className="android-material-navigation-icon" />
+                  <span className="android-nav-trigger-copy android-wide-nav-trigger-copy">
                     <span className="android-nav-trigger-label">Navigate</span>
                     <strong>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
                   </span>
-                  <FluentIcon name="arrowDown" />
+                  <FluentIcon name="arrowDown" className="android-wide-navigation-arrow" />
                 </button>
                 {showAndroidNavMenu ? (
+                  <>
+                  <button className="android-nav-backdrop" type="button" onClick={() => setShowAndroidNavMenu(false)} aria-label="Close navigation menu" />
                   <div className="android-nav-menu" role="menu" aria-label="Navigation">
+                    <div className="android-nav-drawer-header">
+                      <strong>Destiny Project Hub</strong>
+                      <button type="button" onClick={() => setShowAndroidNavMenu(false)} aria-label="Close navigation menu">×</button>
+                    </div>
                     {visibleTabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -712,14 +731,25 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  </>
                 ) : null}
               </div>
-            ) : (
-              <strong className="android-shell-title">{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
-            )}
+            ) : null}
+            <strong className={`android-shell-title android-material-title${capabilities.showTabs ? ' has-navigation' : ''}`}>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
+            {sharedScopeEnabled ? (
+              <label className="android-material-project-filter">
+                <span className="sr-only">Project</span>
+                <select value={sessionProjectFilter} onChange={(event) => setSessionProjectFilter(event.target.value)} aria-label="Project">
+                  <option value="all">All projects</option>
+                  {visibleProjects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <div className="android-shell-actions">
               <button
-                className="button secondary gantt-icon-button android-account-button"
+                className="android-app-bar-icon android-account-button"
                 type="button"
                 onClick={() => {
                   setShowAndroidNavMenu(false);
@@ -736,7 +766,7 @@ export default function App() {
             </div>
           </div>
           {sharedScopeEnabled ? (
-            <div className="workspace-scope-bar android-scope-bar">
+            <div className="workspace-scope-bar android-scope-bar android-wide-scope-bar">
               <div className="workspace-scope-meta">
                 <span className="workspace-scope-label">Project scope</span>
                 <strong>{sharedScopeProject?.name || 'All visible projects'}</strong>
@@ -746,9 +776,7 @@ export default function App() {
                 <select value={sessionProjectFilter} onChange={(event) => setSessionProjectFilter(event.target.value)}>
                   <option value="all">All projects</option>
                   {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
+                    <option key={project.id} value={project.id}>{project.name}</option>
                   ))}
                 </select>
               </label>
@@ -906,12 +934,28 @@ export default function App() {
           ) : null}
         </section>
       ) : null}
-      <div className={`workspace-content-shell${capabilities.showTabs && !nativeAndroid && visibleProjects.length ? ' has-project-rail' : ''}`}>
-        {capabilities.showTabs && !nativeAndroid && visibleProjects.length ? (
-          <aside className="projects-rail workspace-projects-rail">
+      {capabilities.showTabs && visibleProjects.length ? (
+        <button
+          className="button secondary mobile-project-drawer-trigger"
+          type="button"
+          onClick={() => setProjectDrawerOpen(true)}
+          aria-controls="workspace-projects-drawer"
+          aria-expanded={projectDrawerOpen}
+        >
+          Projects
+          <span>{sharedScopeProject?.name || (railActiveProjectId ? visibleProjects.find((project) => project.id === railActiveProjectId)?.name : 'All Projects')}</span>
+        </button>
+      ) : null}
+      {projectDrawerOpen ? (
+        <button className="project-drawer-backdrop" type="button" onClick={() => setProjectDrawerOpen(false)} aria-label="Close projects drawer" />
+      ) : null}
+      <div className={`workspace-content-shell${capabilities.showTabs && visibleProjects.length ? ' has-project-rail' : ''}`}>
+        {capabilities.showTabs && visibleProjects.length ? (
+          <aside id="workspace-projects-drawer" className={`projects-rail workspace-projects-rail${projectDrawerOpen ? ' drawer-open' : ''}`}>
             <div className="projects-rail-header">
               <strong>Projects</strong>
               <span>{visibleProjects.length} jobs</span>
+              <button className="project-drawer-close" type="button" onClick={() => setProjectDrawerOpen(false)} aria-label="Close projects drawer">×</button>
             </div>
             <div className="projects-rail-list" role="list" aria-label="All projects">
               <button
@@ -920,6 +964,7 @@ export default function App() {
                 onClick={() => {
                   setSessionProjectFilter('all');
                   goToProjectsHome();
+                  setProjectDrawerOpen(false);
                 }}
                 aria-pressed={railAllProjectsActive}
                 aria-current={railAllProjectsActive ? 'page' : undefined}
@@ -945,6 +990,7 @@ export default function App() {
                         setActiveTab('projects');
                       }
                       syncProjectToLocation(project.id, { push: true });
+                      setProjectDrawerOpen(false);
                     }}
                     aria-pressed={isActive}
                     aria-current={isActive ? 'page' : undefined}
