@@ -257,6 +257,8 @@ export default function NativeInspectionsView({
   async function openInspectionImageEditor(inspection, field) {
     const attachment = inspection?.[field];
     if (!attachment || !isImageFile(attachment)) return;
+    const mutationKey = ['inspection-preview', inspection.id, field];
+    beginMutation(mutationKey);
     try {
       let src = attachment.dataUrl || previewUrls[attachment.id] || '';
       let revokeOnClose = false;
@@ -278,24 +280,28 @@ export default function NativeInspectionsView({
       });
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
+    } finally {
+      endMutation(mutationKey);
     }
   }
 
-  function openInspectionImage(inspection, field) {
-    void (async () => {
-      const attachment = inspection?.[field];
-      if (!attachment || !isImageFile(attachment)) return;
-      try {
-        let previewSource = attachment.dataUrl || previewUrls[attachment.id] || '';
-        if (!previewSource && attachment.storagePath) {
-          previewSource = await downloadProjectFileFromStorage(attachment);
-        }
-        if (!previewSource) return;
-        openPreview(previewSource);
-      } catch (error) {
-        await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
+  async function openInspectionImage(inspection, field) {
+    const attachment = inspection?.[field];
+    if (!attachment || !isImageFile(attachment)) return;
+    const mutationKey = ['inspection-preview', inspection.id, field];
+    beginMutation(mutationKey);
+    try {
+      let previewSource = attachment.dataUrl || previewUrls[attachment.id] || '';
+      if (!previewSource && attachment.storagePath) {
+        previewSource = await downloadProjectFileFromStorage(attachment);
       }
-    })();
+      if (!previewSource) return;
+      openPreview(previewSource);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to open image.', 'Open failed');
+    } finally {
+      endMutation(mutationKey);
+    }
   }
 
   function downloadInspectionAttachment(inspection, field) {
@@ -486,12 +492,13 @@ export default function NativeInspectionsView({
                           <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
                         </div>
                         <button
-                          className="button secondary gantt-icon-button"
+                          className={`button secondary gantt-icon-button${isMutating(['inspection', inspection.id]) ? ' is-loading' : ''}`}
                           type="button"
                           onClick={() => startEdit(inspection)}
                           disabled={isMutating(['inspection', inspection.id]) || readOnly}
                           title="Edit inspection"
                           aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'}`}
+                          aria-busy={isMutating(['inspection', inspection.id])}
                         >
                           <FluentIcon name="edit" />
                         </button>
@@ -514,9 +521,11 @@ export default function NativeInspectionsView({
                             <div className="inspection-thumbnail-card">
                               <button
                                 type="button"
-                                className="inspection-thumbnail-button"
-                                onClick={() => openInspectionImage(inspection, 'stickerFile')}
+                                className={`inspection-thumbnail-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
+                                onClick={() => void openInspectionImage(inspection, 'stickerFile')}
+                                disabled={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
                                 title="Open sticker image"
+                                aria-busy={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
                               >
                                 <img
                                   className="inspection-thumbnail-image"
@@ -529,7 +538,7 @@ export default function NativeInspectionsView({
                               </button>
                               <div className="inspection-thumbnail-actions">
                                 <button
-                                  className="button secondary gantt-icon-button"
+                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => downloadInspectionAttachment(inspection, 'stickerFile')}
                                   title="Download sticker image"
@@ -538,12 +547,13 @@ export default function NativeInspectionsView({
                                   <FluentIcon name="download" />
                                 </button>
                                 <button
-                                  className="button secondary gantt-icon-button"
+                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                                  disabled={isMutating(['inspection', inspection.id]) || readOnly}
+                                  disabled={isMutating(['inspection-preview', inspection.id, 'stickerFile']) || isMutating(['inspection', inspection.id]) || readOnly}
                                   title="Edit sticker image"
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
+                                  aria-busy={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
                                 >
                                   <FluentIcon name="edit" />
                                 </button>
@@ -554,9 +564,11 @@ export default function NativeInspectionsView({
                             <div className="inspection-thumbnail-card">
                               <button
                                 type="button"
-                                className="inspection-thumbnail-button"
-                                onClick={() => openInspectionImage(inspection, 'reportFile')}
+                                className={`inspection-thumbnail-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
+                                onClick={() => void openInspectionImage(inspection, 'reportFile')}
+                                disabled={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
                                 title="Open report image"
+                                aria-busy={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
                               >
                                 <img
                                   className="inspection-thumbnail-image"
@@ -569,7 +581,7 @@ export default function NativeInspectionsView({
                               </button>
                               <div className="inspection-thumbnail-actions">
                                 <button
-                                  className="button secondary gantt-icon-button"
+                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => downloadInspectionAttachment(inspection, 'reportFile')}
                                   title="Download report image"
@@ -578,12 +590,13 @@ export default function NativeInspectionsView({
                                   <FluentIcon name="download" />
                                 </button>
                                 <button
-                                  className="button secondary gantt-icon-button"
+                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                                  disabled={isMutating(['inspection', inspection.id]) || readOnly}
+                                  disabled={isMutating(['inspection-preview', inspection.id, 'reportFile']) || isMutating(['inspection', inspection.id]) || readOnly}
                                   title="Edit report image"
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
+                                  aria-busy={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
                                 >
                                   <FluentIcon name="edit" />
                                 </button>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { getProjectHealth } from '../services/trackerData.js';
 import { diffInDays, formatShortDate } from '../utils/calendarUi.js';
+import FluentIcon from './FluentIcon.jsx';
 
 function toIsoDate(date) {
   const year = date.getFullYear();
@@ -57,7 +58,7 @@ function getProjectDashboardNextAction(project, taskCount) {
   return 'Project is in a good spot. Review progress and upcoming milestones.';
 }
 
-export default function ProjectCard({ project, taskCount, onEdit, onOpen }) {
+export default function ProjectCard({ project, taskCount, onEdit, onOpen, expanded = false, onToggle }) {
   const health = getProjectHealth(project);
   const remaining = getDaysRemaining(project.end);
   const completion = getProjectTimelineCompletion(project);
@@ -81,9 +82,10 @@ export default function ProjectCard({ project, taskCount, onEdit, onOpen }) {
       : remaining >= 0
         ? `${remaining} day${remaining === 1 ? '' : 's'} left`
         : `${Math.abs(remaining)} day${remaining === -1 ? '' : 's'} overdue`;
+  const detailId = `project-overview-details-${project.id}`;
 
   return (
-    <article className="project-card">
+    <article className={`project-card${expanded ? ' expanded' : ' collapsed'}`}>
       <div className="project-card-header">
         <div className="project-card-heading">
           <div className="project-card-status-row">
@@ -99,19 +101,33 @@ export default function ProjectCard({ project, taskCount, onEdit, onOpen }) {
           </h3>
           <p className="project-meta">{metaParts.length ? metaParts.join(' | ') : 'No project details yet'}</p>
         </div>
-        <div className="project-card-deadline">
-          <span>Due</span>
-          <strong>{dueLabel}</strong>
+        <div className="project-card-header-actions">
+          <div className="project-card-deadline">
+            <span>Due</span>
+            <strong>{dueLabel}</strong>
+          </div>
+          <button
+            className="button secondary expand-collapse-button project-card-expand-button"
+            type="button"
+            onClick={() => onToggle?.(project.id)}
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
+            title={expanded ? 'Collapse project summary' : 'Expand project summary'}
+          >
+            <FluentIcon name="chevronRight" className="expand-collapse-icon" />
+          </button>
         </div>
       </div>
 
+      <div id={detailId} className="project-card-expanded-content" hidden={!expanded}>
       <div className="project-card-metrics">
         <div className="project-metric-tile">
           <span>Progress</span>
           <strong>{completion}%</strong>
         </div>
         <div className="project-metric-tile">
-          <span>Tasks</span>
+          <span>Standalone tasks</span>
           <strong>{taskCount}</strong>
         </div>
         <div className="project-metric-tile">
@@ -167,6 +183,7 @@ export default function ProjectCard({ project, taskCount, onEdit, onOpen }) {
             </button>
           ) : null}
         </div>
+      </div>
       </div>
     </article>
   );

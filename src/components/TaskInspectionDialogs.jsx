@@ -1,5 +1,6 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
+import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 
@@ -37,16 +38,14 @@ export function TaskModal({ draft, projects, assigneeOptions, saving, onChange, 
             <input type="date" value={draft.due} onChange={(event) => onChange('due', event.target.value)} />
           </label>
           <label>
-            <span>Assignee</span>
+            <span>Assignees</span>
             <div className="inline-action-field">
-              <select value={draft.assignee || ''} onChange={(event) => onChange('assignee', event.target.value)}>
-                <option value="">Unassigned</option>
-                {assigneeOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+              <AssigneeMultiSelect
+                value={draft.assignees}
+                options={assigneeOptions}
+                onChange={(value) => onChange('assignees', value)}
+                disabled={saving}
+              />
               {onAddPerson ? (
                 <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
                   Add person

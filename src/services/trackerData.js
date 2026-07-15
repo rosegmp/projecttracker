@@ -450,24 +450,36 @@ function normalizeProjectInspection(inspection, index = 0) {
   };
 }
 
+function normalizeAssigneeList(value, legacyValue = '') {
+  const source = Array.isArray(value) ? value : value ? [value] : legacyValue ? [legacyValue] : [];
+  return Array.from(new Set(source.map((item) => String(item || '').trim()).filter(Boolean)));
+}
+
 function normalizeProjectPhase(phase, index = 0) {
+  const phaseAssignees = normalizeAssigneeList(phase?.assignees, phase?.assign);
   return {
     ...phase,
     id: phase?.id || `phase-${Date.now()}-${index}`,
     name: String(phase?.name || '').trim(),
-    assign: String(phase?.assign || '').trim(),
+    assignees: phaseAssignees,
+    assign: phaseAssignees[0] || '',
     status: String(phase?.status || 'planning'),
     start: String(phase?.start || ''),
     end: String(phase?.end || ''),
     predecessors: normalizeDependencyList(phase?.predecessors),
     delays: Array.isArray(phase?.delays) ? phase.delays : [],
     steps: Array.isArray(phase?.steps)
-      ? phase.steps.map((step, stepIndex) => ({
-          ...step,
-          id: step?.id || `step-${Date.now()}-${index}-${stepIndex}`,
-          predecessors: normalizeDependencyList(step?.predecessors),
-          successors: Array.isArray(step?.successors) ? step.successors.filter(Boolean) : [],
-        }))
+      ? phase.steps.map((step, stepIndex) => {
+          const assignees = normalizeAssigneeList(step?.assignees, step?.assign);
+          return {
+            ...step,
+            id: step?.id || `step-${Date.now()}-${index}-${stepIndex}`,
+            assignees,
+            assign: assignees[0] || '',
+            predecessors: normalizeDependencyList(step?.predecessors),
+            successors: Array.isArray(step?.successors) ? step.successors.filter(Boolean) : [],
+          };
+        })
       : [],
   };
 }
@@ -583,12 +595,14 @@ function resolveTaskCreatedAt(task = {}) {
 }
 
 function normalizeTask(task = {}) {
+  const assignees = normalizeAssigneeList(task?.assignees, task?.assignee);
   return {
     ...task,
     label: String(task?.label || '').trim(),
     projectId: String(task?.projectId || '').trim(),
     due: String(task?.due || '').trim(),
-    assignee: String(task?.assignee || '').trim(),
+    assignees,
+    assignee: assignees[0] || '',
     sourceSelectionId: String(task?.sourceSelectionId || '').trim(),
     sourceSelectionProjectId: String(task?.sourceSelectionProjectId || '').trim(),
     sourceSelectionLabel: String(task?.sourceSelectionLabel || '').trim(),
@@ -1253,6 +1267,7 @@ export async function createTask(currentState, payload) {
     projectId: payload.projectId || '',
     done: !!payload.done,
     due: payload.due || '',
+    assignees: payload.assignees,
     assignee: payload.assignee || '',
     sourceSelectionId: payload.sourceSelectionId || '',
     sourceSelectionProjectId: payload.sourceSelectionProjectId || '',

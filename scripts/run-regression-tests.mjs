@@ -13,8 +13,9 @@ import {
   wouldCreatePhaseCycleFromPreds,
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
-import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, filterScheduleRows, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
+import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, filterScheduleRows, filterScheduleRowsForToday, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
 import { getCalendarWeekLayout } from '../src/utils/calendarUi.js';
+import { getContrastRatio, getReadableTextColor } from '../src/utils/colorContrast.js';
 import {
   buildTaskAssigneeDirectory,
   buildTaskAssigneeOptions,
@@ -38,6 +39,116 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'custom schedule colors always receive a readable foreground',
+    run() {
+      const backgrounds = ['#ffffff', '#000000', '#ffff00', '#2f6f8f', '#c54f7c', '#abc', '#1234'];
+      backgrounds.forEach((background) => {
+        const foreground = getReadableTextColor(background);
+        assert.ok(getContrastRatio(background, foreground) >= 4.5, `${background} does not have readable text`);
+      });
+      assert.equal(getReadableTextColor('#ffffff'), '#000000');
+      assert.equal(getReadableTextColor('#000000'), '#ffffff');
+      assert.equal(getReadableTextColor('not-a-color'), '#ffffff');
+    },
+  },
+  {
+    name: 'small screens and touch pointers expose full-size non-hover interaction targets',
+    async run() {
+      const [styleSource, tokenSource] = await Promise.all([
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/design-tokens.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(tokenSource, /--touch-target-size:\s*44px/);
+      assert.match(styleSource, /@media \(max-width: 720px\), \(hover: none\) and \(pointer: coarse\)/);
+      assert.match(styleSource, /\.top-level-schedule-page \.gantt-icon-button\s*\{\s*opacity:\s*1;/s);
+      assert.match(styleSource, /\.gantt-connect-handle::after\s*\{/);
+      assert.match(styleSource, /\.files-tree-toggle,[\s\S]*?min-width:\s*var\(--touch-target-size\)/s);
+    },
+  },
+  {
+    name: 'server-backed file settings and inspection actions expose visible mutation states',
+    async run() {
+      const [filesSource, settingsSource, inspectionsSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(filesSource, /uploading \? ' is-loading'/);
+      assert.match(filesSource, /aria-busy=\{uploading\}/);
+      assert.match(filesSource, /await runFilesMutation\(\['folder', 'create'\]/);
+      assert.match(settingsSource, /schedulingSaving \? ' is-loading'/);
+      assert.match(settingsSource, /Saving display settings\.\.\./);
+      assert.match(inspectionsSource, /\['inspection-preview', inspection\.id, field\]/);
+      assert.match(inspectionsSource, /inspection-thumbnail-button\$\{isMutating/);
+      assert.match(styleSource, /\.button\.is-loading > \.fluent-icon/);
+      assert.match(styleSource, /\.inspection-thumbnail-button\.is-loading::after/);
+    },
+  },
+  {
+    name: 'schedule steps and standalone tasks use distinct user-facing terminology',
+    async run() {
+      const [dialogsSource, scheduleSource, projectsSource, settingsSource] = await Promise.all([
+        readFile(new URL('../src/components/ScheduleDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(dialogsSource, /Schedule step color/);
+      assert.match(dialogsSource, /Save schedule step/);
+      assert.doesNotMatch(dialogsSource, />Task color</);
+      assert.match(scheduleSource, /Standalone tasks/);
+      assert.match(scheduleSource, /label="Schedule steps"/);
+      assert.match(projectsSource, /label="Standalone tasks"/);
+      assert.match(settingsSource, /Show standalone task due dates in Gantt/);
+    },
+  },
+  {
+    name: 'foundational design values live in a dedicated token layer',
+    async run() {
+      const [mainSource, tokenSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/main.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/design-tokens.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.ok(mainSource.indexOf("./design-tokens.css") < mainSource.indexOf("./styles.css"));
+      for (const token of [
+        '--font-family-base', '--font-size-base', '--space-4', '--surface', '--on-brand',
+        '--mobile-app-bar', '--touch-target-size', '--button-radius', '--panel-radius', '--transition-fast',
+      ]) {
+        assert.match(tokenSource, new RegExp(`${token}:`), `${token} is missing`);
+      }
+      assert.doesNotMatch(styleSource, /^:root\s*\{/m);
+      assert.match(styleSource, /border-radius:\s*var\(--panel-radius\)/);
+      assert.match(styleSource, /background:\s*var\(--mobile-app-bar\)/);
+    },
+  },
+  {
+    name: 'mobile project menu remains available while the workspace scrolls',
+    async run() {
+      const [appSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /className="button secondary mobile-project-drawer-trigger"/);
+      assert.match(styleSource, /@media \(max-width: 960px\)[\s\S]*?\.mobile-project-drawer-trigger\s*\{[^}]*position:\s*sticky;[^}]*top:\s*74px;[^}]*z-index:\s*79;/s);
+      assert.match(styleSource, /@media \(max-width: 720px\)\s*\{\s*\.mobile-project-drawer-trigger\s*\{\s*top:\s*56px;/s);
+    },
+  },
+  {
+    name: 'tasks filter by assignee and preserve the selection in saved filters',
+    async run() {
+      const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      assert.match(tasksSource, /const \[assigneeFilter, setAssigneeFilter\] = useState\('all'\)/);
+      assert.match(tasksSource, /assigneeFilter === '__unassigned__'/);
+      assert.match(tasksSource, /<span>Assignee<\/span>/);
+      assert.match(tasksSource, /<option value="all">All assignees<\/option>/);
+      assert.match(tasksSource, /<option value="__unassigned__">Unassigned<\/option>/);
+      assert.match(tasksSource, /currentValue=\{\{ projectId: projectFilter, status: statusFilter, assignee: assigneeFilter, groupBy \}\}/);
+      assert.match(tasksSource, /all: assigneeScopedTasks\.length/);
+    },
+  },
   {
     name: 'entity mutation keys normalize consistently',
     run() {
@@ -316,7 +427,7 @@ const tests = [
       assert.match(projectsSource, /saved-filters:projects/);
       assert.match(projectsSource, /projectStatusFilter/);
       assert.match(tasksSource, /saved-filters:tasks/);
-      assert.match(tasksSource, /currentValue=\{\{ projectId: projectFilter, status: statusFilter, groupBy \}\}/);
+      assert.match(tasksSource, /currentValue=\{\{ projectId: projectFilter, status: statusFilter, assignee: assigneeFilter, groupBy \}\}/);
       assert.match(scheduleSource, /saved-filters:schedule/);
       assert.match(scheduleSource, /saved-filters:calendar/);
       assert.match(scheduleSource, /calendarItemFilter/);
@@ -529,6 +640,9 @@ const tests = [
       assert.match(mobileSource, /aria-label="Mobile calendar"/);
       assert.match(mobileSource, /setViewMode\('day'\)/);
       assert.match(mobileSource, /setViewMode\('week'\)/);
+      assert.match(mobileSource, /className="mobile-calendar-week-agenda"/);
+      assert.match(mobileSource, /\(selectedWeek\?\.cells \|\| \[\]\)\.map/);
+      assert.match(mobileSource, /item\.startCol <= index && item\.endCol >= index/);
       assert.match(mobileSource, /onTouchStart=\{handleTouchStart\}/);
       assert.match(styleSource, /\.calendar-grid-shell > \.desktop-calendar-grid\s*\{\s*display:\s*none;/);
     },
@@ -548,17 +662,137 @@ const tests = [
     },
   },
   {
-    name: 'Android phone toolbar uses a breakpoint-scoped Material app bar',
+    name: 'project overview cards expand and collapse on desktop and mobile',
+    async run() {
+      const cardSource = await readFile(new URL('../src/components/ProjectCard.jsx', import.meta.url), 'utf8');
+      const projectsSource = await readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(cardSource, /expanded = false, onToggle/);
+      assert.match(cardSource, /aria-expanded=\{expanded\}/);
+      assert.match(cardSource, /aria-controls=\{detailId\}/);
+      assert.match(cardSource, /hidden=\{!expanded\}/);
+      assert.match(cardSource, /name="chevronRight"/);
+      assert.match(projectsSource, /expandedOverviewProjectIds/);
+      assert.match(projectsSource, /allOverviewProjectsExpanded/);
+      assert.match(projectsSource, /toggleAllOverviewProjects/);
+      assert.match(projectsSource, /allOverviewProjectsExpanded \? 'Collapse all' : 'Expand all'/);
+      assert.match(styleSource, /\.project-card\.collapsed\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+      assert.match(styleSource, /\.project-card-header\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
+      assert.match(styleSource, /\.project-card-expanded-content\[hidden\]\s*\{\s*display:\s*none;/s);
+      assert.match(styleSource, /@media \(max-width: 760px\)[\s\S]*?\.project-card-header\s*\{[^}]*flex-direction:\s*row;/s);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.projects-overview-section \.project-card-heading[\s\S]*?text-align:\s*left;/s);
+      assert.match(styleSource, /\.projects-overview-section \.project-card-heading\s*\{[^}]*width:\s*100%;[^}]*justify-items:\s*start;/s);
+      assert.match(styleSource, /\.projects-overview-section \.project-card-header\s*\{[^}]*width:\s*100%;[^}]*align-items:\s*stretch;/s);
+      assert.match(styleSource, /\.projects-overview-section \.project-card-status-row\s*\{[^}]*justify-content:\s*flex-start;/s);
+    },
+  },
+  {
+    name: 'filter toolbars align right and expand controls share one treatment',
+    async run() {
+      const projectsSource = await readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8');
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
+      const filesSource = await readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(styleSource, /\.projects-filter-toolbar,[\s\S]*?\.selection-filters\s*\{[^}]*justify-content:\s*flex-end;/s);
+      assert.match(styleSource, /\.expand-collapse-button\s*\{[^}]*place-items:\s*center;[^}]*border:\s*1px solid var\(--border\);/s);
+      assert.match(projectsSource, /expand-collapse-all-button projects-expand-all-button/);
+      assert.match(scheduleSource, /expand-collapse-button gantt-expand-button/);
+      assert.match(scheduleSource, /aria-expanded=\{row\.expanded\}/);
+      assert.match(agendaSource, /expand-collapse-button mobile-agenda-expand-indicator/);
+      assert.match(filesSource, /expand-collapse-button files-tree-toggle/);
+      assert.match(filesSource, /expand-collapse-all-button/);
+    },
+  },
+  {
+    name: 'phone-width page filters move into consistent overflow menus',
+    async run() {
+      const menuSource = await readFile(new URL('../src/components/ResponsiveFilterMenu.jsx', import.meta.url), 'utf8');
+      const projectsSource = await readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8');
+      const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      const peopleSource = await readFile(new URL('../src/components/NativePeopleView.jsx', import.meta.url), 'utf8');
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const selectionsSource = await readFile(new URL('../src/components/ProjectSelectionsManager.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(menuSource, /mobile-filter-menu-trigger/);
+      assert.match(menuSource, /name="moreVertical"/);
+      assert.match(projectsSource, /<ResponsiveFilterMenu label="Project filters">/);
+      assert.match(tasksSource, /<ResponsiveFilterMenu label="Task filters">/);
+      assert.match(peopleSource, /<ResponsiveFilterMenu label="People filters">/);
+      assert.match(scheduleSource, /<ResponsiveFilterMenu label="Calendar filters">/);
+      assert.match(selectionsSource, /<ResponsiveFilterMenu label="Selection filters">/);
+      assert.match(scheduleSource, /schedule-secondary-controls[\s\S]*?className="schedule-search-input"/s);
+      assert.doesNotMatch(scheduleSource, /schedule-search-toggle/);
+      assert.match(styleSource, /\.responsive-filter-menu-content\.mobile-open\s*\{[^}]*display:\s*grid;/s);
+    },
+  },
+  {
+    name: 'task status filters show scoped counts without the top totals strip',
+    async run() {
+      const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(tasksSource, /const statusCounts = useMemo/);
+      assert.match(tasksSource, /All \(\{statusCounts\.all\}\)/);
+      assert.match(tasksSource, /Open \(\{statusCounts\.open\}\)/);
+      assert.match(tasksSource, /Completed \(\{statusCounts\.completed\}\)/);
+      assert.doesNotMatch(tasksSource, /className="task-summary-strip"/);
+      assert.doesNotMatch(styleSource, /\.task-summary-strip\s*\{/);
+    },
+  },
+  {
+    name: 'mobile task creation opens in a compact dialog while desktop stays inline',
+    async run() {
+      const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      const formSource = await readFile(new URL('../src/components/TaskCreateForm.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(tasksSource, /mobileCreateTaskOpen/);
+      assert.match(tasksSource, /className="button primary mobile-task-create-trigger"/);
+      assert.match(tasksSource, /renderModalPortal\(/);
+      assert.match(formSource, /role=\{modal \? 'dialog' : undefined\}/);
+      assert.match(formSource, /aria-modal=\{modal \? 'true' : undefined\}/);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.task-create-desktop\s*\{\s*display:\s*none;/s);
+      assert.match(styleSource, /\.mobile-task-create-trigger\s*\{\s*display:\s*inline-flex;/s);
+    },
+  },
+  {
+    name: 'Android and small-screen browsers use the breakpoint-scoped Material app bar',
     async run() {
       const appSource = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
       const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
       assert.match(appSource, /material-top-app-bar/);
+      assert.match(appSource, /browser-mobile-app-bar/);
+      assert.match(appSource, /browser-desktop-shell/);
       assert.match(appSource, /android-material-project-filter/);
+      assert.match(appSource, /android-account-project-filter/);
+      assert.match(appSource, /android-mobile-overflow-icon/);
       assert.match(appSource, /android-wide-scope-bar/);
       assert.match(appSource, /name="navigation"/);
       assert.match(styleSource, /Compact Material-style Android app bar\. Phone widths only\./);
       assert.match(styleSource, /@media \(max-width: 720px\) \{\s+\.material-top-app-bar\.android-shell-bar/s);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.browser-mobile-app-bar\s*\{\s*display:\s*grid;/s);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.browser-desktop-shell\s*\{\s*display:\s*none;/s);
       assert.match(styleSource, /\.material-top-app-bar \.android-wide-scope-bar\s*\{\s*display:\s*none;/s);
+      assert.match(styleSource, /\.material-top-app-bar \.android-material-project-filter\s*\{\s*display:\s*none;/s);
+      assert.match(styleSource, /\.material-top-app-bar\.android-shell-bar\s*\{[^}]*backdrop-filter:\s*none;/s);
+      assert.match(styleSource, /\.material-top-app-bar \.android-nav-menu\s*\{[^}]*height:\s*100dvh;/s);
+    },
+  },
+  {
+    name: 'Android schedule toolbar keeps filters in one overflow menu',
+    async run() {
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const iconSource = await readFile(new URL('../src/components/FluentIcon.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /schedule-secondary-controls/);
+      assert.match(scheduleSource, /className="schedule-search-input"/);
+      assert.match(scheduleSource, /name="moreVertical"/);
+      assert.match(scheduleSource, /name=\{allExpanded \? 'collapseAll' : 'expandAll'\}/);
+      assert.doesNotMatch(scheduleSource, /gantt-icon-button schedule-mobile-only/);
+      assert.match(iconSource, /Search24Regular/);
+      assert.match(iconSource, /MoreVertical24Regular/);
+      assert.match(styleSource, /\.schedule-secondary-controls \.schedule-search-input\s*\{[^}]*display:\s*block;/s);
+      assert.match(styleSource, /\.schedule-secondary-controls\.mobile-open\s*\{\s*display:\s*grid;/s);
+      assert.match(styleSource, /\.schedule-mobile-only\s*\{[^}]*opacity:\s*1;/s);
     },
   },
   {
@@ -635,24 +869,52 @@ const tests = [
       const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
       assert.match(scheduleSource, /aria-label="Search schedule"/);
       assert.match(scheduleSource, /filterScheduleRows\(scheduleRows, scheduleSearchQuery\)/);
-      assert.match(scheduleSource, /expansionLocked=\{scheduleSearchActive\}/);
-      assert.match(scheduleSource, /disabled=\{scheduleSearchActive\}/);
+      assert.match(scheduleSource, /expansionLocked=\{scheduleContextFilterActive\}/);
+      assert.match(scheduleSource, /disabled=\{scheduleContextFilterActive\}/);
       assert.match(agendaSource, /disabled=\{expansionLocked\}/);
     },
   },
   {
-    name: 'schedule assignees use the same People-backed options as task assignees',
+    name: 'schedule agenda can show only unfinished items active today with hierarchy context',
+    async run() {
+      const rows = [
+        { id: 'project-1', type: 'project', label: 'Lake House' },
+        { id: 'phase-1', type: 'phase', label: 'Roughs' },
+        { id: 'step-active', type: 'step', label: 'Electric', start: '2026-07-13', end: '2026-07-16', status: 'active' },
+        { id: 'delay-active', type: 'delay', label: 'Weather', start: '2026-07-14', end: '2026-07-15', status: 'delayed' },
+        { id: 'step-done', type: 'step', label: 'Plumbing', start: '2026-07-12', end: '2026-07-15', done: true, status: 'done' },
+        { id: 'phase-2', type: 'phase', label: 'Finishes' },
+        { id: 'step-future', type: 'step', label: 'Paint', start: '2026-07-20', end: '2026-07-22', status: 'active' },
+        { id: 'task-today', type: 'task', label: 'Call inspector', start: '2026-07-14', end: '2026-07-14', status: 'active' },
+      ];
+      assert.deepEqual(filterScheduleRowsForToday(rows, '2026-07-14').map((row) => row.id), [
+        'project-1', 'phase-1', 'step-active', 'delay-active', 'task-today',
+      ]);
+      const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      assert.match(scheduleSource, /Today&apos;s active items/);
+      assert.match(scheduleSource, /filterScheduleRowsForToday/);
+      assert.match(scheduleSource, /todayActive: showTodayActiveItems/);
+      assert.match(scheduleSource, /SCHEDULE_TODAY_ACTIVE_STORAGE_KEY/);
+    },
+  },
+  {
+    name: 'tasks and schedule items support multiple People-backed assignees',
     async run() {
       const scheduleSource = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
       const dialogSource = await readFile(new URL('../src/components/ScheduleDialogs.jsx', import.meta.url), 'utf8');
+      const taskDialogSource = await readFile(new URL('../src/components/TaskInspectionDialogs.jsx', import.meta.url), 'utf8');
+      const assigneeSource = await readFile(new URL('../src/utils/assignees.js', import.meta.url), 'utf8');
       assert.match(scheduleSource, /personAssignmentLabel/);
       assert.match(scheduleSource, /<ScheduleItemModal[\s\S]*?assigneeOptions=\{taskAssigneeOptions\}/);
       assert.match(scheduleSource, /onAddPerson=\{\(\) => startCreateTaskAssignee\('schedule'\)\}/);
       assert.match(scheduleSource, /personAssignmentTarget === 'schedule'/);
-      assert.match(scheduleSource, /setEditorDraft\(\(current\) => \(current \? \{ \.\.\.current, assign: nextAssignee \}/);
-      assert.match(dialogSource, /const resolvedAssigneeOptions = draft\.assign/);
-      assert.match(dialogSource, /<select value=\{draft\.assign \|\| ''\}/);
-      assert.match(dialogSource, /<option value="">Unassigned<\/option>/);
+      assert.match(scheduleSource, /assignees: \[\.\.\.new Set\(\[\.\.\.\(current\.assignees \|\| \[\]\), nextAssignee\]\)\]/);
+      assert.match(dialogSource, /<AssigneeMultiSelect/);
+      assert.match(dialogSource, /value=\{draft\.assignees\}/);
+      assert.match(taskDialogSource, /<AssigneeMultiSelect/);
+      assert.match(assigneeSource, /export function normalizeAssignees/);
+      assert.match(assigneeSource, /return \{ assignees, assignee: assignees\[0\] \|\| '' \}/);
+      assert.match(assigneeSource, /return \{ assignees, assign: assignees\[0\] \|\| '' \}/);
       assert.match(dialogSource, />\s*Add person\s*<\/button>/);
     },
   },

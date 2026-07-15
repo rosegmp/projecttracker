@@ -96,7 +96,7 @@ export default function ProjectFilesManager({
       return;
     }
     if (folderNameDraft.mode === 'create') {
-      void runFilesMutation(['folder', 'create'], (currentProject) => ({
+      await runFilesMutation(['folder', 'create'], (currentProject) => ({
         ...currentProject,
         files: {
           folders: [
@@ -424,7 +424,6 @@ export default function ProjectFilesManager({
     const draft = fileNameDraft;
     const nextName = String(draft.value || '').trim();
     if (!nextName) return;
-    setFileNameDraft(null);
     await runFilesMutation(['file', draft.fileId], (currentProject) => ({
       ...currentProject,
       files: {
@@ -445,6 +444,7 @@ export default function ProjectFilesManager({
         ),
       },
     }));
+    setFileNameDraft(null);
   }
 
   async function deleteProjectFile(folderId, fileId) {
@@ -529,9 +529,9 @@ export default function ProjectFilesManager({
     setMoveFileDraft((current) => (current ? { ...current, targetFolderId } : current));
   }
 
-  function moveProjectFile(sourceFolderId, targetFolderId, fileId) {
+  async function moveProjectFile(sourceFolderId, targetFolderId, fileId) {
     if (!targetFolderId || targetFolderId === sourceFolderId) return;
-    void runFilesMutation(['file', fileId], (currentProject) => {
+    await runFilesMutation(['file', fileId], (currentProject) => {
       const sourceFolder = (currentProject.files?.folders || []).find((folder) => folder.id === sourceFolderId);
       const targetFolder = (currentProject.files?.folders || []).find((folder) => folder.id === targetFolderId);
       const fileToMove = sourceFolder?.files?.find((file) => file.id === fileId);
@@ -558,12 +558,12 @@ export default function ProjectFilesManager({
         },
       };
     });
-    setMoveFileDraft(null);
   }
 
-  function saveMoveFile() {
+  async function saveMoveFile() {
     if (!moveFileDraft) return;
-    moveProjectFile(moveFileDraft.sourceFolderId, moveFileDraft.targetFolderId, moveFileDraft.fileId);
+    await moveProjectFile(moveFileDraft.sourceFolderId, moveFileDraft.targetFolderId, moveFileDraft.fileId);
+    setMoveFileDraft(null);
   }
 
   function renderFolderDragHandle(folder) {
@@ -597,6 +597,8 @@ export default function ProjectFilesManager({
   }
 
   function renderFolderActions(folder, includeUpload = false, includeDragHandle = true) {
+    const uploading = isMutating(['folder', folder.id, 'upload']);
+    const folderSaving = isMutating(['folder', folder.id]);
     return (
       <div className="panel-actions">
         {includeUpload ? (
@@ -611,34 +613,37 @@ export default function ProjectFilesManager({
               onChange={(event) => handleFolderUpload(folder.id, event.target.files)}
             />
             <button
-              className="button secondary gantt-icon-button"
+              className={`button secondary gantt-icon-button${uploading ? ' is-loading' : ''}`}
               type="button"
               onClick={() => triggerFolderUpload(folder.id)}
-              disabled={isMutating(['folder', folder.id, 'upload'])}
-              title="Upload files"
-              aria-label={`Upload files to folder ${folder.name}`}
+              disabled={uploading}
+              title={uploading ? 'Uploading files' : 'Upload files'}
+              aria-label={uploading ? `Uploading files to folder ${folder.name}` : `Upload files to folder ${folder.name}`}
+              aria-busy={uploading}
             >
               <FluentIcon name="upload" />
             </button>
           </>
         ) : null}
         <button
-          className="button secondary gantt-icon-button"
+          className={`button secondary gantt-icon-button${folderSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => openRenameFolderModal(folder.id)}
-          disabled={isMutating(['folder', folder.id])}
-          title="Rename folder"
+          disabled={folderSaving}
+          title={folderSaving ? 'Saving folder' : 'Rename folder'}
           aria-label={`Rename folder ${folder.name}`}
+          aria-busy={folderSaving}
         >
           <FluentIcon name="edit" />
         </button>
         <button
-          className="button secondary gantt-icon-button gantt-trash-button"
+          className={`button secondary gantt-icon-button gantt-trash-button${folderSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => void deleteFolder(folder.id)}
-          disabled={isMutating(['folder', folder.id])}
-          title="Delete folder"
+          disabled={folderSaving}
+          title={folderSaving ? 'Updating folder' : 'Delete folder'}
           aria-label={`Delete folder ${folder.name}`}
+          aria-busy={folderSaving}
         >
           <FluentIcon name="delete" />
         </button>
@@ -648,35 +653,39 @@ export default function ProjectFilesManager({
   }
 
   function renderFileActions(file, folderId, includeDragHandle = true) {
+    const fileSaving = isMutating(['file', file.id]);
     return (
       <div className="files-list-actions">
         <button
-          className="button secondary gantt-icon-button"
+          className={`button secondary gantt-icon-button${fileSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => openRenameFileModal(folderId, file)}
-          disabled={isMutating(['file', file.id])}
-          title="Rename file"
+          disabled={fileSaving}
+          title={fileSaving ? 'Saving file' : 'Rename file'}
           aria-label={`Rename ${getDisplayFileName(file)}`}
+          aria-busy={fileSaving}
         >
           <FluentIcon name="edit" />
         </button>
         <button
-          className="button secondary gantt-icon-button"
+          className={`button secondary gantt-icon-button${fileSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => openMoveFile(file, folderId)}
-          disabled={isMutating(['file', file.id]) || folders.length < 2}
+          disabled={fileSaving || folders.length < 2}
           title={folders.length < 2 ? 'Add another folder to move files' : 'Move file'}
           aria-label={`Move ${getDisplayFileName(file)}`}
+          aria-busy={fileSaving}
         >
           <FluentIcon name="move" />
         </button>
         <button
-          className="button secondary gantt-icon-button gantt-trash-button"
+          className={`button secondary gantt-icon-button gantt-trash-button${fileSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => deleteProjectFile(folderId, file.id)}
-          disabled={isMutating(['file', file.id])}
-          title="Delete file"
+          disabled={fileSaving}
+          title={fileSaving ? 'Updating file' : 'Delete file'}
           aria-label={`Delete ${getDisplayFileName(file)}`}
+          aria-busy={fileSaving}
         >
           <FluentIcon name="delete" />
         </button>
@@ -717,13 +726,14 @@ export default function ProjectFilesManager({
             </div>
           ) : null}
           {effectiveViewMode === 'list' && folders.length ? (
-            <button className="button secondary" type="button" onClick={toggleAllFoldersExpanded}>
+            <button className="button secondary expand-collapse-all-button" type="button" onClick={toggleAllFoldersExpanded} aria-expanded={allFoldersExpanded}>
+              <FluentIcon name={allFoldersExpanded ? 'collapseAll' : 'expandAll'} />
               {allFoldersExpanded ? 'Collapse all' : 'Expand all'}
             </button>
           ) : null}
         </div>
-        <button className="button primary" type="button" onClick={openCreateFolderModal} disabled={isMutating(['folder', 'create']) || readOnly}>
-          Add folder
+        <button className={`button primary${isMutating(['folder', 'create']) ? ' is-loading' : ''}`} type="button" onClick={openCreateFolderModal} disabled={isMutating(['folder', 'create']) || readOnly} aria-busy={isMutating(['folder', 'create'])}>
+          {isMutating(['folder', 'create']) ? 'Adding...' : 'Add folder'}
         </button>
       </div>
 
@@ -832,12 +842,13 @@ export default function ProjectFilesManager({
             >
               <div className="files-hierarchy-folder-row">
                 <button
-                  className="files-tree-toggle"
+                  className="expand-collapse-button files-tree-toggle"
                   type="button"
                   onClick={() => toggleFolderExpanded(folder.id)}
+                  aria-expanded={isExpanded}
                   aria-label={isExpanded ? `Collapse folder ${folder.name}` : `Expand folder ${folder.name}`}
                 >
-                  <FluentIcon name="chevronRight" className={`files-tree-caret${isExpanded ? ' expanded' : ''}`} />
+                  <FluentIcon name="chevronRight" className={`expand-collapse-icon files-tree-caret${isExpanded ? ' expanded' : ''}`} />
                 </button>
                 <div className="files-hierarchy-folder-copy">
                   <span className="files-tree-leading-icon" aria-hidden="true">

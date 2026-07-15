@@ -1,4 +1,5 @@
 import { isOverdue, normalizePreds } from './schedule.js';
+import { getScheduleAssignees, getTaskAssignees } from './assignees.js';
 
 function parseDateValue(iso) {
   if (!iso) return null;
@@ -122,8 +123,10 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
             end: step.end || '',
             duration: step.duration || 1,
             color: step.color || '',
-            assign: step.assign || '',
+            assignees: getScheduleAssignees(step),
+            assign: getScheduleAssignees(step)[0] || '',
             predecessors: normalizePreds(step.predecessors),
+            done: !!step.done,
             status: step.done ? 'done' : phase.status || project.status || 'planning',
           },
         ];
@@ -169,7 +172,8 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
         start: phase.start || '',
         end: phase.end || '',
         status: phase.status || project.status || 'planning',
-        assign: phase.assign || '',
+        assignees: getScheduleAssignees(phase),
+        assign: getScheduleAssignees(phase)[0] || '',
         expanded: phaseExpanded,
       });
 
@@ -187,7 +191,8 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
           parentProjectId: project.id,
           label: task.label,
           subtitle: task.done ? 'Completed task' : 'Task due date',
-          assignee: task.assignee || '',
+          assignees: getTaskAssignees(task),
+          assignee: getTaskAssignees(task)[0] || '',
           start: task.due || '',
           end: task.due || '',
           done: !!task.done,
@@ -240,6 +245,7 @@ export function filterScheduleRows(rows, query) {
       row.subtitle,
       row.assign,
       row.assignee,
+      ...(row.assignees || []),
       row.stepName,
       row.delayCause,
       row.description,
@@ -264,6 +270,47 @@ export function filterScheduleRows(rows, query) {
         if (contexts[candidateIndex].phaseId === row.id) includedIds.add(candidate.id);
       });
     }
+  });
+
+  return rows.filter((row) => includedIds.has(row.id));
+}
+
+export function filterScheduleRowsForToday(rows, todayIso = new Date().toISOString().slice(0, 10)) {
+  const contexts = [];
+  let currentProjectId = '';
+  let currentPhaseId = '';
+  let currentStepId = '';
+
+  rows.forEach((row) => {
+    if (row.type === 'project') {
+      currentProjectId = row.id;
+      currentPhaseId = '';
+      currentStepId = '';
+    } else if (row.type === 'phase') {
+      currentPhaseId = row.id;
+      currentStepId = '';
+    } else if (row.type === 'step') {
+      currentStepId = row.id;
+    } else if (row.type === 'task') {
+      currentPhaseId = '';
+      currentStepId = '';
+    }
+    contexts.push({ projectId: currentProjectId, phaseId: currentPhaseId, stepId: currentStepId });
+  });
+
+  const includedIds = new Set();
+  rows.forEach((row, index) => {
+    if (!['step', 'delay', 'task'].includes(row.type)) return;
+    if (row.done || row.status === 'done') return;
+    const start = row.start || row.end || '';
+    const end = row.end || row.start || '';
+    if (!start || !end || start > todayIso || end < todayIso) return;
+
+    const context = contexts[index];
+    if (context.projectId) includedIds.add(context.projectId);
+    if (context.phaseId) includedIds.add(context.phaseId);
+    if (row.type === 'delay' && context.stepId) includedIds.add(context.stepId);
+    includedIds.add(row.id);
   });
 
   return rows.filter((row) => includedIds.has(row.id));
@@ -318,7 +365,8 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
           status: phase.status || project.status || 'planning',
           projectId: project.id,
           phaseId: phase.id,
-          assign: phase.assign || '',
+          assignees: getScheduleAssignees(phase),
+          assign: getScheduleAssignees(phase)[0] || '',
           start: phase.start || '',
           end: phase.end || '',
         });
@@ -337,7 +385,8 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
             projectId: project.id,
             phaseId: phase.id,
             stepId: step.id,
-            assign: step.assign || '',
+            assignees: getScheduleAssignees(step),
+            assign: getScheduleAssignees(step)[0] || '',
             start: step.start || '',
             end: step.end || '',
             duration: step.duration || 1,
@@ -379,7 +428,8 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
         projectName: project.name,
         projectId: project.id,
         due: task.due,
-        assignee: task.assignee || '',
+        assignees: getTaskAssignees(task),
+        assignee: getTaskAssignees(task)[0] || '',
         done: !!task.done,
         status: task.done ? 'done' : isOverdue(task.due, task.done) ? 'delayed' : 'active',
       });

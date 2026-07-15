@@ -1,0 +1,69 @@
+:root {
+  color-scheme: light;
+
+  /* Typography */
+  --font-family-base: Inter, "Segoe UI", sans-serif;
+  --font-family-display: "Avenir Next", "Century Gothic", "Segoe UI", Arial, sans-serif;
+  --font-size-2xs: 9px;
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-base: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 14px;
+  --font-size-xl: 16px;
+  --font-size-2xl: 18px;
+  --line-height-tight: 1.2;
+  --line-height-base: 1.4;
+  --line-height-relaxed: 1.6;
+
+  /* Spacing */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-14: 28px;
+
+  /* Core color roles */
+  --bg: #e9edf2;
+  --surface: #ffffff;
+  --surface-alt: #f5f7fa;
+  --surface-strong: #eef2f6;
+  --surface-translucent: rgba(255, 255, 255, 0.92);
+  --surface-hover: rgba(63, 79, 103, 0.05);
+  --text: #1e2733;
+  --muted: #667486;
+  --on-brand: #ffffff;
+  --brand: #3f4f67;
+  --brand-light: #576985;
+  --brand-soft: rgba(63, 79, 103, 0.08);
+  --brand-medium: rgba(63, 79, 103, 0.14);
+  --focus-ring: rgba(63, 79, 103, 0.28);
+  --border: rgba(30, 39, 51, 0.11);
+  --divider: rgba(30, 39, 51, 0.14);
+  --success: #1d9e75;
+  --warning: #9f6c16;
+  --danger: #b03b3b;
+  --warning-surface: #faeeda;
+  --danger-surface: #fdecec;
+  --mobile-app-bar: #0f5d84;
+
+  /* Controls and elevation */
+  --control-height: 38px;
+  --touch-target-size: 44px;
+  --control-radius: 10px;
+  --button-radius: 10px;
+  --panel-radius: 0;
+  --pill-radius: 999px;
+  --transition-fast: 150ms ease;
+  --shadow: 0 12px 28px rgba(17, 24, 39, 0.06);
+  --shadow-dialog: 0 20px 48px rgba(22, 27, 53, 0.2);
+
+  font-family: var(--font-family-base);
+}

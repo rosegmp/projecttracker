@@ -77,14 +77,14 @@ export default function PersonModal({ draft, type, isEditing, saving, onChange, 
 
         <div className="modal-actions">
           {isEditing ? (
-            <button className="button secondary danger" type="button" onClick={onDelete} disabled={saving}>
-              Delete
+            <button className={`button secondary danger${saving ? ' is-loading' : ''}`} type="button" onClick={onDelete} disabled={saving} aria-busy={saving}>
+              {saving ? 'Working...' : 'Delete'}
             </button>
           ) : null}
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving} aria-busy={saving}>
             {saving ? 'Saving...' : `Save ${typeMeta.label.toLowerCase()}`}
           </button>
         </div>

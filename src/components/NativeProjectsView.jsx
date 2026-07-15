@@ -10,8 +10,11 @@ import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import ProjectCard from './ProjectCard.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 import SavedFiltersControls from './SavedFiltersControls.jsx';
+import FluentIcon from './FluentIcon.jsx';
+import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { getScheduleAssignees, scheduleAssigneeFields } from '../utils/assignees.js';
 
 const ProjectDetailView = lazy(() => import('./ProjectDetailView.jsx'));
 const ProjectModal = lazy(() => import('./ProjectModal.jsx'));
@@ -49,6 +52,7 @@ export default function NativeProjectsView({
   const { runMutation, isMutating } = useEntityMutations();
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState('all');
+  const [expandedOverviewProjectIds, setExpandedOverviewProjectIds] = useState(() => new Set());
   const dataRef = useRef(data);
   const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
   const nextProjectHistoryModeRef = useRef('none');
@@ -115,6 +119,29 @@ export default function NativeProjectsView({
     );
     return { phases, steps, tasks, inspections };
   }, [overviewProjects, taskCountByProject]);
+  const allOverviewProjectsExpanded =
+    overviewProjects.length > 0 && overviewProjects.every((project) => expandedOverviewProjectIds.has(project.id));
+
+  function toggleOverviewProject(projectId) {
+    setExpandedOverviewProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }
+
+  function toggleAllOverviewProjects() {
+    if (allOverviewProjectsExpanded) {
+      setExpandedOverviewProjectIds(new Set());
+      return;
+    }
+    setExpandedOverviewProjectIds((current) => {
+      const next = new Set(current);
+      overviewProjects.forEach((project) => next.add(project.id));
+      return next;
+    });
+  }
 
   function setSelectedProject(projectId, history = 'push') {
     nextProjectHistoryModeRef.current = history;
@@ -258,7 +285,7 @@ export default function NativeProjectsView({
 
   async function handleDeleteProject() {
     if (!projectDraft?.id) return;
-    const confirmed = await showAppConfirm(`Delete "${projectDraft.name}" and its tasks?`, {
+    const confirmed = await showAppConfirm(`Delete "${projectDraft.name}" with its schedule data and standalone tasks?`, {
       title: 'Delete project',
       confirmLabel: 'Delete',
       tone: 'danger',
@@ -319,7 +346,7 @@ export default function NativeProjectsView({
       sourcePhaseId: phaseId,
       stepId: '',
       name: '',
-      assign: '',
+      assignees: [],
       status: 'planning',
       color: getNextTaskColor(state.projects),
       start,
@@ -341,7 +368,7 @@ export default function NativeProjectsView({
       sourcePhaseId: phaseId,
       stepId: step.id,
       name: step.name || '',
-      assign: step.assign || '',
+      assignees: getScheduleAssignees(step),
       status: step.status || (step.done ? 'done' : 'planning'),
       color: step.color || TASK_COLOR_PALETTE[0],
       start: step.start || '',
@@ -421,7 +448,7 @@ export default function NativeProjectsView({
     if (!stepDraft) return;
     setStepPredecessorDraft({
       entityType: 'step',
-      name: stepDraft.name || 'New step',
+      name: stepDraft.name || 'New schedule step',
       options: (stepDraft.predecessorOptions || []).map((option) => ({ ...option })),
     });
   }
@@ -471,7 +498,7 @@ export default function NativeProjectsView({
       projectId,
       eyebrow: 'Phase',
       title: 'Add phase',
-      description: 'Create a new phase without leaving the step flow.',
+      description: 'Create a new phase without leaving the schedule step workflow.',
       label: 'Phase name',
       placeholder: 'Phase name',
       value: '',
@@ -490,6 +517,7 @@ export default function NativeProjectsView({
       const newPhase = {
         id: `ph${Date.now()}`,
         name: trimmed,
+        assignees: [],
         assign: '',
         status: 'planning',
         start: '',
@@ -526,7 +554,7 @@ export default function NativeProjectsView({
   async function handleSaveProjectDetailStep(nextAction = 'close') {
     if (!stepDraft?.name.trim()) return;
     if (!stepDraft.projectId || !stepDraft.phaseId) {
-      await showAppAlert('Choose a project and phase before saving the step.', 'Missing project or phase');
+      await showAppAlert('Choose a project and phase before saving the schedule step.', 'Missing project or phase');
       return;
     }
 
@@ -557,7 +585,7 @@ export default function NativeProjectsView({
         ...(existingStep || {}),
         id: stepDraft.mode === 'create' ? `s${Date.now()}` : stepDraft.stepId,
         name: stepDraft.name.trim(),
-        assign: stepDraft.assign.trim(),
+        ...scheduleAssigneeFields(stepDraft.assignees),
         status: stepDraft.status,
         color: stepDraft.color || TASK_COLOR_PALETTE[0],
         done: stepDraft.status === 'done',
@@ -681,7 +709,7 @@ export default function NativeProjectsView({
   async function handleDeleteProjectDetailStep() {
     if (!stepDraft || stepDraft.mode === 'create') return;
     const confirmed = await showAppConfirm(`Delete "${stepDraft.name}"?`, {
-      title: 'Delete step',
+      title: 'Delete schedule step',
       confirmLabel: 'Delete',
       tone: 'danger',
     });
@@ -802,6 +830,7 @@ export default function NativeProjectsView({
                     </div>
                   </div>
                   <div className="projects-filter-toolbar">
+                    <ResponsiveFilterMenu label="Project filters">
                     <input
                       className="schedule-search-input projects-search-input"
                       type="search"
@@ -828,6 +857,11 @@ export default function NativeProjectsView({
                         setProjectStatusFilter(['planning', 'active', 'delayed', 'done'].includes(filter.status) ? filter.status : 'all');
                       }}
                     />
+                    </ResponsiveFilterMenu>
+                    <button className="button secondary expand-collapse-all-button projects-expand-all-button" type="button" onClick={toggleAllOverviewProjects} aria-expanded={allOverviewProjectsExpanded}>
+                      <FluentIcon name={allOverviewProjectsExpanded ? 'collapseAll' : 'expandAll'} />
+                      {allOverviewProjectsExpanded ? 'Collapse all' : 'Expand all'}
+                    </button>
                   </div>
                   <div className="project-grid">
                     {overviewProjects.map((project) => (
@@ -835,6 +869,8 @@ export default function NativeProjectsView({
                         key={project.id}
                         project={project}
                         taskCount={taskCountByProject.get(project.id) || 0}
+                        expanded={expandedOverviewProjectIds.has(project.id)}
+                        onToggle={toggleOverviewProject}
                         onEdit={readOnly ? undefined : startEdit}
                         onOpen={() => setSelectedProject(project.id, 'push')}
                       />
@@ -861,8 +897,8 @@ export default function NativeProjectsView({
           <PageStats settings={data.settings}>
             <DashboardStat label="Projects" value={overviewProjects.length} tone="brand" />
             <DashboardStat label="Phases" value={totals.phases} />
-            <DashboardStat label="Steps" value={totals.steps} />
-            <DashboardStat label="Tasks" value={totals.tasks} />
+            <DashboardStat label="Schedule steps" value={totals.steps} />
+            <DashboardStat label="Standalone tasks" value={totals.tasks} />
           </PageStats>
           <div className="page-refresh-footer">
             <button className="button secondary" type="button" onClick={refresh} disabled={loading}>

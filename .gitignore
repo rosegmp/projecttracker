@@ -7,3 +7,6 @@ dist/
 qa-output/
 supabase/.temp/
 dev-server.log
+
+# Local Netlify folder
+.netlify

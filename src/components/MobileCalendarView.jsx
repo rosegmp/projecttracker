@@ -8,6 +8,77 @@ function getInitialIndex(days) {
   return Math.max(0, currentMonthIndex);
 }
 
+function MobileCalendarDayAgenda({
+  cell,
+  rangeItems,
+  showHebrewDates,
+  onDateClick,
+  onItemClick,
+  isRangeItemClickable,
+  isDayItemClickable,
+  getDayItemSubtitle,
+  compactEmpty = false,
+}) {
+  const holidays = cell?.holidays || [];
+  const dayItems = cell?.items || [];
+
+  return (
+    <section className={`mobile-calendar-agenda-day${cell.isToday ? ' today' : ''}`} data-date={cell.key}>
+      <div className="mobile-calendar-day-heading">
+        <div>
+          <small>{cell.date.toLocaleDateString('en-US', { weekday: 'long' })}</small>
+          <strong>{cell.date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</strong>
+          {showHebrewDates ? <small>{formatHebrewCalendarLabel(cell.date)}</small> : null}
+        </div>
+        <button className="button secondary" type="button" onClick={(event) => onDateClick?.(cell, event)}>Add</button>
+      </div>
+
+      <div className="mobile-calendar-items">
+        {holidays.map((holiday) => (
+          <div key={`${cell.key}-holiday-${holiday.id}`} className="mobile-calendar-item holiday">
+            <strong>{holiday.name || holiday.label}</strong>
+            <small>Non-workday</small>
+          </div>
+        ))}
+        {rangeItems.map((item) => {
+          const clickable = isRangeItemClickable(item);
+          const Tag = clickable ? 'button' : 'div';
+          return (
+            <Tag
+              key={`${cell.key}-range-${item.id}`}
+              type={clickable ? 'button' : undefined}
+              className={`mobile-calendar-item ${item.type}`}
+              onClick={clickable ? (event) => onItemClick?.(item, event) : undefined}
+            >
+              <span className="mobile-calendar-item-color" style={{ backgroundColor: item.color || undefined }} aria-hidden="true" />
+              <span><strong>{item.label}</strong><small>{item.projectName || `${formatShortDate(item.start)} - ${formatShortDate(item.end)}`}</small></span>
+            </Tag>
+          );
+        })}
+        {dayItems.map((item) => {
+          const clickable = isDayItemClickable(item);
+          const Tag = clickable ? 'button' : 'div';
+          const subtitle = getDayItemSubtitle(item);
+          return (
+            <Tag
+              key={`${cell.key}-day-${item.id}`}
+              type={clickable ? 'button' : undefined}
+              className={`mobile-calendar-item ${item.type}`}
+              onClick={clickable ? (event) => onItemClick?.(item, event) : undefined}
+            >
+              <span className="mobile-calendar-item-color" style={{ backgroundColor: item.color || undefined }} aria-hidden="true" />
+              <span><strong>{item.label}</strong>{subtitle ? <small>{subtitle}</small> : null}</span>
+            </Tag>
+          );
+        })}
+        {!holidays.length && !rangeItems.length && !dayItems.length ? (
+          <div className={`mobile-calendar-empty${compactEmpty ? ' compact' : ''}`}>{compactEmpty ? 'No items' : 'Nothing scheduled for this day.'}</div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export default function MobileCalendarView({
   calendarWeeks,
   showHebrewDates = false,
@@ -46,11 +117,9 @@ export default function MobileCalendarView({
   const selectedWeekIndex = Math.max(0, Math.floor(selectedIndex / 7));
   const selectedWeek = calendarWeeks[selectedWeekIndex];
   const selectedColumn = selectedIndex % 7;
-  const rangeItems = (selectedWeek?.scheduledBars || []).filter(
+  const selectedRangeItems = (selectedWeek?.scheduledBars || []).filter(
     (item) => item.startCol <= selectedColumn && item.endCol >= selectedColumn,
   );
-  const dayItems = selectedDay?.items || [];
-  const holidays = selectedDay?.holidays || [];
 
   function moveSelection(direction) {
     const amount = viewMode === 'week' ? 7 : 1;
@@ -123,57 +192,35 @@ export default function MobileCalendarView({
         </div>
       ) : null}
 
-      <div className="mobile-calendar-day-heading">
-        <div>
-          <small>{selectedDay.date.toLocaleDateString('en-US', { weekday: 'long' })}</small>
-          <strong>{selectedDay.date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</strong>
-          {showHebrewDates ? <small>{formatHebrewCalendarLabel(selectedDay.date)}</small> : null}
+      {viewMode === 'week' ? (
+        <div className="mobile-calendar-week-agenda">
+          {(selectedWeek?.cells || []).map((cell, index) => (
+            <MobileCalendarDayAgenda
+              key={cell.key}
+              cell={cell}
+              rangeItems={(selectedWeek?.scheduledBars || []).filter((item) => item.startCol <= index && item.endCol >= index)}
+              showHebrewDates={showHebrewDates}
+              onDateClick={onDateClick}
+              onItemClick={onItemClick}
+              isRangeItemClickable={isRangeItemClickable}
+              isDayItemClickable={isDayItemClickable}
+              getDayItemSubtitle={getDayItemSubtitle}
+              compactEmpty
+            />
+          ))}
         </div>
-        <button className="button secondary" type="button" onClick={(event) => onDateClick?.(selectedDay, event)}>Add</button>
-      </div>
-
-      <div className="mobile-calendar-items">
-        {holidays.map((holiday) => (
-          <div key={`holiday-${holiday.id}`} className="mobile-calendar-item holiday">
-            <strong>{holiday.name || holiday.label}</strong>
-            <small>Non-workday</small>
-          </div>
-        ))}
-        {rangeItems.map((item) => {
-          const clickable = isRangeItemClickable(item);
-          const Tag = clickable ? 'button' : 'div';
-          return (
-            <Tag
-              key={`range-${item.id}`}
-              type={clickable ? 'button' : undefined}
-              className={`mobile-calendar-item ${item.type}`}
-              onClick={clickable ? (event) => onItemClick?.(item, event) : undefined}
-            >
-              <span className="mobile-calendar-item-color" style={{ backgroundColor: item.color || undefined }} aria-hidden="true" />
-              <span><strong>{item.label}</strong><small>{item.projectName || `${formatShortDate(item.start)} - ${formatShortDate(item.end)}`}</small></span>
-            </Tag>
-          );
-        })}
-        {dayItems.map((item) => {
-          const clickable = isDayItemClickable(item);
-          const Tag = clickable ? 'button' : 'div';
-          const subtitle = getDayItemSubtitle(item);
-          return (
-            <Tag
-              key={`day-${item.id}`}
-              type={clickable ? 'button' : undefined}
-              className={`mobile-calendar-item ${item.type}`}
-              onClick={clickable ? (event) => onItemClick?.(item, event) : undefined}
-            >
-              <span className="mobile-calendar-item-color" style={{ backgroundColor: item.color || undefined }} aria-hidden="true" />
-              <span><strong>{item.label}</strong>{subtitle ? <small>{subtitle}</small> : null}</span>
-            </Tag>
-          );
-        })}
-        {!holidays.length && !rangeItems.length && !dayItems.length ? (
-          <div className="mobile-calendar-empty">Nothing scheduled for this day.</div>
-        ) : null}
-      </div>
+      ) : (
+        <MobileCalendarDayAgenda
+          cell={selectedDay}
+          rangeItems={selectedRangeItems}
+          showHebrewDates={showHebrewDates}
+          onDateClick={onDateClick}
+          onItemClick={onItemClick}
+          isRangeItemClickable={isRangeItemClickable}
+          isDayItemClickable={isDayItemClickable}
+          getDayItemSubtitle={getDayItemSubtitle}
+        />
+      )}
       <p className="mobile-calendar-swipe-hint">Swipe to move to the {viewMode === 'week' ? 'previous or next week' : 'previous or next day'}.</p>
     </section>
   );

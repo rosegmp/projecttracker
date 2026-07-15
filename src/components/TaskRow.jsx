@@ -1,6 +1,7 @@
 import React from 'react';
 import { Delete24Regular, Edit24Regular, Mail24Regular } from '@fluentui/react-icons';
 import { isOverdue } from '../utils/schedule.js';
+import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 
 function Icon({ component: Component }) {
   return (
@@ -43,7 +44,7 @@ export default function TaskRow({
   highlighted = false,
   rowRef = null,
   assigneeLabel,
-  assigneeEmail,
+  assigneeEmails = [],
   editingTaskId,
   editDraft,
   editPendingFiles,
@@ -95,14 +96,13 @@ export default function TaskRow({
             value={editDraft.due}
             onChange={(event) => onEditDraftChange('due', event.target.value)}
           />
-          <select
+          <AssigneeMultiSelect
             className="task-input"
-            value={editDraft.assignee || ''}
-            onChange={(event) => onEditDraftChange('assignee', event.target.value)}
-          >
-            <option value="">Unassigned</option>
-            {assigneeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
+            value={editDraft.assignees}
+            options={assigneeOptions}
+            onChange={(value) => onEditDraftChange('assignees', value)}
+            disabled={saving}
+          />
           <div className="task-row-actions">
             <button
               className={`button primary${saving ? ' is-loading' : ''}`}
@@ -234,8 +234,8 @@ export default function TaskRow({
           type="button"
           onClick={() => onEmail(task)}
           disabled={saving}
-          title={assigneeEmail ? 'Email task to assignee' : 'Add an email or continue without a recipient'}
-          aria-label={`Email ${task.label} to assignee`}
+          title={assigneeEmails.length ? 'Email task to assignees' : 'Add an email or continue without a recipient'}
+          aria-label={`Email ${task.label} to assignees`}
         >
           <Icon component={Mail24Regular} />
         </button>

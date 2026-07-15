@@ -677,8 +677,8 @@ export default function App() {
   return (
     <main className="app-shell">
       <AppDialogHost />
-      {nativeAndroid ? (
-        <section className="workspace-shell-bar android-shell-bar material-top-app-bar">
+      {nativeAndroid || capabilities.showTabs ? (
+        <section className={`workspace-shell-bar android-shell-bar material-top-app-bar${nativeAndroid ? '' : ' browser-mobile-app-bar'}`}>
           <div className="android-shell-main">
             {capabilities.showTabs ? (
               <div className="android-nav-menu-shell">
@@ -755,10 +755,11 @@ export default function App() {
                   setShowAndroidNavMenu(false);
                   setShowAndroidAccountMenu((current) => !current);
                 }}
-                title="Account"
-                aria-label="Account"
+                title="Account and filter options"
+                aria-label="Account and filter options"
                 aria-expanded={showAndroidAccountMenu ? 'true' : 'false'}
               >
+                <FluentIcon name="moreVertical" className="android-mobile-overflow-icon" />
                 <span className="android-account-initial" aria-hidden="true">
                   {signedInUserName.slice(0, 1).toUpperCase()}
                 </span>
@@ -784,6 +785,17 @@ export default function App() {
           ) : null}
           {showAndroidAccountMenu ? (
             <div className="android-account-menu">
+              {sharedScopeEnabled ? (
+                <label className="task-filter android-account-project-filter">
+                  <span>Project filter</span>
+                  <select value={sessionProjectFilter} onChange={(event) => setSessionProjectFilter(event.target.value)}>
+                    <option value="all">All projects</option>
+                    {visibleProjects.map((project) => (
+                      <option key={project.id} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <div className="workspace-user-card android-account-card">
                 <div className="workspace-user-avatar" aria-hidden="true">
                   {signedInUserName.slice(0, 1).toUpperCase()}
@@ -858,7 +870,7 @@ export default function App() {
       ) : null}
 
       {capabilities.showTabs && !nativeAndroid ? (
-        <section className="workspace-shell-bar">
+        <section className="workspace-shell-bar browser-desktop-shell">
           <div className="workspace-top-strip">
             <button
               className="workspace-strip-home"

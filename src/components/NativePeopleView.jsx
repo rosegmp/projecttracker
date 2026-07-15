@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { createPerson, deletePerson, importPeople, updatePerson } from '../services/trackerData.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useVirtualRange } from '../utils/virtualization.js';
 import { deliverBlob, isShareDismissed } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
@@ -69,22 +70,24 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
         </div>
         <div className="task-row-actions person-card-actions">
           <button
-            className="button secondary gantt-icon-button"
+            className={`button secondary gantt-icon-button${saving ? ' is-loading' : ''}`}
             type="button"
             onClick={() => onEdit(person)}
             disabled={saving}
             aria-label={`Edit ${personDisplayName(person)}`}
             title="Edit"
+            aria-busy={saving}
           >
             <FluentIcon name="edit" />
           </button>
           <button
-            className="button secondary gantt-icon-button person-delete-button"
+            className={`button secondary gantt-icon-button person-delete-button${saving ? ' is-loading' : ''}`}
             type="button"
             onClick={() => onDelete(person)}
             disabled={saving}
             aria-label={`Delete ${personDisplayName(person)}`}
             title="Delete"
+            aria-busy={saving}
           >
             <FluentIcon name="delete" />
           </button>
@@ -270,22 +273,24 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
           ))}
           <span className="people-list-actions people-list-actions-cell">
             <button
-              className="button secondary gantt-icon-button"
+              className={`button secondary gantt-icon-button${isPersonSaving(person.id) ? ' is-loading' : ''}`}
               type="button"
               onClick={() => onEdit(person)}
               disabled={isPersonSaving(person.id)}
               aria-label={`Edit ${personDisplayName(person)}`}
               title="Edit"
+              aria-busy={isPersonSaving(person.id)}
             >
               <FluentIcon name="edit" />
             </button>
             <button
-              className="button secondary gantt-icon-button person-delete-button"
+              className={`button secondary gantt-icon-button person-delete-button${isPersonSaving(person.id) ? ' is-loading' : ''}`}
               type="button"
               onClick={() => onDelete(person)}
               disabled={isPersonSaving(person.id)}
               aria-label={`Delete ${personDisplayName(person)}`}
               title="Delete"
+              aria-busy={isPersonSaving(person.id)}
             >
               <FluentIcon name="delete" />
             </button>
@@ -537,7 +542,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
   return (
     <section className="panel native-panel workspace-page top-level-people-page">
       <div className="panel-actions people-page-actions">
-        <button className="button secondary" type="button" onClick={triggerImport} disabled={importSaving}>
+        <button className={`button secondary${importSaving ? ' is-loading' : ''}`} type="button" onClick={triggerImport} disabled={importSaving} aria-busy={importSaving}>
           {importSaving ? 'Importing...' : 'Import CSV'}
         </button>
         <button className="button secondary" type="button" onClick={handleExportPeople} disabled={!filteredPeople.length}>
@@ -558,6 +563,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
           <div className="people-toolbar">
+            <ResponsiveFilterMenu label="People filters">
             <label className="task-filter people-type-filter">
               <span>People type</span>
               <select value={personType} onChange={(event) => setPersonType(event.target.value)}>
@@ -578,6 +584,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
                 placeholder="Name, company, role, or tag"
               />
             </label>
+            </ResponsiveFilterMenu>
 
             <div className="people-view-toggle" role="tablist" aria-label="People view">
               <button

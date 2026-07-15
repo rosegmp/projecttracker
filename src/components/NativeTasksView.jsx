@@ -7,16 +7,19 @@ import {
 import { isOverdue } from '../utils/schedule.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
-import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
+import { renderModalPortal, showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 const EmailAddressModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.EmailAddressModal })));
 import FluentIcon from './FluentIcon.jsx';
 const PersonModal = lazy(() => import('./PersonModal.jsx'));
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 import SavedFiltersControls from './SavedFiltersControls.jsx';
 import TaskRow from './TaskRow.jsx';
+import TaskCreateForm from './TaskCreateForm.jsx';
+import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useVirtualRange } from '../utils/virtualization.js';
 import { openMailComposer } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { formatAssignees, getTaskAssignees, taskAssigneeFields } from '../utils/assignees.js';
 
 function VirtualTaskItem({ taskId, onSize, children }) {
   const itemRef = useRef(null);
@@ -90,10 +93,12 @@ export default function NativeTasksView({
 }) {
   const defaultTaskProjectId = lockedProjectId || (projectFilter !== 'all' ? projectFilter : '');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
-  const [newTask, setNewTask] = useState({ label: '', projectId: defaultTaskProjectId, due: '', assignee: '' });
+  const [newTask, setNewTask] = useState({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
+  const [mobileCreateTaskOpen, setMobileCreateTaskOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState('');
-  const [editDraft, setEditDraft] = useState({ label: '', projectId: '', due: '', assignee: '', attachments: [] });
+  const [editDraft, setEditDraft] = useState({ label: '', projectId: '', due: '', assignees: [], attachments: [] });
   const [newTaskFiles, setNewTaskFiles] = useState([]);
   const [editPendingFiles, setEditPendingFiles] = useState([]);
   const [createAttachmentInputKey, setCreateAttachmentInputKey] = useState(0);
@@ -179,17 +184,38 @@ export default function NativeTasksView({
     return links;
   }, [visibleProjects]);
 
-  const filteredTasks = useMemo(() => {
-    const tasks =
+  const projectScopedTasks = useMemo(
+    () =>
       effectiveProjectFilter === 'all'
         ? visibleTasks
-        : visibleTasks.filter((task) => task.projectId === effectiveProjectFilter);
+        : visibleTasks.filter((task) => task.projectId === effectiveProjectFilter),
+    [effectiveProjectFilter, visibleTasks],
+  );
+
+  const taskAssigneeFilterOptions = useMemo(
+    () => [...new Set(
+      visibleTasks
+        .flatMap((task) => getTaskAssignees(task))
+        .filter(Boolean),
+    )].sort((left, right) => left.localeCompare(right)),
+    [visibleTasks],
+  );
+
+  const assigneeScopedTasks = useMemo(() => {
+    if (assigneeFilter === 'all') return projectScopedTasks;
+    if (assigneeFilter === '__unassigned__') {
+      return projectScopedTasks.filter((task) => !getTaskAssignees(task).length);
+    }
+    return projectScopedTasks.filter((task) => getTaskAssignees(task).includes(assigneeFilter));
+  }, [assigneeFilter, projectScopedTasks]);
+
+  const filteredTasks = useMemo(() => {
     const scopedTasks =
       statusFilter === 'open'
-        ? tasks.filter((task) => !task.done)
+        ? assigneeScopedTasks.filter((task) => !task.done)
         : statusFilter === 'completed'
-          ? tasks.filter((task) => !!task.done)
-          : tasks;
+          ? assigneeScopedTasks.filter((task) => !!task.done)
+          : assigneeScopedTasks;
     return [...scopedTasks].sort((a, b) => {
       const aProjectName = projectMap.get(a.projectId)?.name || 'No project assigned';
       const bProjectName = projectMap.get(b.projectId)?.name || 'No project assigned';
@@ -200,14 +226,15 @@ export default function NativeTasksView({
       if (aKey !== bKey) return aKey < bKey ? -1 : 1;
       return a.label.localeCompare(b.label);
     });
-  }, [effectiveProjectFilter, projectMap, statusFilter, visibleTasks]);
+  }, [assigneeScopedTasks, projectMap, statusFilter]);
 
-  const projectScopedTasks = useMemo(
-    () =>
-      effectiveProjectFilter === 'all'
-        ? visibleTasks
-        : visibleTasks.filter((task) => task.projectId === effectiveProjectFilter),
-    [effectiveProjectFilter, visibleTasks],
+  const statusCounts = useMemo(
+    () => ({
+      all: assigneeScopedTasks.length,
+      open: assigneeScopedTasks.filter((task) => !task.done).length,
+      completed: assigneeScopedTasks.filter((task) => task.done).length,
+    }),
+    [assigneeScopedTasks],
   );
 
   const totals = useMemo(
@@ -215,7 +242,7 @@ export default function NativeTasksView({
       total: visibleTasks.length,
       open: visibleTasks.filter((task) => !task.done).length,
       overdue: visibleTasks.filter((task) => isOverdue(task.due, task.done)).length,
-      assigned: visibleTasks.filter((task) => task.assignee).length,
+      assigned: visibleTasks.filter((task) => getTaskAssignees(task).length).length,
     }),
     [visibleTasks],
   );
@@ -224,9 +251,11 @@ export default function NativeTasksView({
     if (groupBy !== 'assignee') return [];
     const groups = new Map();
     filteredTasks.forEach((task) => {
-      const key = task.assignee?.trim() || 'Unassigned';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(task);
+      const keys = getTaskAssignees(task);
+      (keys.length ? keys : ['Unassigned']).forEach((key) => {
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(task);
+      });
     });
     return [...groups.entries()]
       .sort((a, b) => {
@@ -242,9 +271,11 @@ export default function NativeTasksView({
     projectScopedTasks
       .filter((task) => !task.done)
       .forEach((task) => {
-        const key = task.assignee?.trim() || 'Unassigned';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(task);
+        const keys = getTaskAssignees(task);
+        (keys.length ? keys : ['Unassigned']).forEach((key) => {
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(task);
+        });
       });
     groups.forEach((tasks) =>
       tasks.sort((a, b) => {
@@ -367,15 +398,17 @@ export default function NativeTasksView({
       const attachments = await createTaskAttachmentRecords(targetProjectId, taskId, newTaskFiles);
       const nextState = await createTask(dataRef.current, {
         ...newTask,
+        ...taskAssigneeFields(newTask.assignees),
         projectId: targetProjectId,
         id: taskId,
         attachments,
         createdAt: new Date().toISOString(),
       });
       commitTaskState(nextState);
-      setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignee: '' });
+      setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
       setNewTaskFiles([]);
       setCreateAttachmentInputKey((current) => current + 1);
+      setMobileCreateTaskOpen(false);
       showTaskSaveMessage('Task saved');
       window.requestAnimationFrame(() => {
         createTaskNameInputRef.current?.focus();
@@ -411,8 +444,11 @@ export default function NativeTasksView({
       const nextAssignee = createdPerson ? personAssignmentLabel(createdPerson) : '';
       commitTaskState(nextState);
       if (nextAssignee) {
-        setNewTask((current) => ({ ...current, assignee: nextAssignee }));
-        setEditDraft((current) => ({ ...current, assignee: editingTaskId ? nextAssignee : current.assignee }));
+        setNewTask((current) => ({ ...current, assignees: [...new Set([...(current.assignees || []), nextAssignee])] }));
+        setEditDraft((current) => ({
+          ...current,
+          assignees: editingTaskId ? [...new Set([...(current.assignees || []), nextAssignee])] : current.assignees,
+        }));
       }
       setPersonDraft(null);
     });
@@ -428,7 +464,7 @@ export default function NativeTasksView({
       label: task.label,
       projectId: task.projectId || '',
       due: task.due || '',
-      assignee: task.assignee || '',
+      assignees: getTaskAssignees(task),
       attachments: Array.isArray(task.attachments) ? task.attachments : [],
     });
     setEditPendingFiles([]);
@@ -472,7 +508,7 @@ export default function NativeTasksView({
 
   function handleEditCancel() {
     setEditingTaskId('');
-    setEditDraft({ label: '', projectId: '', due: '', assignee: '', attachments: [] });
+    setEditDraft({ label: '', projectId: '', due: '', assignees: [], attachments: [] });
     setEditPendingFiles([]);
     setEditAttachmentInputKey((current) => current + 1);
   }
@@ -490,7 +526,7 @@ export default function NativeTasksView({
         label: editDraft.label.trim(),
         projectId: editDraft.projectId || '',
         due: editDraft.due,
-        assignee: editDraft.assignee || '',
+        ...taskAssigneeFields(editDraft.assignees),
         attachments: nextAttachments,
       });
       commitTaskState(nextState);
@@ -548,25 +584,27 @@ export default function NativeTasksView({
   }
 
   function handleEmailTask(task) {
-    const assignee = assigneeDirectory.get(task.assignee || '');
-    const email = assignee?.email || '';
+    const taskAssignees = getTaskAssignees(task);
+    const people = taskAssignees.map((name) => assigneeDirectory.get(name)).filter(Boolean);
+    const emails = [...new Set(people.map((person) => person.email).filter(Boolean))];
     const projectName = projectMap.get(task.projectId)?.name || 'Task details';
     const subject = projectName;
     const body = [
       `Project: ${projectName}`,
       `Task: ${task.label}`,
-      `Assignee: ${task.assignee || 'Unassigned'}`,
+      `Assignees: ${formatAssignees(taskAssignees)}`,
       `Due date: ${task.due ? formatShortDate(task.due) : 'No due date'}`,
       `Status: ${task.done ? 'Completed' : 'Open'}`,
     ].join('\n');
-    if (email) {
-      openMailto(email, subject, body);
+    if (emails.length) {
+      openMailto(emails.join(','), subject, body);
       return;
     }
+    const assignee = people[0] || null;
     startEmailDraft({
       title: `Email ${task.label}`,
-      description: task.assignee
-        ? `No email is saved for ${task.assignee}. Add one now, or continue without a recipient.`
+      description: taskAssignees.length
+        ? `No email is saved for ${formatAssignees(taskAssignees)}. Add one now, or continue without a recipient.`
         : 'No assignee email is saved for this task. Add one now, or continue without a recipient.',
       person: assignee || null,
       subject,
@@ -620,29 +658,40 @@ export default function NativeTasksView({
     <>
       <div className="panel-actions task-header-actions">
         <div className="task-toolbar task-toolbar-header">
+          <ResponsiveFilterMenu label="Task filters">
           <div className="people-view-toggle" role="tablist" aria-label="Task status filter">
             <button
               className={`people-toggle-button${statusFilter === 'all' ? ' active' : ''}`}
               type="button"
               onClick={() => setStatusFilter('all')}
             >
-              All
+              All ({statusCounts.all})
             </button>
             <button
               className={`people-toggle-button${statusFilter === 'open' ? ' active' : ''}`}
               type="button"
               onClick={() => setStatusFilter('open')}
             >
-              Open
+              Open ({statusCounts.open})
             </button>
             <button
               className={`people-toggle-button${statusFilter === 'completed' ? ' active' : ''}`}
               type="button"
               onClick={() => setStatusFilter('completed')}
             >
-              Completed
+              Completed ({statusCounts.completed})
             </button>
           </div>
+          <label className="task-filter">
+            <span>Assignee</span>
+            <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}>
+              <option value="all">All assignees</option>
+              <option value="__unassigned__">Unassigned</option>
+              {taskAssigneeFilterOptions.map((assignee) => (
+                <option key={assignee} value={assignee}>{assignee}</option>
+              ))}
+            </select>
+          </label>
           <label className="task-filter">
             <span>Group by</span>
             <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
@@ -653,7 +702,7 @@ export default function NativeTasksView({
           {!embedded && !lockedProjectId ? (
             <SavedFiltersControls
               storageKey={`project-tracker:saved-filters:tasks:${activeUser?.id || 'default'}`}
-              currentValue={{ projectId: projectFilter, status: statusFilter, groupBy }}
+              currentValue={{ projectId: projectFilter, status: statusFilter, assignee: assigneeFilter, groupBy }}
               onApply={(filter) => {
                 onProjectFilterChange(
                   filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
@@ -661,130 +710,44 @@ export default function NativeTasksView({
                     : 'all',
                 );
                 setStatusFilter(['open', 'completed'].includes(filter.status) ? filter.status : 'all');
+                setAssigneeFilter(
+                  filter.assignee === '__unassigned__' || taskAssigneeFilterOptions.includes(filter.assignee)
+                    ? filter.assignee
+                    : 'all',
+                );
                 setGroupBy(filter.groupBy === 'assignee' ? 'assignee' : 'none');
               }}
               disabled={false}
             />
           ) : null}
+          </ResponsiveFilterMenu>
         </div>
-      </div>
-
-      <div className="task-summary-strip">
-        <div className="project-summary-chip">All tasks {totals.total}</div>
-        <div className="project-summary-chip">Open {totals.open}</div>
-        <div className="project-summary-chip">Overdue {totals.overdue}</div>
-        <div className="project-summary-chip">Assigned {totals.assigned}</div>
-        {!embedded ? <div className="project-summary-chip">Projects {visibleProjects.length}</div> : null}
       </div>
 
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
-          <form className="task-create-panel workspace-plain-card" onSubmit={handleCreateTask}>
-            <div className="task-create-grid">
-              <input
-                ref={createTaskNameInputRef}
-                className="task-input"
-                placeholder="Task name"
-                value={newTask.label}
-                onChange={(event) => setNewTask((current) => ({ ...current, label: event.target.value }))}
-              />
-              {lockedProjectId ? (
-                <div className="task-input task-input-static">{projectMap.get(lockedProjectId)?.name || 'Project'}</div>
-              ) : (
-                <select
-                  className="task-input"
-                  value={newTask.projectId}
-                  onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
-                >
-                  <option value="">Project...</option>
-                  {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <input
-                className="task-input"
-                type="date"
-                value={newTask.due}
-                onChange={(event) => setNewTask((current) => ({ ...current, due: event.target.value }))}
-              />
-              <div className="inline-action-field task-assignee-field">
-                <select
-                  className="task-input"
-                  value={newTask.assignee}
-                  onChange={(event) => setNewTask((current) => ({ ...current, assignee: event.target.value }))}
-                >
-                  <option value="">Assignee...</option>
-                  {assigneeOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-                <button className="button secondary" type="button" onClick={startCreateAssignee} disabled={createSaving}>
-                  Add person
-                </button>
-              </div>
-              <button className={`button primary${createSaving ? ' is-loading' : ''}`} type="submit" disabled={createSaving}>
-                {createSaving ? 'Saving...' : 'Add task'}
-              </button>
-              <input
-                key={createAttachmentInputKey}
-                ref={createAttachmentInputRef}
-                className="task-attachment-input"
-                type="file"
-                multiple
-                onChange={handleCreateAttachmentAdd}
-                disabled={createSaving}
-              />
-              {newTaskFiles.length ? (
-                <div className="task-attachment-editor task-create-attachments">
-                  <div className="task-attachment-editor-header">
-                    <strong>Attachments</strong>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={() => openAttachmentPicker(createAttachmentInputRef)}
-                      disabled={createSaving}
-                    >
-                      Add more files
-                    </button>
-                  </div>
-                  <div className="task-attachment-list">
-                    {newTaskFiles.map((file, index) => (
-                      <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="task-attachment-chip pending">
-                        <span>{file.name}</span>
-                        <button
-                          className="button secondary gantt-icon-button"
-                          type="button"
-                          onClick={() => setNewTaskFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
-                          disabled={createSaving}
-                          title="Remove pending attachment"
-                          aria-label="Remove pending attachment"
-                        >
-                          <FluentIcon name="delete" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                  <button
-                    className="button secondary task-add-attachment-button"
-                    type="button"
-                    onClick={() => openAttachmentPicker(createAttachmentInputRef)}
-                    disabled={createSaving}
-                  >
-                    Add attachment
-                  </button>
-              )}
-              <div className={`task-save-notice${taskSaveMessage ? ' visible' : ''}`} aria-live="polite">
-                {taskSaveMessage || '\u00A0'}
-              </div>
-            </div>
-          </form>
+          <button className="button primary mobile-task-create-trigger" type="button" onClick={() => setMobileCreateTaskOpen(true)}>
+            <FluentIcon name="add" />
+            Add task
+          </button>
+          <TaskCreateForm
+            task={newTask}
+            onTaskChange={(field, value) => setNewTask((current) => ({ ...current, [field]: value }))}
+            lockedProjectName={lockedProjectId ? projectMap.get(lockedProjectId)?.name || 'Project' : ''}
+            projects={visibleProjects}
+            assigneeOptions={assigneeOptions}
+            onAddPerson={startCreateAssignee}
+            saving={createSaving}
+            attachmentInputKey={createAttachmentInputKey}
+            attachmentInputRef={createAttachmentInputRef}
+            onAttachmentAdd={handleCreateAttachmentAdd}
+            files={newTaskFiles}
+            onOpenAttachmentPicker={() => openAttachmentPicker(createAttachmentInputRef)}
+            onRemoveAttachment={(index) => setNewTaskFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+            saveMessage={taskSaveMessage}
+            nameInputRef={createTaskNameInputRef}
+            onSubmit={handleCreateTask}
+          />
         </section>
 
       </div>
@@ -830,8 +793,8 @@ export default function NativeTasksView({
                         }
                       }}
                       task={task}
-                      assigneeLabel={task.assignee || ''}
-                      assigneeEmail={assigneeDirectory.get(task.assignee || '')?.email || ''}
+                      assigneeLabel={formatAssignees(getTaskAssignees(task), '')}
+                      assigneeEmails={getTaskAssignees(task).map((name) => assigneeDirectory.get(name)?.email).filter(Boolean)}
                       assigneeOptions={assigneeOptions}
                       projectOptions={visibleProjects}
                       projectName={projectMap.get(task.projectId)?.name}
@@ -886,8 +849,8 @@ export default function NativeTasksView({
                     }
                   }}
                   task={task}
-                  assigneeLabel={task.assignee || ''}
-                  assigneeEmail={assigneeDirectory.get(task.assignee || '')?.email || ''}
+                  assigneeLabel={formatAssignees(getTaskAssignees(task), '')}
+                  assigneeEmails={getTaskAssignees(task).map((name) => assigneeDirectory.get(name)?.email).filter(Boolean)}
                   assigneeOptions={assigneeOptions}
                   projectOptions={visibleProjects}
                   projectName={projectMap.get(task.projectId)?.name}
@@ -927,8 +890,8 @@ export default function NativeTasksView({
             )
           ) : (
             <div className="empty-state">
-              <h3>No tasks yet</h3>
-              <p>{embedded ? 'Create a task above to add the first task for this project.' : 'Create a task above or switch the project filter to see more items.'}</p>
+              <h3>No matching tasks</h3>
+              <p>{embedded ? 'Change the task filters or use Add task to create a task for this project.' : 'Change the project, assignee, or status filters to see more items.'}</p>
             </div>
           )}
         </div>
@@ -975,6 +938,30 @@ export default function NativeTasksView({
         onSave={continueEmailDraft}
       /> : null}
       </Suspense>
+      {mobileCreateTaskOpen ? renderModalPortal(
+        <div className="modal-backdrop task-create-modal-backdrop" onClick={() => { if (!createSaving) setMobileCreateTaskOpen(false); }}>
+          <TaskCreateForm
+            task={newTask}
+            onTaskChange={(field, value) => setNewTask((current) => ({ ...current, [field]: value }))}
+            lockedProjectName={lockedProjectId ? projectMap.get(lockedProjectId)?.name || 'Project' : ''}
+            projects={visibleProjects}
+            assigneeOptions={assigneeOptions}
+            onAddPerson={startCreateAssignee}
+            saving={createSaving}
+            attachmentInputKey={createAttachmentInputKey}
+            attachmentInputRef={createAttachmentInputRef}
+            onAttachmentAdd={handleCreateAttachmentAdd}
+            files={newTaskFiles}
+            onOpenAttachmentPicker={() => openAttachmentPicker(createAttachmentInputRef)}
+            onRemoveAttachment={(index) => setNewTaskFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+            saveMessage={taskSaveMessage}
+            nameInputRef={createTaskNameInputRef}
+            onSubmit={handleCreateTask}
+            modal
+            onClose={() => { if (!createSaving) setMobileCreateTaskOpen(false); }}
+          />
+        </div>,
+      ) : null}
     </>
   );
 

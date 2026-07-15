@@ -5,6 +5,7 @@ import {
   getCalendarWeekLayout,
   getProjectAccentColor,
 } from '../utils/calendarUi.js';
+import { getReadableTextColor } from '../utils/colorContrast.js';
 import MobileCalendarView from './MobileCalendarView.jsx';
 
 export default function SharedCalendarGrid({
@@ -74,7 +75,7 @@ export default function SharedCalendarGrid({
                           gridColumn: `${item.startCol + 1} / ${item.endCol + 2}`,
                           gridRow: `${item.lane + 1}`,
                           borderColor: item.color || getProjectAccentColor(item.projectId || item.projectName),
-                          ...(item.color ? { backgroundColor: item.color, color: '#fff' } : {}),
+                          ...(item.color ? { backgroundColor: item.color, color: getReadableTextColor(item.color) } : {}),
                         }}
                         title={`${item.label}${item.projectName ? ` | ${item.projectName}` : ''}`}
                         onClick={clickable ? (event) => { event.stopPropagation(); onItemClick?.(item, event); } : undefined}
@@ -138,7 +139,7 @@ export default function SharedCalendarGrid({
                         type="button"
                         className="calendar-day-number"
                         onClick={(event) => { event.stopPropagation(); onDateClick?.(cell, event); }}
-                        title={`Add step on ${formatShortDate(cell.key)}`}
+                        title={`Add schedule step on ${formatShortDate(cell.key)}`}
                       >
                         <span>{cell.date.getDate()}</span>
                         {showHebrewDates ? <small className="calendar-lunar-date">{formatHebrewCalendarLabel(cell.date)}</small> : null}

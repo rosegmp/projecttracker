@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatShortDate } from '../utils/calendarUi.js';
+import FluentIcon from './FluentIcon.jsx';
 
 function rowDateLabel(row) {
   if (!row.start && !row.end) return 'Date not set';
@@ -33,7 +34,9 @@ export default function MobileScheduleAgenda({
             <section className="mobile-agenda-project" key={row.id}>
               <div className="mobile-agenda-heading">
                 <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded} disabled={expansionLocked}>
-                  <span aria-hidden="true">{row.expanded ? '-' : '+'}</span>
+                  <span className="expand-collapse-button mobile-agenda-expand-indicator" aria-hidden="true">
+                    <FluentIcon name="chevronRight" className="expand-collapse-icon" />
+                  </span>
                   <strong>{row.label}</strong>
                 </button>
                 <button type="button" className="button secondary" onClick={() => onAddPhase(row)}>Add phase</button>
@@ -47,13 +50,15 @@ export default function MobileScheduleAgenda({
             <section className="mobile-agenda-phase" key={row.id}>
               <div className="mobile-agenda-heading">
                 <button type="button" className="mobile-agenda-toggle" onClick={() => onToggle(row)} aria-expanded={row.expanded} disabled={expansionLocked}>
-                  <span aria-hidden="true">{row.expanded ? '-' : '+'}</span>
+                  <span className="expand-collapse-button mobile-agenda-expand-indicator" aria-hidden="true">
+                    <FluentIcon name="chevronRight" className="expand-collapse-icon" />
+                  </span>
                   <span><strong>{row.label}</strong>{row.subtitle ? <small>{row.subtitle}</small> : null}</span>
                 </button>
                 <button type="button" className="button secondary" onClick={() => onEdit(row)}>Edit</button>
               </div>
               <div className="mobile-agenda-phase-actions">
-                <button type="button" className="button secondary" onClick={() => onAddStep(row)}>Add step</button>
+                <button type="button" className="button secondary" onClick={() => onAddStep(row)}>Add schedule step</button>
                 <button type="button" className="button secondary" onClick={() => onAddDelay(row)}>Add delay</button>
               </div>
             </section>
@@ -71,7 +76,7 @@ export default function MobileScheduleAgenda({
               <strong>{row.label}</strong>
               <span>{rowDateLabel(row)}</span>
               {row.subtitle ? <small>{row.subtitle}</small> : null}
-              {row.assign ? <small>Assigned to {row.assign}</small> : null}
+              {row.assignees?.length ? <small>Assigned to {row.assignees.join(', ')}</small> : null}
             </div>
             <div className="mobile-agenda-item-actions">
               {row.type === 'step' ? (

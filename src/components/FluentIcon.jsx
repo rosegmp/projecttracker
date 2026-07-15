@@ -2,6 +2,8 @@ import React from 'react';
 import {
   Add24Regular,
   AppFolder24Regular,
+  ArrowCollapseAll24Regular,
+  ArrowExpandAll24Regular,
   ArrowBidirectionalUpDown24Regular,
   ArrowClockwise24Regular,
   ArrowDown24Regular,
@@ -17,9 +19,11 @@ import {
   Edit24Regular,
   Eye24Regular,
   Mail24Regular,
+  MoreVertical24Regular,
   Navigation24Regular,
   ReOrderDotsVertical24Regular,
   SignOut24Regular,
+  Search24Regular,
   Warning24Regular,
 } from '@fluentui/react-icons';
 
@@ -45,6 +49,10 @@ const ICONS = {
   add: Add24Regular,
   warning: Warning24Regular,
   navigation: Navigation24Regular,
+  search: Search24Regular,
+  moreVertical: MoreVertical24Regular,
+  expandAll: ArrowExpandAll24Regular,
+  collapseAll: ArrowCollapseAll24Regular,
 };
 
 export default function FluentIcon({ name, size = 18, className = '' }) {

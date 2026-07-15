@@ -884,12 +884,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 </div>
                 <div className="settings-card-actions">
                   <button
-                    className="button secondary gantt-icon-button inline-save-button"
+                    className={`button secondary gantt-icon-button inline-save-button${schedulingSaving ? ' is-loading' : ''}`}
                     type="button"
                     onClick={handleSaveSchedulingDefaults}
                     disabled={schedulingSaving || !hasPendingSchedulingDefaults()}
                     title="Save scheduling defaults"
                     aria-label="Save scheduling defaults"
+                    aria-busy={schedulingSaving}
                   >
                     <FluentIcon name="check" />
                   </button>
@@ -917,8 +918,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   disabled={schedulingSaving}
                 />
                 <span>
-                  <strong>Show task due dates in Gantt</strong>
-                  <small>Display task due-date markers in the Gantt view.</small>
+                  <strong>Show standalone task due dates in Gantt</strong>
+                  <small>Display standalone task due-date markers in the Gantt view.</small>
                 </span>
               </label>
 
@@ -930,8 +931,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   disabled={schedulingSaving}
                 />
                 <span>
-                  <strong>Show task due dates in Calendar</strong>
-                  <small>Display task due-date markers in the Calendar tab.</small>
+                  <strong>Show standalone task due dates in Calendar</strong>
+                  <small>Display standalone task due-date markers in the Calendar tab.</small>
                 </span>
               </label>
 
@@ -998,22 +999,24 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         disabled={isSubcodeSaving(draft.id)}
                       />
                       <button
-                        className="button secondary gantt-icon-button inline-save-button"
+                        className={`button secondary gantt-icon-button inline-save-button${isSubcodeSaving(draft.id) ? ' is-loading' : ''}`}
                         type="button"
                         onClick={() => void saveInspectionSubcode(draft.id)}
                         disabled={isSubcodeSaving(draft.id) || !hasPendingInspectionSubcode(draft)}
                         title="Save subcode"
                         aria-label="Save subcode"
+                        aria-busy={isSubcodeSaving(draft.id)}
                       >
                         <FluentIcon name="check" />
                       </button>
                       <button
-                        className="button secondary danger gantt-icon-button"
+                        className={`button secondary danger gantt-icon-button${isSubcodeSaving(draft.id) ? ' is-loading' : ''}`}
                         type="button"
                         onClick={() => handleRemoveInspectionSubcode(draft.id)}
                         disabled={isSubcodeSaving(draft.id)}
                         title="Remove subcode"
                         aria-label="Remove subcode"
+                        aria-busy={isSubcodeSaving(draft.id)}
                       >
                         <FluentIcon name="delete" />
                       </button>
@@ -1036,20 +1039,22 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 </div>
                 <div className="settings-card-actions">
                   <button
-                    className="button secondary"
+                    className={`button secondary${holidaysSaving ? ' is-loading' : ''}`}
                     type="button"
                     onClick={handleAddStandardLegalHolidays}
                     disabled={holidaysSaving}
+                    aria-busy={holidaysSaving}
                   >
-                    Add legal holidays
+                    {holidaysSaving ? 'Adding...' : 'Add legal holidays'}
                   </button>
                   <button
-                    className="button secondary"
+                    className={`button secondary${holidaysSaving ? ' is-loading' : ''}`}
                     type="button"
                     onClick={handleAddJewishHolidays}
                     disabled={holidaysSaving}
+                    aria-busy={holidaysSaving}
                   >
-                    Add Jewish holidays
+                    {holidaysSaving ? 'Adding...' : 'Add Jewish holidays'}
                   </button>
                   <button className="button primary" type="button" onClick={handleAddHoliday}>
                     Add holiday
@@ -1119,22 +1124,24 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
                         <div className="holiday-row-actions">
                           <button
-                            className="button secondary gantt-icon-button"
+                            className={`button secondary gantt-icon-button${isHolidaySaving(holiday.id) ? ' is-loading' : ''}`}
                             type="button"
                             onClick={() => handleSaveHoliday(index)}
                             disabled={isHolidaySaving(holiday.id) || !isDirty}
                             title="Save holiday"
                             aria-label={`Save ${holiday.name || 'holiday'}`}
+                            aria-busy={isHolidaySaving(holiday.id)}
                           >
                             <FluentIcon name="check" />
                           </button>
                           <button
-                            className="button secondary danger gantt-icon-button"
+                            className={`button secondary danger gantt-icon-button${isHolidaySaving(holiday.id) ? ' is-loading' : ''}`}
                             type="button"
                             onClick={() => handleRemoveHoliday(index)}
                             disabled={isHolidaySaving(holiday.id)}
                             title="Remove holiday"
                             aria-label={`Remove ${holiday.name || 'holiday'}`}
+                            aria-busy={isHolidaySaving(holiday.id)}
                           >
                             <FluentIcon name="delete" />
                           </button>
@@ -1169,10 +1176,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                     <p>Reminder preferences are stored separately for each signed-in user on this Android device.</p>
                   </div>
                   <button
-                    className="button primary"
+                    className={`button primary${notificationSaving ? ' is-loading' : ''}`}
                     type="button"
                     onClick={() => void handleSaveNotificationSettings()}
                     disabled={notificationSaving}
+                    aria-busy={notificationSaving}
                   >
                     {notificationSaving ? 'Updating...' : 'Save reminder settings'}
                   </button>
@@ -1264,10 +1272,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               <p>Review who changed project dates, dependencies, statuses, and files.</p>
             </div>
             <button
-              className="button secondary"
+              className={`button secondary${auditLoading ? ' is-loading' : ''}`}
               type="button"
               onClick={() => void refreshAuditTrail()}
               disabled={auditLoading}
+              aria-busy={auditLoading}
             >
               <FluentIcon name="replace" />
               {auditLoading ? 'Refreshing...' : 'Refresh history'}
@@ -1402,32 +1411,35 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         ))}
                       </select>
                       <button
-                        className="button secondary gantt-icon-button inline-save-button"
+                        className={`button secondary gantt-icon-button inline-save-button${userSaving ? ' is-loading' : ''}`}
                         type="button"
                         onClick={() => void saveUserDraft(user.id)}
                         disabled={userSaving || !hasPendingUserDraft(user)}
                         title="Save user"
                         aria-label={`Save ${user.name || 'user'}`}
+                        aria-busy={userSaving}
                       >
                         <FluentIcon name="check" />
                       </button>
                       <button
-                        className="button secondary gantt-icon-button"
+                        className={`button secondary gantt-icon-button${inviteStatus?.status === 'sending' ? ' is-loading' : ''}`}
                         type="button"
                         onClick={() => void handleSendAuthInvite(user)}
                         disabled={inviteDisabled}
                         title={inviteTitle}
                         aria-label={`Send login invite to ${user.name || 'user'}`}
+                        aria-busy={inviteStatus?.status === 'sending'}
                       >
                         <FluentIcon name="mail" />
                       </button>
                       <button
-                        className="button secondary danger gantt-icon-button"
+                        className={`button secondary danger gantt-icon-button${userSaving ? ' is-loading' : ''}`}
                         type="button"
                         onClick={() => handleRemoveUser(user.id)}
                         disabled={userSaving || settings.users.length <= 1}
                         title="Remove user"
                         aria-label={`Remove ${user.name || 'user'}`}
+                        aria-busy={userSaving}
                       >
                         <FluentIcon name="delete" />
                       </button>
@@ -1502,6 +1514,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               </div>
 
               <div className="settings-order-list">
+                {peopleColumnsSaving ? <div className="mutation-status" role="status">Saving display settings...</div> : null}
                 {[
                   ...settings.peopleListColumns.filter((columnId) =>
                     PEOPLE_LIST_COLUMN_DEFS.some((column) => column.id === columnId),

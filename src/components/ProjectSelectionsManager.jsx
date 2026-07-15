@@ -9,6 +9,7 @@ import { isImageFile } from '../utils/fileUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { openPreview } from '../platform/platformAdapter.js';
 
@@ -424,6 +425,7 @@ export default function ProjectSelectionsManager({
         label,
         projectId: project.id,
         due: '',
+        assignees: selection.vendor ? [selection.vendor] : [],
         assignee: selection.vendor || '',
         sourceSelectionId: selection.id || '',
         sourceSelectionProjectId: project.id,
@@ -477,6 +479,7 @@ export default function ProjectSelectionsManager({
       </div>
 
       <div className="selection-filters">
+        <ResponsiveFilterMenu label="Selection filters">
         <label className="task-filter">
           <span>Category</span>
           <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
@@ -508,6 +511,7 @@ export default function ProjectSelectionsManager({
             placeholder="Item, option, vendor..."
           />
         </label>
+        </ResponsiveFilterMenu>
       </div>
 
       {filteredSelections.length ? (

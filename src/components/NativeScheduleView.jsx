@@ -9,7 +9,7 @@ import {
   normalizeStartDate, syncProjectPhaseDates, syncProjectTasks, syncStepLinks,
   wouldCreateCycleFromPreds, wouldCreatePhaseCycleFromPreds,
 } from '../utils/schedule.js';
-import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, filterScheduleRows, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
+import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, filterScheduleRows, filterScheduleRowsForToday, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
 import {
   addDays, diffInDays, endOfMonth, endOfWeek, enumerateMonths,
   formatShortDate, formatTooltipDate,
@@ -21,12 +21,14 @@ import SavedFiltersControls from './SavedFiltersControls.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import SharedCalendarGrid from './SharedCalendarGrid.jsx';
 import MobileScheduleAgenda from './MobileScheduleAgenda.jsx';
+import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import {
   timelineItemIntersectsWindow,
   useHorizontalVirtualWindow,
   useVirtualRange,
 } from '../utils/virtualization.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { formatAssignees, getScheduleAssignees, getTaskAssignees, scheduleAssigneeFields, taskAssigneeFields } from '../utils/assignees.js';
 
 const ScheduleItemModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.ScheduleItemModal })));
 const DelayModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.DelayModal })));
@@ -51,6 +53,7 @@ const SCHEDULE_ZOOM_STORAGE_KEY = 'project-tracker:schedule-zoom';
 const SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-project-expansion';
 const SCHEDULE_PHASE_EXPANSION_STORAGE_KEY = 'project-tracker:schedule-phase-expansion';
 const SCHEDULE_HIDE_PAST_STORAGE_KEY = 'project-tracker:schedule-hide-past';
+const SCHEDULE_TODAY_ACTIVE_STORAGE_KEY = 'project-tracker:schedule-today-active';
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
 
 function getStoredScheduleView() {
@@ -162,7 +165,9 @@ export default function NativeScheduleView({
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const [activeGanttRowId, setActiveGanttRowId] = useState(null);
   const [hidePastScheduleItems, setHidePastScheduleItems] = useState(() => getStoredBoolean(SCHEDULE_HIDE_PAST_STORAGE_KEY));
+  const [showTodayActiveItems, setShowTodayActiveItems] = useState(() => getStoredBoolean(SCHEDULE_TODAY_ACTIVE_STORAGE_KEY));
   const [scheduleSearchQuery, setScheduleSearchQuery] = useState('');
+  const [mobileScheduleMenuOpen, setMobileScheduleMenuOpen] = useState(false);
   const [calendarItemFilter, setCalendarItemFilter] = useState('all');
   const isCalendarView = view === 'calendar';
   const isScheduleView = view === 'schedule';
@@ -203,10 +208,11 @@ export default function NativeScheduleView({
       window.localStorage.setItem(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY, JSON.stringify(expandedProjects));
       window.localStorage.setItem(SCHEDULE_PHASE_EXPANSION_STORAGE_KEY, JSON.stringify(expandedPhases));
       window.localStorage.setItem(SCHEDULE_HIDE_PAST_STORAGE_KEY, String(hidePastScheduleItems));
+      window.localStorage.setItem(SCHEDULE_TODAY_ACTIVE_STORAGE_KEY, String(showTodayActiveItems));
     } catch {
       // Storage can be unavailable in privacy-restricted browsers; the in-memory preferences still work.
     }
-  }, [expandedPhases, expandedProjects, ganttZoomValue, hidePastScheduleItems, isScheduleView, scheduleDisplayMode]);
+  }, [expandedPhases, expandedProjects, ganttZoomValue, hidePastScheduleItems, isScheduleView, scheduleDisplayMode, showTodayActiveItems]);
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -290,11 +296,12 @@ export default function NativeScheduleView({
   }, [expandedPhases, expandedProjects, filteredProjects]);
 
   const scheduleSearchActive = scheduleSearchQuery.trim().length > 0;
+  const scheduleContextFilterActive = scheduleSearchActive || showTodayActiveItems;
   const scheduleRows = useMemo(() => {
-    const searchExpandedProjects = scheduleSearchActive
+    const searchExpandedProjects = scheduleContextFilterActive
       ? Object.fromEntries(filteredProjects.map((project) => [project.id, true]))
       : expandedProjects;
-    const searchExpandedPhases = scheduleSearchActive
+    const searchExpandedPhases = scheduleContextFilterActive
       ? Object.fromEntries(filteredProjects.flatMap((project) => (project.phases || []).map((phase) => [phase.id, true])))
       : expandedPhases;
     return buildScheduleRowsView(
@@ -305,11 +312,11 @@ export default function NativeScheduleView({
         searchExpandedPhases,
         { showCurrentAndFutureOnly: hidePastScheduleItems },
       );
-  }, [expandedPhases, expandedProjects, filteredProjects, hidePastScheduleItems, scheduleSearchActive, showGanttTasks, tasksByProject]);
-  const rows = useMemo(
-    () => filterScheduleRows(scheduleRows, scheduleSearchQuery),
-    [scheduleRows, scheduleSearchQuery],
-  );
+  }, [expandedPhases, expandedProjects, filteredProjects, hidePastScheduleItems, scheduleContextFilterActive, showGanttTasks, tasksByProject]);
+  const rows = useMemo(() => {
+    const matchingRows = filterScheduleRows(scheduleRows, scheduleSearchQuery);
+    return showTodayActiveItems ? filterScheduleRowsForToday(matchingRows, toIsoDate(new Date())) : matchingRows;
+  }, [scheduleRows, scheduleSearchQuery, showTodayActiveItems]);
 
   const datedRows = useMemo(
     () => rows.filter((row) => parseDateValue(row.start) && parseDateValue(row.end || row.start)),
@@ -737,7 +744,7 @@ export default function NativeScheduleView({
       projectId: row.parentProjectId,
       phaseId: row.entityId,
       name: row.label,
-      assign: row.assign || '',
+      assignees: getScheduleAssignees(row),
       status: row.status || 'planning',
       color: step?.color || TASK_COLOR_PALETTE[0],
       start: row.start || '',
@@ -760,7 +767,7 @@ export default function NativeScheduleView({
       sourcePhaseId: row.parentPhaseId,
       stepId: row.entityId,
       name: row.label,
-      assign: row.assign || '',
+      assignees: getScheduleAssignees(row),
       status: row.status || 'planning',
       start: row.start || '',
       duration: row.duration || 1,
@@ -843,7 +850,7 @@ export default function NativeScheduleView({
       sourcePhaseId: phaseId,
       stepId: '',
       name: '',
-      assign: '',
+      assignees: [],
       status: 'planning',
       color: getNextTaskColor(state.projects),
       start,
@@ -898,7 +905,7 @@ export default function NativeScheduleView({
       projectId,
       phaseId: '',
       name: '',
-      assign: '',
+      assignees: [],
       status: 'planning',
       start: '',
       end: '',
@@ -934,6 +941,7 @@ export default function NativeScheduleView({
       const newPhase = {
         id: `ph${Date.now()}`,
         name: trimmed,
+        assignees: [],
         assign: '',
         status: 'planning',
         start: '',
@@ -1064,7 +1072,7 @@ export default function NativeScheduleView({
         entityId: item.phaseId,
         parentProjectId: item.projectId,
         label: item.label,
-        assign: item.assign,
+        assignees: getScheduleAssignees(item),
         status: item.status,
         start: item.start,
         end: item.end,
@@ -1077,7 +1085,7 @@ export default function NativeScheduleView({
         parentProjectId: item.projectId,
         parentPhaseId: item.phaseId,
         label: item.label,
-        assign: item.assign,
+        assignees: getScheduleAssignees(item),
         status: item.status,
         start: item.start,
         end: item.end,
@@ -1314,7 +1322,7 @@ export default function NativeScheduleView({
       label: taskLike.label || '',
       projectId: taskLike.projectId || taskLike.parentProjectId || '',
       due: taskLike.due || taskLike.start || '',
-      assignee: taskLike.assignee || '',
+      assignees: getTaskAssignees(taskLike),
       done: !!taskLike.done,
     });
   }
@@ -1349,7 +1357,7 @@ export default function NativeScheduleView({
         label: taskDraft.label.trim(),
         projectId: taskDraft.projectId || '',
         due: taskDraft.due || '',
-        assignee: taskDraft.assignee || '',
+        ...taskAssigneeFields(taskDraft.assignees),
         done: !!taskDraft.done,
       });
       onStateChange(nextState);
@@ -1407,9 +1415,15 @@ export default function NativeScheduleView({
       onStateChange(nextState);
       if (nextAssignee) {
         if (personAssignmentTarget === 'schedule') {
-          setEditorDraft((current) => (current ? { ...current, assign: nextAssignee } : current));
+          setEditorDraft((current) => (current ? {
+            ...current,
+            assignees: [...new Set([...(current.assignees || []), nextAssignee])],
+          } : current));
         } else {
-          setTaskDraft((current) => (current ? { ...current, assignee: nextAssignee } : current));
+          setTaskDraft((current) => (current ? {
+            ...current,
+            assignees: [...new Set([...(current.assignees || []), nextAssignee])],
+          } : current));
         }
       }
       setTaskPersonDraft(null);
@@ -1549,7 +1563,7 @@ export default function NativeScheduleView({
     if (!editorDraft || (editorDraft.type !== 'step' && editorDraft.type !== 'phase')) return;
     setEditorPredecessorDraft({
       entityType: editorDraft.type,
-      name: editorDraft.name || (editorDraft.type === 'phase' ? 'New phase' : 'New step'),
+      name: editorDraft.name || (editorDraft.type === 'phase' ? 'New phase' : 'New schedule step'),
       options: (editorDraft.predecessorOptions || []).map((option) => ({ ...option })),
     });
   }
@@ -1708,7 +1722,7 @@ export default function NativeScheduleView({
   async function handleSaveEditor(nextAction = 'close') {
     if (!editorDraft?.name.trim()) return;
     if (editorDraft.type === 'step' && (!editorDraft.projectId || !editorDraft.phaseId)) {
-      await showAppAlert('Choose a project and phase before saving the step.', 'Missing project or phase');
+      await showAppAlert('Choose a project and phase before saving the schedule step.', 'Missing project or phase');
       return;
     }
 
@@ -1739,7 +1753,7 @@ export default function NativeScheduleView({
                   {
                     id: phaseId,
                     name: editorDraft.name.trim(),
-                    assign: editorDraft.assign.trim(),
+                    ...scheduleAssigneeFields(editorDraft.assignees),
                     status: editorDraft.status,
                     start: '',
                     end: '',
@@ -1752,7 +1766,7 @@ export default function NativeScheduleView({
                     ? {
                         ...phase,
                         name: editorDraft.name.trim(),
-                        assign: editorDraft.assign.trim(),
+                        ...scheduleAssigneeFields(editorDraft.assignees),
                         status: editorDraft.status,
                         predecessors: nextPreds,
                       }
@@ -1793,7 +1807,7 @@ export default function NativeScheduleView({
         ...(existingStep || {}),
         id: editorDraft.mode === 'create' ? `s${Date.now()}` : editorDraft.stepId,
         name: editorDraft.name.trim(),
-        assign: editorDraft.assign.trim(),
+        ...scheduleAssigneeFields(editorDraft.assignees),
         status: editorDraft.status,
         color: editorDraft.color || TASK_COLOR_PALETTE[0],
         done: editorDraft.status === 'done',
@@ -2255,49 +2269,63 @@ export default function NativeScheduleView({
           {isScheduleView ? (
             <div className="schedule-toolbar-summary">
               <strong>Schedule</strong>
-              <span>{rows.length} {scheduleSearchActive ? 'matching' : 'visible'} items</span>
+              <span>{rows.length} {showTodayActiveItems ? 'active today' : scheduleSearchActive ? 'matching' : 'visible'} items</span>
             </div>
           ) : null}
           {isScheduleView ? (
             <div className="schedule-toolbar-actions">
-              <input
-                className="schedule-search-input"
-                type="search"
-                value={scheduleSearchQuery}
-                onChange={(event) => setScheduleSearchQuery(event.target.value)}
-                aria-label="Search schedule"
-                placeholder="Search schedule"
-              />
-              <label className="schedule-history-filter">
+              <div className={`schedule-secondary-controls${mobileScheduleMenuOpen ? ' mobile-open' : ''}`}>
                 <input
-                  type="checkbox"
-                  checked={hidePastScheduleItems}
-                  onChange={(event) => setHidePastScheduleItems(event.target.checked)}
+                  className="schedule-search-input"
+                  type="search"
+                  value={scheduleSearchQuery}
+                  onChange={(event) => setScheduleSearchQuery(event.target.value)}
+                  aria-label="Search schedule"
+                  placeholder="Search schedule"
                 />
-                <span>Hide past</span>
-              </label>
-              <SavedFiltersControls
-                storageKey={`project-tracker:saved-filters:schedule:${activeUser?.id || 'default'}`}
-                currentValue={{
-                  projectId: projectFilter,
-                  query: scheduleSearchQuery,
-                  hidePast: hidePastScheduleItems,
-                  displayMode: scheduleDisplayMode,
-                  zoom: ganttZoomValue,
-                }}
-                onApply={(filter) => {
-                  onProjectFilterChange(
-                    filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
-                      ? filter.projectId
-                      : 'all',
-                  );
-                  setScheduleSearchQuery(String(filter.query || ''));
-                  setHidePastScheduleItems(filter.hidePast === true);
-                  setScheduleDisplayMode(filter.displayMode === 'agenda' ? 'agenda' : 'gantt');
-                  setGanttZoomValue(Math.min(GANTT_ZOOM_OPTIONS.length - 1, Math.max(0, Number(filter.zoom) || 0)));
-                }}
-                disabled={false}
-              />
+                <label className="schedule-history-filter" role="menuitemcheckbox" aria-checked={hidePastScheduleItems}>
+                  <input
+                    type="checkbox"
+                    checked={hidePastScheduleItems}
+                    onChange={(event) => setHidePastScheduleItems(event.target.checked)}
+                  />
+                  <span>Hide past</span>
+                </label>
+                <label className="schedule-history-filter schedule-today-active-filter" role="menuitemcheckbox" aria-checked={showTodayActiveItems}>
+                  <input
+                    type="checkbox"
+                    checked={showTodayActiveItems}
+                    onChange={(event) => setShowTodayActiveItems(event.target.checked)}
+                  />
+                  <span>Today&apos;s active items</span>
+                </label>
+                <div className="schedule-saved-filters-menu-item">
+                  <SavedFiltersControls
+                    storageKey={`project-tracker:saved-filters:schedule:${activeUser?.id || 'default'}`}
+                    currentValue={{
+                      projectId: projectFilter,
+                      query: scheduleSearchQuery,
+                      hidePast: hidePastScheduleItems,
+                      todayActive: showTodayActiveItems,
+                      displayMode: scheduleDisplayMode,
+                      zoom: ganttZoomValue,
+                    }}
+                    onApply={(filter) => {
+                      onProjectFilterChange(
+                        filter.projectId === 'all' || visibleProjects.some((project) => project.id === filter.projectId)
+                          ? filter.projectId
+                          : 'all',
+                      );
+                      setScheduleSearchQuery(String(filter.query || ''));
+                      setHidePastScheduleItems(filter.hidePast === true);
+                      setShowTodayActiveItems(filter.todayActive === true);
+                      setScheduleDisplayMode(filter.displayMode === 'agenda' ? 'agenda' : 'gantt');
+                      setGanttZoomValue(Math.min(GANTT_ZOOM_OPTIONS.length - 1, Math.max(0, Number(filter.zoom) || 0)));
+                    }}
+                    disabled={false}
+                  />
+                </div>
+              </div>
               <button className="button secondary schedule-today-button" type="button" onClick={handleScheduleToday}>
                 Today
               </button>
@@ -2333,8 +2361,25 @@ export default function NativeScheduleView({
                 />
                 <strong>{ganttZoomLabel}</strong>
               </div>
-              <button className="button secondary" type="button" onClick={toggleAllExpanded}>
-                {allExpanded ? 'Collapse all' : 'Expand all'}
+              <button
+                className="button secondary expand-collapse-all-button schedule-expand-toggle"
+                type="button"
+                onClick={toggleAllExpanded}
+                aria-label={allExpanded ? 'Collapse all' : 'Expand all'}
+                title={allExpanded ? 'Collapse all' : 'Expand all'}
+              >
+                <FluentIcon name={allExpanded ? 'collapseAll' : 'expandAll'} className="schedule-expand-icon" />
+                <span>{allExpanded ? 'Collapse all' : 'Expand all'}</span>
+              </button>
+              <button
+                className={`button secondary schedule-mobile-only schedule-icon-button schedule-overflow-toggle${mobileScheduleMenuOpen ? ' active' : ''}`}
+                type="button"
+                onClick={() => setMobileScheduleMenuOpen((current) => !current)}
+                aria-label="Schedule options"
+                aria-expanded={mobileScheduleMenuOpen}
+                title="Schedule options"
+              >
+                <FluentIcon name="moreVertical" />
               </button>
             </div>
           ) : null}
@@ -2349,7 +2394,7 @@ export default function NativeScheduleView({
           rows={rows}
           className={scheduleDisplayMode === 'agenda' ? 'desktop-visible' : ''}
           agendaRef={mobileAgendaRef}
-          expansionLocked={scheduleSearchActive}
+          expansionLocked={scheduleContextFilterActive}
           onToggle={(row) => row.type === 'project' ? toggleProject(row.entityId) : togglePhase(row.entityId)}
           onAddPhase={(row) => startCreatePhase(row.entityId)}
           onAddStep={(row) => startCreateStep(row.parentProjectId, row.entityId)}
@@ -2398,23 +2443,25 @@ export default function NativeScheduleView({
                   <div className="gantt-row-title-line">
                     {row.type === 'project' ? (
                       <button
-                        className="gantt-expand-button"
+                        className="expand-collapse-button gantt-expand-button"
                         type="button"
-                        disabled={scheduleSearchActive}
+                        disabled={scheduleContextFilterActive}
                         onClick={() => toggleProject(row.entityId)}
+                        aria-expanded={row.expanded}
                         aria-label={row.expanded ? 'Collapse project' : 'Expand project'}
                       >
-                        {row.expanded ? '-' : '+'}
+                        <FluentIcon name="chevronRight" className="expand-collapse-icon" />
                       </button>
                     ) : row.type === 'phase' ? (
                       <button
-                        className="gantt-expand-button"
+                        className="expand-collapse-button gantt-expand-button"
                         type="button"
-                        disabled={scheduleSearchActive}
+                        disabled={scheduleContextFilterActive}
                         onClick={() => togglePhase(row.entityId)}
+                        aria-expanded={row.expanded}
                         aria-label={row.expanded ? 'Collapse phase' : 'Expand phase'}
                       >
-                        {row.expanded ? '-' : '+'}
+                        <FluentIcon name="chevronRight" className="expand-collapse-icon" />
                       </button>
                     ) : (
                       <span className="gantt-expand-spacer" />
@@ -2456,8 +2503,8 @@ export default function NativeScheduleView({
                         className="button secondary gantt-edit-button gantt-icon-button"
                         type="button"
                         onClick={() => startCreateStep(row.parentProjectId, row.entityId)}
-                        aria-label={`Add step to ${row.label}`}
-                        title="Add step"
+                        aria-label={`Add schedule step to ${row.label}`}
+                        title="Add schedule step"
                       >
                         <FluentIcon name="add" />
                       </button>
@@ -2488,7 +2535,7 @@ export default function NativeScheduleView({
                         type="button"
                         onClick={() => deleteStepFromRow(row)}
                         aria-label={`Delete ${row.label}`}
-                        title="Delete step"
+                        title="Delete schedule step"
                       >
                         <FluentIcon name="delete" />
                       </button>
@@ -2497,7 +2544,7 @@ export default function NativeScheduleView({
                         type="button"
                         onClick={(event) => openStepEditor(row, event)}
                         aria-label={`Edit ${row.label}`}
-                        title="Edit step"
+                        title="Edit schedule step"
                       >
                         <FluentIcon name="edit" />
                       </button>
@@ -2676,7 +2723,7 @@ export default function NativeScheduleView({
                 const barTitle =
                   row.type === 'delay'
                     ? `${row.label}: ${formatTooltipDate(row.start)}${row.end && row.end !== row.start ? ` to ${formatTooltipDate(row.end)}` : ''}`
-                    : `${row.label}: ${formatTooltipDate(row.start)}${row.end && row.end !== row.start ? ` to ${formatTooltipDate(row.end)}` : ''}${row.assign ? ` | Assignee: ${row.assign}` : ''}`;
+                    : `${row.label}: ${formatTooltipDate(row.start)}${row.end && row.end !== row.start ? ` to ${formatTooltipDate(row.end)}` : ''}${row.assignees?.length ? ` | Assignees: ${formatAssignees(row.assignees)}` : ''}`;
                 return (
                   <div
                     key={row.id}
@@ -2736,7 +2783,7 @@ export default function NativeScheduleView({
         <div className="empty-state">
           <h3>No scheduled items to show</h3>
           <p>
-            Add phase, step, delay, or task dates to see them in the Gantt timeline.
+            Add a phase, schedule step, delay, or standalone task due date to see it in the Gantt timeline.
           </p>
           <button
             className="button primary"
@@ -2744,7 +2791,7 @@ export default function NativeScheduleView({
             onClick={() => startCreateStep(emptyScheduleTarget.projectId, emptyScheduleTarget.phaseId)}
             disabled={!emptyScheduleTarget.projectId}
           >
-            Add step
+            Add schedule step
           </button>
         </div>
       )}
@@ -2753,7 +2800,7 @@ export default function NativeScheduleView({
 
       {isScheduleView ? (
         <div className="schedule-footer-note">
-          <strong>Tip:</strong> drag from the small handle at the end of a step bar onto another step in the same phase to create a dependency instantly.
+          <strong>Tip:</strong> drag from the small handle at the end of a schedule step bar onto another schedule step in the same phase to create a dependency instantly.
         </div>
       ) : null}
 
@@ -2790,12 +2837,13 @@ export default function NativeScheduleView({
             </button>
           </div>
           <div className="calendar-filter-actions">
+            <ResponsiveFilterMenu label="Calendar filters">
             <label className="task-filter calendar-item-filter">
               <span>Show</span>
               <select value={calendarItemFilter} onChange={(event) => setCalendarItemFilter(event.target.value)}>
                 <option value="all">All items</option>
-                <option value="schedule">Schedule</option>
-                <option value="tasks">Tasks</option>
+                <option value="schedule">Schedule items</option>
+                <option value="tasks">Standalone tasks</option>
                 <option value="inspections">Inspections</option>
               </select>
             </label>
@@ -2812,6 +2860,7 @@ export default function NativeScheduleView({
               }}
               disabled={false}
             />
+            </ResponsiveFilterMenu>
           </div>
         </div>
 
@@ -2930,9 +2979,9 @@ export default function NativeScheduleView({
       <PageStats settings={data.settings}>
         <DashboardStat label="Projects" value={filteredProjects.length} tone="brand" />
         <DashboardStat label="Phases" value={stats.phases} />
-        <DashboardStat label="Steps" value={stats.steps} />
+        <DashboardStat label="Schedule steps" value={stats.steps} />
         <DashboardStat
-          label="Visible tasks"
+          label="Visible standalone tasks"
           value={(isCalendarView ? showCalendarTasks : showGanttTasks) ? stats.visibleTaskCount : 0}
         />
       </PageStats>

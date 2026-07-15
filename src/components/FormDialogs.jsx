@@ -3,12 +3,12 @@ import { renderModalPortal } from './AppDialogs.jsx';
 
 export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange, onClose, onSave }) {
   if (!draft) return null;
-  const entityLabel = draft.entityType === 'phase' ? 'Phase' : 'Step';
-  const emptyTitle = draft.entityType === 'phase' ? 'No other phases in this project' : 'No other steps in this phase';
+  const entityLabel = draft.entityType === 'phase' ? 'Phase' : 'Schedule step';
+  const emptyTitle = draft.entityType === 'phase' ? 'No other phases in this project' : 'No other schedule steps in this phase';
   const emptyCopy =
     draft.entityType === 'phase'
       ? 'Add more phases to create dependencies between phases in this project.'
-      : 'Add more steps to create dependencies in this phase.';
+      : 'Add more schedule steps to create dependencies in this phase.';
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card dependency-modal-card" role="dialog" aria-modal="true" aria-labelledby="predecessor-dialog-title" onClick={(event) => event.stopPropagation()}>
@@ -64,7 +64,7 @@ export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange,
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving} aria-busy={saving}>
             {saving ? 'Saving...' : 'Use predecessors'}
           </button>
         </div>
@@ -105,7 +105,7 @@ export function MoveFileModal({ draft, saving, onChange, onClose, onSave }) {
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving || draft.targetFolderId === draft.sourceFolderId}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving || draft.targetFolderId === draft.sourceFolderId} aria-busy={saving}>
             {saving ? 'Saving...' : 'Move file'}
           </button>
         </div>
@@ -152,7 +152,7 @@ export function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className="button primary" type="button" onClick={onSave} disabled={saving || !String(draft.value || '').trim()}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving || !String(draft.value || '').trim()} aria-busy={saving}>
             {saving ? 'Saving...' : draft.saveLabel || 'Save'}
           </button>
         </div>

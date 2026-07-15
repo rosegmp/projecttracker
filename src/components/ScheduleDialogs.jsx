@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import { formatShortDate, formatTooltipDate } from '../utils/calendarUi.js';
+import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
 
@@ -23,9 +24,6 @@ export function ScheduleItemModal({
   const isEditing = draft.mode !== 'create';
   const selectedProject = type === 'step' ? projects.find((project) => project.id === draft.projectId) : null;
   const phaseOptions = selectedProject?.phases || [];
-  const resolvedAssigneeOptions = draft.assign && !assigneeOptions.includes(draft.assign)
-    ? [draft.assign, ...assigneeOptions]
-    : assigneeOptions;
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card schedule-modal-card" role="dialog" aria-modal="true" aria-labelledby="schedule-item-modal-title" onClick={(event) => event.stopPropagation()}>
@@ -36,10 +34,10 @@ export function ScheduleItemModal({
               {isEditing
                 ? type === 'phase'
                   ? 'Edit phase'
-                  : 'Edit step'
+                  : 'Edit schedule step'
                 : type === 'phase'
                   ? 'Add phase'
-                  : 'Add step'}
+                  : 'Add schedule step'}
             </h2>
           </div>
         </div>
@@ -87,21 +85,19 @@ export function ScheduleItemModal({
           ) : null}
 
           <label>
-            <span>{type === 'phase' ? 'Phase name' : 'Step name'}</span>
+            <span>{type === 'phase' ? 'Phase name' : 'Schedule step name'}</span>
             <input value={draft.name} onChange={(event) => onChange('name', event.target.value)} />
           </label>
 
           <label>
-            <span>Assignee</span>
+            <span>Assignees</span>
             <div className="inline-action-field">
-              <select value={draft.assign || ''} onChange={(event) => onChange('assign', event.target.value)}>
-                <option value="">Unassigned</option>
-                {resolvedAssigneeOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+              <AssigneeMultiSelect
+                value={draft.assignees}
+                options={assigneeOptions}
+                onChange={(value) => onChange('assignees', value)}
+                disabled={saving}
+              />
               {onAddPerson ? (
                 <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
                   Add person
@@ -142,7 +138,7 @@ export function ScheduleItemModal({
               </label>
 
               <label>
-                <span>Task color</span>
+                <span>Schedule step color</span>
                 <input
                   type="color"
                   value={draft.color || TASK_COLOR_PALETTE[0]}
@@ -181,7 +177,7 @@ export function ScheduleItemModal({
                   value={
                     draft.start || draft.end
                       ? `${draft.start ? formatShortDate(draft.start) : 'No start'} - ${draft.end ? formatShortDate(draft.end) : 'No end'}`
-                      : 'Dates are driven by scheduled steps'
+                      : 'Dates are driven by schedule steps'
                   }
                   readOnly
                 />
@@ -217,7 +213,7 @@ export function ScheduleItemModal({
             </button>
           ) : null}
           <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving...' : type === 'phase' ? 'Save phase' : 'Save step'}
+            {saving ? 'Saving...' : type === 'phase' ? 'Save phase' : 'Save schedule step'}
           </button>
         </div>
       </div>
@@ -240,7 +236,7 @@ export function DelayModal({ draft, saving, onChange, onClose, onSave, onDelete 
 
         <div className="project-form-grid">
           <label className="full">
-            <span>Affected step</span>
+            <span>Affected schedule step</span>
             <select value={draft.stepId} onChange={(event) => onChange('stepId', event.target.value)}>
               {draft.stepOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -306,7 +302,7 @@ export function DependencyModal({ draft, saving, onTogglePred, onLagChange, onCl
         <div className="panel-header">
           <div>
             <p className="eyebrow">Dependencies</p>
-            <h2 id="dependency-modal-title">Step Dependencies</h2>
+            <h2 id="dependency-modal-title">Schedule Step Dependencies</h2>
             <p className="panel-copy">
               Editing: <strong>{draft.name}</strong>
             </p>
@@ -345,8 +341,8 @@ export function DependencyModal({ draft, saving, onTogglePred, onLagChange, onCl
             ))
           ) : (
             <div className="empty-state compact">
-              <h3>No other steps in this phase</h3>
-              <p>Add more steps to create dependencies in this phase.</p>
+              <h3>No other schedule steps in this phase</h3>
+              <p>Add more schedule steps to create dependencies in this phase.</p>
             </div>
           )}
         </div>
