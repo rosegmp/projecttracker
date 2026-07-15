@@ -248,23 +248,32 @@ export default function NativeTasksView({
   );
 
   const groupedTasks = useMemo(() => {
-    if (groupBy !== 'assignee') return [];
+    if (groupBy === 'none') return [];
     const groups = new Map();
     filteredTasks.forEach((task) => {
-      const keys = getTaskAssignees(task);
+      const keys = groupBy === 'project'
+        ? [task.projectId || '__no_project__']
+        : getTaskAssignees(task);
       (keys.length ? keys : ['Unassigned']).forEach((key) => {
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(task);
+        if (!groups.has(key)) {
+          groups.set(key, {
+            key,
+            label: groupBy === 'project'
+              ? projectMap.get(key)?.name || 'No project assigned'
+              : key,
+            tasks: [],
+          });
+        }
+        groups.get(key).tasks.push(task);
       });
     });
-    return [...groups.entries()]
+    return [...groups.values()]
       .sort((a, b) => {
-        if (a[0] === 'Unassigned') return 1;
-        if (b[0] === 'Unassigned') return -1;
-        return a[0].localeCompare(b[0]);
-      })
-      .map(([label, tasks]) => ({ label, tasks }));
-  }, [filteredTasks, groupBy]);
+        if (a.label === 'Unassigned' || a.label === 'No project assigned') return 1;
+        if (b.label === 'Unassigned' || b.label === 'No project assigned') return -1;
+        return a.label.localeCompare(b.label);
+      });
+  }, [filteredTasks, groupBy, projectMap]);
 
   const openTasksByAssignee = useMemo(() => {
     const groups = new Map();
@@ -696,6 +705,7 @@ export default function NativeTasksView({
             <span>Group by</span>
             <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
               <option value="none">None</option>
+              {!embedded && !lockedProjectId ? <option value="project">Project</option> : null}
               <option value="assignee">Assignee</option>
             </select>
           </label>
@@ -715,7 +725,7 @@ export default function NativeTasksView({
                     ? filter.assignee
                     : 'all',
                 );
-                setGroupBy(filter.groupBy === 'assignee' ? 'assignee' : 'none');
+                setGroupBy(['project', 'assignee'].includes(filter.groupBy) ? filter.groupBy : 'none');
               }}
               disabled={false}
             />
@@ -755,27 +765,29 @@ export default function NativeTasksView({
       <section className="workspace-section">
         <div className="task-list">
           {filteredTasks.length ? (
-            groupBy === 'assignee' ? (
+            groupBy !== 'none' ? (
               groupedTasks.map((group) => (
-                <section key={group.label} className="task-group">
+                <section key={group.key} className="task-group">
                   <div className="task-group-header">
                     <h4>{group.label}</h4>
                     <div className="task-group-header-actions">
                       <span>{group.tasks.length}</span>
-                      <button
-                        className="button secondary gantt-icon-button"
-                        type="button"
-                        onClick={() => handleEmailAssigneeGroup(group.label)}
-                        disabled={!(openTasksByAssignee.get(group.label)?.length)}
-                        title={
-                          assigneeDirectory.get(group.label)?.email
-                            ? 'Email all open tasks to assignee'
-                            : 'Add an email or continue without a recipient'
-                        }
-                        aria-label={`Email open tasks for ${group.label}`}
-                      >
-                        <FluentIcon name="mail" />
-                      </button>
+                      {groupBy === 'assignee' ? (
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => handleEmailAssigneeGroup(group.label)}
+                          disabled={!(openTasksByAssignee.get(group.label)?.length)}
+                          title={
+                            assigneeDirectory.get(group.label)?.email
+                              ? 'Email all open tasks to assignee'
+                              : 'Add an email or continue without a recipient'
+                          }
+                          aria-label={`Email open tasks for ${group.label}`}
+                        >
+                          <FluentIcon name="mail" />
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <VirtualTaskRows

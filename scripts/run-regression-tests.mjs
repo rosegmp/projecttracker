@@ -26,6 +26,7 @@ import {
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
+import { hydrateProjectsWithNormalizedSchedule } from '../src/services/trackerData.js';
 import { normalizeMutationKey } from '../src/hooks/useEntityMutations.js';
 import {
   calculateHorizontalWindow,
@@ -64,6 +65,11 @@ const tests = [
       assert.match(styleSource, /\.top-level-schedule-page \.gantt-icon-button\s*\{\s*opacity:\s*1;/s);
       assert.match(styleSource, /\.gantt-connect-handle::after\s*\{/);
       assert.match(styleSource, /\.files-tree-toggle,[\s\S]*?min-width:\s*var\(--touch-target-size\)/s);
+      assert.match(styleSource, /\.workspace-content-main :where\([\s\S]*?\.mobile-filter-menu-trigger,[\s\S]*?background:\s*transparent !important;/s);
+      assert.match(styleSource, /\.files-list-row \.gantt-icon-button \.fluent-icon,[\s\S]*?width:\s*44px;[\s\S]*?font-size:\s*44px !important;/s);
+      assert.doesNotMatch(styleSource, /\.material-top-app-bar[\s\S]{0,240}font-size:\s*44px !important;/s);
+      assert.match(styleSource, /\.task-row-card \.task-attachment-list-inline,[\s\S]*?\.task-row-card > \.task-row-actions\s*\{[\s\S]*?grid-column:\s*1;/s);
+      assert.match(styleSource, /\.task-row-card > \.task-row-actions\s*\{[\s\S]*?flex-wrap:\s*nowrap;/s);
     },
   },
   {
@@ -147,6 +153,9 @@ const tests = [
       assert.match(tasksSource, /<option value="__unassigned__">Unassigned<\/option>/);
       assert.match(tasksSource, /currentValue=\{\{ projectId: projectFilter, status: statusFilter, assignee: assigneeFilter, groupBy \}\}/);
       assert.match(tasksSource, /all: assigneeScopedTasks\.length/);
+      assert.match(tasksSource, /<option value="project">Project<\/option>/);
+      assert.match(tasksSource, /groupBy === 'project'[\s\S]*?projectMap\.get\(key\)\?\.name \|\| 'No project assigned'/s);
+      assert.match(tasksSource, /setGroupBy\(\['project', 'assignee'\]\.includes\(filter\.groupBy\)/);
     },
   },
   {
@@ -320,6 +329,22 @@ const tests = [
       assert.match(nativeSource, /MediaStore\.Downloads\.EXTERNAL_CONTENT_URI/);
       assert.match(nativeSource, /Environment\.DIRECTORY_DOWNLOADS/);
       assert.match(activitySource, /registerPlugin\(DownloadsPlugin\.class\)/);
+    },
+  },
+  {
+    name: 'Android launcher icon uses the brand mark and adaptive icon layers',
+    async run() {
+      const buildSource = await readFile(new URL('../android/app/build.gradle', import.meta.url), 'utf8');
+      const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
+      const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
+      const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
+      assert.match(buildSource, /versionCode 3/);
+      assert.match(buildSource, /versionName "1\.2"/);
+      assert.match(adaptiveSource, /<foreground android:drawable="@mipmap\/ic_launcher_foreground"\/>/);
+      assert.match(adaptiveSource, /<monochrome android:drawable="@mipmap\/ic_launcher_foreground"\/>/);
+      assert.match(backgroundSource, /#444A80/);
+      assert.match(generatorSource, /destiny-logo\.png/);
+      assert.match(generatorSource, /ic_launcher_round\.png/);
     },
   },
   {
@@ -532,6 +557,44 @@ const tests = [
       assert.match(migrationSource, /version = version \+ 1/);
       assert.match(migrationSource, /create or replace function public\.bump_tracker_record_version/);
       assert.match(migrationSource, /actor_role = 'Edit'/);
+    },
+  },
+  {
+    name: 'project phases and schedule steps use a normalized Supabase read model',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260715150000_normalize_project_schedule.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_phases/);
+      assert.match(migrationSource, /create table if not exists public\.project_steps/);
+      assert.match(migrationSource, /foreign key \(project_id, phase_id\)[\s\S]*?on delete cascade/s);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_project_schedule/);
+      assert.match(migrationSource, /projects_normalized_schedule_insert_trigger/);
+      assert.match(migrationSource, /projects_normalized_schedule_update_trigger/);
+      assert.match(migrationSource, /for project_row in select id, data from public\.projects loop/);
+      assert.match(migrationSource, /alter table public\.project_phases enable row level security/);
+      assert.match(migrationSource, /alter table public\.project_steps enable row level security/);
+      assert.match(trackerSource, /export function hydrateProjectsWithNormalizedSchedule/);
+      assert.match(trackerSource, /\/rest\/v1\/project_phases\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_steps\?select=/);
+      assert.match(trackerSource, /using project JSON schedule data/);
+
+      const [project] = hydrateProjectsWithNormalizedSchedule(
+        [{ id: 'project-1', name: 'Lake House', phases: [{ id: 'legacy', name: 'Legacy' }] }],
+        [
+          { project_id: 'project-1', id: 'phase-2', position: 1, data: { name: 'Finish' } },
+          { project_id: 'project-1', id: 'phase-1', position: 0, data: { name: 'Foundation' } },
+        ],
+        [
+          { project_id: 'project-1', phase_id: 'phase-1', id: 'step-2', position: 1, data: { name: 'Pour' } },
+          { project_id: 'project-1', phase_id: 'phase-1', id: 'step-1', position: 0, data: { name: 'Excavate' } },
+        ],
+      );
+      assert.deepEqual(project.phases.map((phase) => phase.id), ['phase-1', 'phase-2']);
+      assert.deepEqual(project.phases[0].steps.map((step) => step.id), ['step-1', 'step-2']);
+      assert.equal(project.phases[0].name, 'Foundation');
     },
   },
   {
@@ -927,6 +990,10 @@ const tests = [
       assert.match(pickerSource, /type="checkbox"/);
       assert.match(pickerSource, /setOpen\(false\)/);
       assert.match(pickerSource, />Done<\/button>/);
+      assert.match(pickerSource, /type="search"/);
+      assert.match(pickerSource, /placeholder="Search assignees"/);
+      assert.match(pickerSource, /resolvedOptions\.filter\(\(option\) => option\.toLocaleLowerCase\(\)\.includes\(query\)\)/);
+      assert.match(pickerSource, /No assignees match your search\./);
       assert.match(styleSource, /\.assignee-picker-layer\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;/s);
       assert.match(styleSource, /@media \(max-width: 560px\)[\s\S]*?\.assignee-picker-popover\s*\{[^}]*bottom:\s*0;/s);
     },

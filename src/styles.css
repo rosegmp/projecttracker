@@ -1265,6 +1265,22 @@ a {
   font-size: 12px;
 }
 
+.assignee-picker-search {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.assignee-picker-search input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
 .assignee-picker-actions {
   border-top: 1px solid var(--divider);
 }
@@ -1320,6 +1336,14 @@ a {
   .assignee-picker-header,
   .assignee-picker-actions {
     padding: 14px 16px;
+  }
+
+  .assignee-picker-search {
+    padding: 10px 16px;
+  }
+
+  .assignee-picker-search input {
+    min-height: var(--touch-target-size);
   }
 }
 
@@ -5998,6 +6022,19 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .task-row-card .task-attachment-list-inline,
+  .task-row-card > .task-row-actions {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  .task-row-card > .task-row-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
   .inline-action-field {
     grid-template-columns: 1fr;
   }
@@ -8138,7 +8175,7 @@ textarea:focus-visible {
     min-height: var(--touch-target-size);
   }
 
-  :where(
+  .workspace-content-main :where(
     .gantt-icon-button,
     .person-icon-button,
     .expand-collapse-button,
@@ -8153,6 +8190,42 @@ textarea:focus-visible {
     min-width: var(--touch-target-size);
     height: var(--touch-target-size);
     min-height: var(--touch-target-size);
+  }
+
+  :where(
+    .gantt-icon-button,
+    .person-icon-button,
+    .expand-collapse-button,
+    .project-card-expand-button,
+    .files-tree-toggle,
+    .files-drag-handle,
+    .inline-field-button,
+    .mobile-filter-menu-trigger,
+    .schedule-icon-button
+  ) {
+    padding: 0;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-content-main :where(
+    .gantt-icon-button,
+    .person-icon-button,
+    .expand-collapse-button,
+    .project-card-expand-button,
+    .files-tree-toggle,
+    .files-drag-handle,
+    .mobile-filter-menu-trigger,
+    .schedule-icon-button
+  ) .fluent-icon,
+  .files-folder-card .gantt-icon-button .fluent-icon,
+  .files-list-row .gantt-icon-button .fluent-icon,
+  .files-folder-card .files-drag-handle .fluent-icon,
+  .files-list-row .files-drag-handle .fluent-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 44px !important;
   }
 
   :where(

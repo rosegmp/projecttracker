@@ -5,12 +5,19 @@ import { renderModalPortal } from './AppDialogs.jsx';
 export default function AssigneeMultiSelect({ value, options = [], onChange, disabled = false, className = '' }) {
   const buttonRef = useRef(null);
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [position, setPosition] = useState({ top: 0, left: 0, width: 260 });
   const selected = normalizeAssignees(value);
   const resolvedOptions = useMemo(
     () => Array.from(new Set([...selected, ...options].map((option) => String(option || '').trim()).filter(Boolean))),
     [options, selected],
   );
+  const filteredOptions = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    return query
+      ? resolvedOptions.filter((option) => option.toLocaleLowerCase().includes(query))
+      : resolvedOptions;
+  }, [resolvedOptions, searchQuery]);
 
   function toggle(option, checked) {
     onChange(checked ? [...selected, option] : selected.filter((item) => item !== option));
@@ -40,6 +47,10 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
     };
   }, [open, updatePosition]);
 
+  useEffect(() => {
+    if (!open) setSearchQuery('');
+  }, [open]);
+
   return (
     <div className={`assignee-multi-select${className ? ` ${className}` : ''}`}>
       <button
@@ -67,8 +78,18 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
               <strong>Assignees</strong>
               <span>{selected.length ? `${selected.length} selected` : 'None selected'}</span>
             </div>
+            <div className="assignee-picker-search">
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search assignees"
+                aria-label="Search assignees"
+                autoComplete="off"
+              />
+            </div>
             <div className="assignee-multi-options" role="group" aria-label="Assignees">
-              {resolvedOptions.length ? resolvedOptions.map((option) => (
+              {filteredOptions.length ? filteredOptions.map((option) => (
                 <label key={option} className="assignee-multi-option">
                   <input
                     type="checkbox"
@@ -78,7 +99,11 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
                   />
                   <span>{option}</span>
                 </label>
-              )) : <span className="assignee-multi-empty">Add a person to assign this item.</span>}
+              )) : (
+                <span className="assignee-multi-empty">
+                  {resolvedOptions.length ? 'No assignees match your search.' : 'Add a person to assign this item.'}
+                </span>
+              )}
             </div>
             <div className="assignee-picker-actions">
               {selected.length ? (

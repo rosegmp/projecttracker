@@ -1,9 +1,9 @@
 import { getCurrentUrl, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { trackerQueryClient } from './queryClient.js';
 
-const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-const SUPABASE_KEY = (import.meta.env.VITE_SUPABASE_KEY || '').trim();
-const SUPABASE_FILES_BUCKET = (import.meta.env.VITE_SUPABASE_FILES_BUCKET || 'project-files').trim();
+const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
+const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
+const SUPABASE_FILES_BUCKET = (import.meta.env?.VITE_SUPABASE_FILES_BUCKET || 'project-files').trim();
 const AUTH_STORAGE_KEY = 'cx_auth_session';
 
 let authSession = readAuthSessionFromStorage();
@@ -535,6 +535,46 @@ function normalizeProject(project) {
       ? project.inspections.map((inspection, index) => normalizeProjectInspection(inspection, index))
       : [],
   };
+}
+
+export function hydrateProjectsWithNormalizedSchedule(projects, phaseRows, stepRows) {
+  if (!Array.isArray(phaseRows) || !Array.isArray(stepRows)) return projects;
+
+  const stepsByPhase = new Map();
+  stepRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const phaseId = String(row?.phase_id || '').trim();
+    const stepId = String(row?.id || '').trim();
+    if (!projectId || !phaseId || !stepId) return;
+    const key = `${projectId}:${phaseId}`;
+    if (!stepsByPhase.has(key)) stepsByPhase.set(key, []);
+    stepsByPhase.get(key).push({
+      ...(row.data || {}),
+      id: stepId,
+      _position: Number(row.position) || 0,
+    });
+  });
+  stepsByPhase.forEach((steps) => steps.sort((left, right) => left._position - right._position));
+
+  const phasesByProject = new Map();
+  phaseRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const phaseId = String(row?.id || '').trim();
+    if (!projectId || !phaseId) return;
+    if (!phasesByProject.has(projectId)) phasesByProject.set(projectId, []);
+    phasesByProject.get(projectId).push({
+      ...(row.data || {}),
+      id: phaseId,
+      steps: (stepsByPhase.get(`${projectId}:${phaseId}`) || []).map(({ _position, ...step }) => step),
+      _position: Number(row.position) || 0,
+    });
+  });
+  phasesByProject.forEach((phases) => phases.sort((left, right) => left._position - right._position));
+
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    phases: (phasesByProject.get(project.id) || []).map(({ _position, ...phase }) => phase),
+  }));
 }
 
 function normalizeProjectSelection(selection, index = 0) {
@@ -1093,6 +1133,30 @@ async function loadSupabaseSettingsWithRetry() {
   return Array.isArray(response) ? response : null;
 }
 
+async function loadNormalizedProjectSchedule() {
+  try {
+    const [phases, steps] = await Promise.all([
+      querySupabaseJson(
+        ['project-phases'],
+        '/rest/v1/project_phases?select=project_id,id,position,data,version&order=project_id.asc,position.asc',
+        'Project phases',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-steps'],
+        '/rest/v1/project_steps?select=project_id,phase_id,id,position,data,version&order=project_id.asc,phase_id.asc,position.asc',
+        'Project steps',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(phases) || !Array.isArray(steps)) return null;
+    return { phases, steps };
+  } catch (error) {
+    console.warn('Normalized schedule tables are not available yet; using project JSON schedule data.', error);
+    return null;
+  }
+}
+
 function getRemoteSaveError(storageMode, context = 'save') {
   if (!isSupabaseConfigured()) {
     return new Error('Supabase is not configured for saving in this build.');
@@ -1155,12 +1219,13 @@ async function fetchTrackerData() {
   }
 
   try {
-    const [projectsResponse, tasksResponse, subsResponse, employeesResponse] =
+    const [projectsResponse, tasksResponse, subsResponse, employeesResponse, normalizedSchedule] =
       await Promise.all([
         querySupabaseJson(['projects'], '/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
         querySupabaseJson(['tasks'], '/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
         querySupabaseJson(['subs'], '/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
         querySupabaseJson(['employees'], '/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
+        loadNormalizedProjectSchedule(),
       ]);
 
     if (
@@ -1181,7 +1246,13 @@ async function fetchTrackerData() {
       console.warn('Settings load failed; using cached/default settings for this session.', error);
     }
 
-    const projects = projectsResponse.map((row) => normalizeProject({ ...(row.data || row), _version: Number(row.version) || 0 }));
+    const projectRecords = projectsResponse.map((row) => normalizeProject({
+      ...(row.data || row),
+      _version: Number(row.version) || 0,
+    }));
+    const projects = normalizedSchedule
+      ? hydrateProjectsWithNormalizedSchedule(projectRecords, normalizedSchedule.phases, normalizedSchedule.steps)
+      : projectRecords;
     const tasks = tasksResponse.map((row) => normalizeTask({ ...(row.data || row), _version: Number(row.version) || 0 }));
     const subs = Array.isArray(subsResponse)
       ? subsResponse.map((row) => normalizePerson('sub', { ...(row.data || row), _version: Number(row.version) || 0 }))
