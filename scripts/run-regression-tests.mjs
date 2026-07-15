@@ -919,6 +919,19 @@ const tests = [
     },
   },
   {
+    name: 'multi-assignee picker escapes clipped containers and supports Android touch selection',
+    async run() {
+      const pickerSource = await readFile(new URL('../src/components/AssigneeMultiSelect.jsx', import.meta.url), 'utf8');
+      const styleSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(pickerSource, /renderModalPortal/);
+      assert.match(pickerSource, /type="checkbox"/);
+      assert.match(pickerSource, /setOpen\(false\)/);
+      assert.match(pickerSource, />Done<\/button>/);
+      assert.match(styleSource, /\.assignee-picker-layer\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;/s);
+      assert.match(styleSource, /@media \(max-width: 560px\)[\s\S]*?\.assignee-picker-popover\s*\{[^}]*bottom:\s*0;/s);
+    },
+  },
+  {
     name: 'schedule headers remain visible inside scrolling Gantt and agenda views',
     async run() {
       const agendaSource = await readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8');
