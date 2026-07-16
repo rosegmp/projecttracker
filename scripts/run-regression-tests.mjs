@@ -75,6 +75,17 @@ const tests = [
     },
   },
   {
+    name: 'restoring an authenticated session cannot leave the startup splash waiting indefinitely',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      assert.match(trackerSource, /async function fetchAuthWithTimeout/);
+      assert.match(trackerSource, /controller\.abort\(\)/);
+      assert.match(trackerSource, /fetchAuthWithTimeout\(getAuthEndpoint\('\/token\?grant_type=refresh_token'\)/);
+      assert.match(trackerSource, /fetchAuthWithTimeout\(getAuthEndpoint\('\/user'\)/);
+      assert.match(trackerSource, /Session refresh.*timed out|timed out.*Check your connection/s);
+    },
+  },
+  {
     name: 'home summaries include matching inspections, open tasks, and active schedule ranges',
     run() {
       const projects = [{

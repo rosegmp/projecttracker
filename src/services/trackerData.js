@@ -46,6 +46,21 @@ function getAuthEndpoint(path) {
   return `${SUPABASE_URL}/auth/v1${path}`;
 }
 
+async function fetchAuthWithTimeout(url, options = {}, label = 'Sign-in service', timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`${label} timed out. Check your connection and try again.`);
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
 const EMPTY_SETTINGS = {
   weekdaysOnly: false,
   holidays: [],
@@ -106,13 +121,13 @@ function normalizeAuthSessionFromUrlParams(params) {
 
 async function refreshAuthSession(session) {
   if (!isSupabaseConfigured() || !session?.refreshToken) return null;
-  const response = await fetch(getAuthEndpoint('/token?grant_type=refresh_token'), {
+  const response = await fetchAuthWithTimeout(getAuthEndpoint('/token?grant_type=refresh_token'), {
     method: 'POST',
     headers: buildHeaders({
       Authorization: `Bearer ${SUPABASE_KEY}`,
     }),
     body: JSON.stringify({ refresh_token: session.refreshToken }),
-  });
+  }, 'Session refresh');
   if (!response.ok) return null;
   const nextSession = normalizeAuthSession(await response.json());
   writeAuthSession(nextSession);
@@ -121,7 +136,7 @@ async function refreshAuthSession(session) {
 
 async function hydrateAuthSessionUser(session) {
   if (!isSupabaseConfigured() || !session?.accessToken) return session || null;
-  const response = await fetch(getAuthEndpoint('/user'), {
+  const response = await fetchAuthWithTimeout(getAuthEndpoint('/user'), {
     method: 'GET',
     headers: buildHeaders({
       Authorization: `Bearer ${session.accessToken}`,
@@ -262,7 +277,7 @@ export function consumeAuthSessionFromUrl() {
       url.searchParams.delete(key),
     );
     url.hash = '';
-  });
+  }, 'Session verification');
   return session;
 }
 

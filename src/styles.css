@@ -5268,10 +5268,10 @@ button.calendar-chip {
 .home-weather-day {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(58px, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-3) var(--space-5);
-  padding: var(--space-6);
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-right: 1px solid var(--divider);
 }
 
@@ -5280,8 +5280,9 @@ button.calendar-chip {
 }
 
 .home-weather-day-heading {
-  display: grid;
-  gap: var(--space-1);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
 }
 
 .home-weather-day-heading small,
@@ -5293,8 +5294,7 @@ button.calendar-chip {
 }
 
 .home-weather-symbol {
-  grid-row: span 2;
-  font-size: 32px;
+  font-size: 24px;
   line-height: 1;
 }
 
@@ -5305,17 +5305,25 @@ button.calendar-chip {
 }
 
 .home-weather-temperatures strong {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-xl);
 }
 
 .home-weather-temperatures span {
   color: var(--muted);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
 }
 
-.home-weather-condition,
+.home-weather-condition {
+  grid-column: 1 / 2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .home-weather-day > small {
-  grid-column: 1 / -1;
+  grid-column: 2 / 4;
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .home-weather-message {
@@ -5393,15 +5401,14 @@ button.calendar-chip {
   }
 
   .home-weather-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
   }
 
-  .home-weather-day:nth-child(2) {
-    border-right: 0;
-  }
-
-  .home-weather-day:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--divider);
+  .home-weather-day {
+    padding: var(--space-4);
   }
 
   .home-day-grid {
