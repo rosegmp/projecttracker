@@ -25,6 +25,8 @@ import {
 } from '../src/utils/accessUi.js';
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
+import { buildHomeDaySummary, buildHomeOpenTasks, getLocalIsoDate, groupRecentAuditChanges } from '../src/utils/homeView.js';
+import { describeWeatherCode, normalizeWeatherForecast } from '../src/utils/weather.js';
 import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
 import {
   getNormalizedProjectSectionChanges,
@@ -54,6 +56,106 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'home weather normalizes exactly four forecast days and WMO conditions',
+    run() {
+      const forecast = normalizeWeatherForecast({ daily: {
+        time: ['2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19', '2026-07-20'],
+        weather_code: [0, 3, 63, 95, 1],
+        temperature_2m_max: [81.4, 79.7, 75.2, 77.8, 82],
+        temperature_2m_min: [65.2, 64.1, 62.9, 63.4, 66],
+        precipitation_probability_max: [5, 10, 80, 60, 0],
+        wind_speed_10m_max: [8.2, 10.1, 14.8, 18.3, 7],
+      } });
+      assert.equal(forecast.length, 4);
+      assert.deepEqual(forecast.map((day) => day.label), ['Clear', 'Cloudy', 'Rain', 'Thunderstorms']);
+      assert.equal(forecast[0].high, 81);
+      assert.equal(forecast[2].rainChance, 80);
+      assert.equal(describeWeatherCode(999).label, 'Variable weather');
+    },
+  },
+  {
+    name: 'home summaries include matching inspections, open tasks, and active schedule ranges',
+    run() {
+      const projects = [{
+        id: 'p1',
+        name: 'Maple House',
+        inspections: [
+          { id: 'i1', date: '2026-07-16', subcode: 'FRAME-220', inspectionType: 'Framing' },
+          { id: 'i2', date: '2026-07-18', inspectionType: 'Final' },
+        ],
+        phases: [{
+          id: 'phase-1',
+          name: 'Framing',
+          start: '2026-07-14',
+          end: '2026-07-17',
+          steps: [
+            { id: 'step-1', name: 'Frame walls', start: '2026-07-16', end: '2026-07-17' },
+            { id: 'step-2', name: 'Set trusses', start: '2026-07-18', end: '2026-07-18' },
+          ],
+        }],
+      }];
+      const tasks = [
+        { id: 't1', projectId: 'p1', label: 'Order lumber', due: '2026-07-16', done: false },
+        { id: 't2', projectId: 'p1', label: 'Completed task', due: '2026-07-16', done: true },
+        { id: 't3', projectId: 'p1', label: 'Later task', due: '2026-07-17', done: false },
+      ];
+      const summary = buildHomeDaySummary(projects, tasks, '2026-07-16');
+      assert.deepEqual(summary.inspections.map((item) => item.id), ['i1']);
+      assert.deepEqual(summary.openTasks.map((item) => item.id), ['t1']);
+      assert.deepEqual(summary.scheduleItems.map((item) => item.id).sort(), ['phase-1', 'step-1']);
+      assert.equal(summary.scheduleItems.find((item) => item.id === 'step-1').phaseName, 'Framing');
+    },
+  },
+  {
+    name: 'home change feed keeps only local today and yesterday activity',
+    run() {
+      const now = new Date(2026, 6, 16, 15, 30);
+      const atLocalTime = (day, hour) => new Date(2026, 6, day, hour, 0).toISOString();
+      const rows = [
+        { id: 'a1', created_at: atLocalTime(16, 9), entity_type: 'task', entity_id: 't1', project_id: 'p1', action: 'insert', after_data: { id: 't1', label: 'Today task' } },
+        { id: 'a2', created_at: atLocalTime(15, 17), entity_type: 'project', entity_id: 'p1', project_id: 'p1', action: 'delete', before_data: { id: 'p1', name: 'Yesterday project' } },
+        { id: 'a3', created_at: atLocalTime(14, 12), entity_type: 'task', entity_id: 't2', project_id: 'p1', action: 'insert', after_data: { id: 't2', label: 'Older task' } },
+      ];
+      const groups = groupRecentAuditChanges(rows, now);
+      assert.deepEqual(groups.today.map((entry) => entry.eventId), ['a1']);
+      assert.deepEqual(groups.yesterday.map((entry) => entry.eventId), ['a2']);
+      assert.equal(getLocalIsoDate(now), '2026-07-16');
+    },
+  },
+  {
+    name: 'home shows every open task for admins and only the current user assignments for other roles',
+    run() {
+      const projects = [{ id: 'p1', name: 'Maple House' }];
+      const people = [{ first: 'Alex', last: 'Rivera', company: 'Destiny', email: 'alex@example.com' }];
+      const tasks = [
+        { id: 't1', projectId: 'p1', label: 'Undated assigned task', due: '', assignees: ['Alex Rivera (Destiny)'], done: false },
+        { id: 't2', projectId: 'p1', label: 'Dated assigned task', due: '2026-08-01', assignees: ['Alex Rivera'], done: false },
+        { id: 't3', projectId: 'p1', label: 'Another user task', due: '', assignees: ['Jamie Smith'], done: false },
+        { id: 't4', projectId: 'p1', label: 'Completed task', due: '', assignees: ['Alex Rivera'], done: true },
+      ];
+      const userTasks = buildHomeOpenTasks(tasks, projects, { name: 'Alex Rivera', email: 'alex@example.com', role: 'Edit' }, people);
+      assert.deepEqual(userTasks.map((task) => task.id), ['t2', 't1']);
+      const adminTasks = buildHomeOpenTasks(tasks, projects, { name: 'Admin', role: 'Admin' }, people);
+      assert.deepEqual(adminTasks.map((task) => task.id), ['t2', 't3', 't1']);
+    },
+  },
+  {
+    name: 'home workspace is lazy loaded, navigable, and responsive',
+    async run() {
+      const [appSource, styleSource, detailSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /const NativeHomeView = lazy/);
+      assert.match(appSource, /id: 'home'/);
+      assert.match(appSource, /if \(activeTab === 'home'\)/);
+      assert.match(styleSource, /\.home-day-grid[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.home-day-grid,[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
+      assert.match(detailSource, /'inspections'/);
+    },
+  },
   {
     name: 'custom schedule colors always receive a readable foreground',
     run() {

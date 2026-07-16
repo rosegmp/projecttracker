@@ -6,6 +6,7 @@ import { getVisibleProjectsForUser } from './utils/accessUi.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
+const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
 const NativeScheduleView = lazy(() => import('./components/NativeScheduleView.jsx'));
 const NativeTasksView = lazy(() => import('./components/NativeTasksView.jsx'));
 const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'));
@@ -57,6 +58,11 @@ function getStorageBannerMessage(storageMode, storageIssue = '') {
 
 const tabs = [
   {
+    id: 'home',
+    label: 'Home',
+    description: 'See today and tomorrow at a glance, followed by the latest workspace changes.',
+  },
+  {
     id: 'projects',
     label: 'Projects',
     description: 'Review active jobs, scan next actions, and open any project into its full workspace.',
@@ -92,7 +98,7 @@ const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
 const LAST_ACTIVE_TAB_KEY = 'cx_last_active_tab';
 const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks']);
 const validTabIds = new Set(tabs.map((tab) => tab.id));
-const NON_EDITOR_TAB_IDS = ['projects', 'calendar'];
+const NON_EDITOR_TAB_IDS = ['home', 'projects', 'calendar'];
 
 function normalizeAppUserRole(role) {
   return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only';
@@ -104,7 +110,7 @@ function getUserCapabilities(role) {
   const canEdit = normalizedRole === 'Admin' || normalizedRole === 'Edit';
   const readOnlyAllowedTabs =
     normalizedRole === 'Customer'
-      ? ['projects']
+      ? ['home', 'projects']
       : NON_EDITOR_TAB_IDS;
   const allowedTabs =
     normalizedRole === 'Admin'
@@ -145,7 +151,7 @@ function getTabFromLocation() {
   } catch {
     storedTab = '';
   }
-  return validTabIds.has(storedTab) ? storedTab : 'projects';
+  return validTabIds.has(storedTab) ? storedTab : 'home';
 }
 
 function getProjectIdFromLocation() {
@@ -433,6 +439,40 @@ export default function App() {
     setShowAndroidAccountMenu(false);
   }
 
+  function goToHome() {
+    setActiveTab('home');
+    setProjectNavigationTarget(null);
+    setShowAndroidNavMenu(false);
+    setShowAndroidAccountMenu(false);
+    setProjectDrawerOpen(false);
+  }
+
+  function openHomeItem(item) {
+    if (item.type === 'task') {
+      if (!capabilities.allowedTabs.includes('tasks') && item.projectId) {
+        setProjectNavigationTarget({ projectId: item.projectId, detailTab: 'tasks', token: `${Date.now()}` });
+        setActiveTab('projects');
+        return;
+      }
+      setSessionProjectFilter(item.projectId || 'all');
+      setTaskHighlightRequest({ taskId: item.id, token: `${Date.now()}` });
+      setActiveTab('tasks');
+      return;
+    }
+    if (item.type === 'inspection') {
+      setProjectNavigationTarget({ projectId: item.projectId, detailTab: 'inspections', token: `${Date.now()}` });
+      setActiveTab('projects');
+      return;
+    }
+    if (!capabilities.allowedTabs.includes('schedule') && item.projectId) {
+      setProjectNavigationTarget({ projectId: item.projectId, detailTab: 'calendar', token: `${Date.now()}` });
+      setActiveTab('projects');
+      return;
+    }
+    setSessionProjectFilter(item.projectId || 'all');
+    setActiveTab('schedule');
+  }
+
   function openNewProjectFromRail() {
     if (activeTab === 'projects' && getProjectIdFromLocation()) {
       syncProjectToLocation('', { push: true });
@@ -529,7 +569,7 @@ export default function App() {
       storageMode: 'loading',
       storageIssue: '',
     }));
-    setActiveTab('projects');
+    setActiveTab('home');
   }
 
   async function handleTestSupabaseConnection() {
@@ -584,6 +624,18 @@ export default function App() {
     return <WorkspaceSplash message="Loading workspace" />;
   }
   const activeView = (() => {
+    if (activeTab === 'home') {
+      return (
+        <NativeHomeView
+          data={trackerState}
+          activeUser={activeUser}
+          refresh={refreshData}
+          loading={loading}
+          onOpenItem={openHomeItem}
+        />
+      );
+    }
+
     if (activeTab === 'projects') {
       return (
         <NativeProjectsView
@@ -715,7 +767,9 @@ export default function App() {
                         role="menuitemradio"
                         aria-checked={activeTab === tab.id ? 'true' : 'false'}
                         onClick={() => {
-                          if (tab.id === 'projects') {
+                          if (tab.id === 'home') {
+                            goToHome();
+                          } else if (tab.id === 'projects') {
                             goToProjectsHome();
                           } else {
                             setActiveTab(tab.id);
@@ -875,9 +929,9 @@ export default function App() {
             <button
               className="workspace-strip-home"
               type="button"
-              onClick={goToProjectsHome}
-              aria-label="Go to projects home"
-              title="Projects home"
+              onClick={goToHome}
+              aria-label="Go to home"
+              title="Home"
             >
               <div className="workspace-logo workspace-strip-logo" aria-hidden="true">
                 <img src="/destiny-logo.png" alt="Destiny Homes logo" />
@@ -890,6 +944,10 @@ export default function App() {
                   className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
                   type="button"
                   onClick={() => {
+                    if (tab.id === 'home') {
+                      goToHome();
+                      return;
+                    }
                     if (tab.id === 'projects') {
                       goToProjectsHome();
                       return;

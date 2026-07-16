@@ -34,10 +34,13 @@ export default function ProjectDetailView({
   }, [project.id]);
 
   useEffect(() => {
-    if (selectionNavigationRequest?.detailTab !== 'selections' || !selectionNavigationRequest?.selectionId) return;
-    if (selectionNavigationRequest.projectId !== project.id) return;
-    setActiveDetailTab('selections');
-    setSelectionHighlightRequest(selectionNavigationRequest);
+    const requestedTab = selectionNavigationRequest?.detailTab;
+    if (selectionNavigationRequest?.projectId !== project.id) return;
+    if (!['overview', 'tasks', 'calendar', 'inspections', 'selections', 'files', 'photos'].includes(requestedTab)) return;
+    setActiveDetailTab(requestedTab);
+    if (requestedTab === 'selections' && selectionNavigationRequest?.selectionId) {
+      setSelectionHighlightRequest(selectionNavigationRequest);
+    }
   }, [project.id, selectionNavigationRequest]);
 
   return (
@@ -314,5 +317,3 @@ export default function ProjectDetailView({
     </div>
   );
 }
-
-
