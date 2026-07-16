@@ -26,7 +26,21 @@ import {
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
-import { hydrateProjectsWithNormalizedSchedule } from '../src/services/trackerData.js';
+import {
+  getNormalizedProjectSectionChanges,
+  hydratePeopleFromNormalizedRows,
+  hydrateSettingsWithNormalizedUsers,
+  hydrateProjectsWithNormalizedAssets,
+  hydrateProjectsWithNormalizedAccess,
+  hydrateProjectsWithNormalizedInspections,
+  hydrateProjectsWithNormalizedSchedule,
+  hydrateProjectsWithNormalizedScheduleRelationships,
+  hydrateProjectsWithNormalizedSelectionTaskLinks,
+  hydrateProjectsWithNormalizedSelections,
+  hydrateTrackerWithNormalizedAssignments,
+  hydrateTasksWithNormalizedAttachments,
+  hydrateTasksWithNormalizedSelectionLinks,
+} from '../src/services/trackerData.js';
 import { normalizeMutationKey } from '../src/hooks/useEntityMutations.js';
 import {
   calculateHorizontalWindow,
@@ -549,7 +563,7 @@ const tests = [
       assert.match(trackerSource, /rpc\/apply_tracker_batch/);
       assert.match(trackerSource, /expectedVersion: Number\(previous\?\._version\) \|\| 0/);
       assert.match(trackerSource, /if \(previous && recordsMatch\(previous, item\)\) return/);
-      assert.match(trackerSource, /const \{ _version, \.\.\.data \} = item/);
+      assert.match(trackerSource, /const \{ _version, _normalizedVersions, _personKey, \.\.\.data \} = item/);
       assert.match(trackerSource, /persistVersionedProjectAndTasks/);
       assert.match(trackerSource, /code = 'concurrency-conflict'/);
       assert.match(migrationSource, /create or replace function public\.apply_tracker_batch/);
@@ -595,6 +609,432 @@ const tests = [
       assert.deepEqual(project.phases.map((phase) => phase.id), ['phase-1', 'phase-2']);
       assert.deepEqual(project.phases[0].steps.map((step) => step.id), ['step-1', 'step-2']);
       assert.equal(project.phases[0].name, 'Foundation');
+    },
+  },
+  {
+    name: 'project folders files and photos use a normalized Supabase read model',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260715180000_normalize_project_assets.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_file_folders/);
+      assert.match(migrationSource, /create table if not exists public\.project_files/);
+      assert.match(migrationSource, /create table if not exists public\.project_photos/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_project_assets/);
+      assert.match(migrationSource, /projects_normalized_assets_insert_trigger/);
+      assert.match(migrationSource, /projects_normalized_assets_update_trigger/);
+      assert.match(migrationSource, /alter table public\.project_files enable row level security/);
+      assert.match(trackerSource, /export function hydrateProjectsWithNormalizedAssets/);
+      assert.match(trackerSource, /\/rest\/v1\/project_file_folders\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_files\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_photos\?select=/);
+      assert.match(trackerSource, /using project JSON file and photo data/);
+
+      const [project] = hydrateProjectsWithNormalizedAssets(
+        [{ id: 'project-1', name: 'Lake House', files: { folders: [] }, photos: [] }],
+        [
+          { project_id: 'project-1', id: 'folder-2', position: 1, data: { name: 'Permits' } },
+          { project_id: 'project-1', id: 'folder-1', position: 0, data: { name: 'Plans' } },
+        ],
+        [
+          { project_id: 'project-1', folder_id: 'folder-1', id: 'file-2', position: 1, data: { name: 'Details.pdf' } },
+          { project_id: 'project-1', folder_id: 'folder-1', id: 'file-1', position: 0, data: { name: 'Site.pdf' } },
+        ],
+        [
+          { project_id: 'project-1', id: 'photo-2', position: 1, data: { name: 'After.jpg' } },
+          { project_id: 'project-1', id: 'photo-1', position: 0, data: { name: 'Before.jpg' } },
+        ],
+      );
+      assert.deepEqual(project.files.folders.slice(0, 2).map((folder) => folder.id), ['folder-1', 'folder-2']);
+      assert.deepEqual(project.files.folders[0].files.map((file) => file.id), ['file-1', 'file-2']);
+      assert.deepEqual(project.photos.map((photo) => photo.id), ['photo-1', 'photo-2']);
+    },
+  },
+  {
+    name: 'project selections attachments and photos use a normalized Supabase read model',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260715210000_normalize_project_selections.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_selections/);
+      assert.match(migrationSource, /create table if not exists public\.project_selection_attachments/);
+      assert.match(migrationSource, /create table if not exists public\.project_selection_photos/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_project_selections/);
+      assert.match(migrationSource, /projects_normalized_selections_insert_trigger/);
+      assert.match(migrationSource, /projects_normalized_selections_update_trigger/);
+      assert.match(migrationSource, /alter table public\.project_selections enable row level security/);
+      assert.match(trackerSource, /export function hydrateProjectsWithNormalizedSelections/);
+      assert.match(trackerSource, /\/rest\/v1\/project_selections\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_selection_attachments\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_selection_photos\?select=/);
+      assert.match(trackerSource, /using project JSON selection data/);
+
+      const [project] = hydrateProjectsWithNormalizedSelections(
+        [{ id: 'project-1', name: 'Lake House', selections: [] }],
+        [
+          { project_id: 'project-1', id: 'selection-2', position: 1, data: { itemName: 'Paint' } },
+          { project_id: 'project-1', id: 'selection-1', position: 0, data: { itemName: 'Flooring', taskIds: ['task-1'] } },
+        ],
+        [
+          { project_id: 'project-1', selection_id: 'selection-1', id: 'attachment-2', position: 1, data: { name: 'Quote.pdf' } },
+          { project_id: 'project-1', selection_id: 'selection-1', id: 'attachment-1', position: 0, data: { name: 'Spec.pdf' } },
+        ],
+        [
+          { project_id: 'project-1', selection_id: 'selection-1', id: 'photo-1', position: 0, data: { name: 'Sample.jpg' } },
+        ],
+      );
+      assert.deepEqual(project.selections.map((selection) => selection.id), ['selection-1', 'selection-2']);
+      assert.deepEqual(project.selections[0].attachments.map((file) => file.id), ['attachment-1', 'attachment-2']);
+      assert.deepEqual(project.selections[0].photos.map((file) => file.id), ['photo-1']);
+      assert.deepEqual(project.selections[0].taskIds, ['task-1']);
+    },
+  },
+  {
+    name: 'normalized project sections save through per-entity version checks',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260715230000_add_normalized_project_write_rpc.sql', import.meta.url),
+        'utf8',
+      );
+      const previous = {
+        id: 'project-1',
+        name: 'Lake House',
+        phases: [],
+        files: { folders: [] },
+        photos: [],
+        selections: [],
+      };
+      const sections = getNormalizedProjectSectionChanges(previous, {
+        ...previous,
+        files: { folders: [{ id: 'plans', name: 'Plans', files: [] }] },
+        photos: [{ id: 'photo-1', name: 'Progress.jpg' }],
+      });
+      assert.deepEqual(Object.keys(sections), ['files', 'photos']);
+      assert.match(migrationSource, /create or replace function public\.save_normalized_project_sections/);
+      assert.match(migrationSource, /NORMALIZED_VERSION_CONFLICT/);
+      assert.match(migrationSource, /for update;/);
+      assert.match(migrationSource, /perform public\.sync_normalized_project_assets/);
+      assert.match(migrationSource, /grant execute on function public\.save_normalized_project_sections/);
+      assert.match(trackerSource, /'save_normalized_project_sections'/);
+      assert.match(trackerSource, /p_expected_versions: previousProject\._normalizedVersions/);
+      assert.match(trackerSource, /hasOnlyNormalizedProjectChanges/);
+      assert.match(trackerSource, /NORMALIZED_VERSION_CONFLICT\|40001/);
+    },
+  },
+  {
+    name: 'project inspections and their files use normalized version-checked storage',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716100000_normalize_project_inspections.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_inspections/);
+      assert.match(migrationSource, /create table if not exists public\.project_inspection_files/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_project_inspections/);
+      assert.match(migrationSource, /create or replace function public\.save_normalized_project_inspections/);
+      assert.match(migrationSource, /projects_normalized_inspections_insert_trigger/);
+      assert.match(migrationSource, /projects_normalized_inspections_update_trigger/);
+      assert.match(migrationSource, /alter table public\.project_inspection_files enable row level security/);
+      assert.match(migrationSource, /NORMALIZED_VERSION_CONFLICT/);
+      assert.match(trackerSource, /export function hydrateProjectsWithNormalizedInspections/);
+      assert.match(trackerSource, /\/rest\/v1\/project_inspections\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_inspection_files\?select=/);
+      assert.match(trackerSource, /rpcName = inspectionsOnly \? 'save_normalized_project_inspections'/);
+      assert.match(trackerSource, /using project JSON inspection data/);
+
+      const [project] = hydrateProjectsWithNormalizedInspections(
+        [{ id: 'project-1', name: 'Lake House', inspections: [], _normalizedVersions: { phases: { p1: 2 } } }],
+        [
+          { project_id: 'project-1', id: 'inspection-2', position: 1, data: { inspectionType: 'Final' }, version: 3 },
+          { project_id: 'project-1', id: 'inspection-1', position: 0, data: { inspectionType: 'Rough-in' }, version: 4 },
+        ],
+        [
+          { project_id: 'project-1', inspection_id: 'inspection-1', kind: 'report', id: 'report-1', data: { name: 'Report.pdf' }, version: 6 },
+          { project_id: 'project-1', inspection_id: 'inspection-1', kind: 'sticker', id: 'sticker-1', data: { name: 'Sticker.jpg' }, version: 5 },
+        ],
+      );
+      assert.deepEqual(project.inspections.map((inspection) => inspection.id), ['inspection-1', 'inspection-2']);
+      assert.equal(project.inspections[0].stickerFile.name, 'Sticker.jpg');
+      assert.equal(project.inspections[0].reportFile.name, 'Report.pdf');
+      assert.equal(project._normalizedVersions.phases.p1, 2);
+      assert.equal(project._normalizedVersions.inspections['inspection-1'], 4);
+      assert.equal(project._normalizedVersions.inspectionFiles['inspection-1:sticker'], 5);
+    },
+  },
+  {
+    name: 'task attachments use normalized storage with transactional task saves',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716120000_normalize_task_attachments.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.task_attachments/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_task_attachments/);
+      assert.match(migrationSource, /create or replace function public\.save_task_with_attachments/);
+      assert.match(migrationSource, /tasks_normalized_attachments_insert_trigger/);
+      assert.match(migrationSource, /tasks_normalized_attachments_update_trigger/);
+      assert.match(migrationSource, /alter table public\.task_attachments enable row level security/);
+      assert.match(migrationSource, /NORMALIZED_VERSION_CONFLICT:task_attachments/);
+      assert.match(migrationSource, /references public\.tasks\(id\) on delete cascade/);
+      assert.match(trackerSource, /export function hydrateTasksWithNormalizedAttachments/);
+      assert.match(trackerSource, /\/rest\/v1\/task_attachments\?select=/);
+      assert.match(trackerSource, /rpc\/save_task_with_attachments/);
+      assert.match(trackerSource, /p_expected_attachment_versions: expectedAttachmentVersions/);
+      assert.match(trackerSource, /using task JSON attachment data/);
+
+      const [task] = hydrateTasksWithNormalizedAttachments(
+        [{ id: 'task-1', label: 'Submit permit', attachments: [], _version: 7 }],
+        [
+          { task_id: 'task-1', id: 'attachment-2', position: 1, data: { name: 'Receipt.pdf' }, version: 3 },
+          { task_id: 'task-1', id: 'attachment-1', position: 0, data: { name: 'Application.pdf' }, version: 2 },
+        ],
+      );
+      assert.deepEqual(task.attachments.map((attachment) => attachment.id), ['attachment-1', 'attachment-2']);
+      assert.equal(task.attachments[0].name, 'Application.pdf');
+      assert.equal(task._version, 7);
+      assert.equal(task._normalizedVersions.attachments['attachment-1'], 2);
+      assert.equal(task._normalizedVersions.attachments['attachment-2'], 3);
+    },
+  },
+  {
+    name: 'task phase and step assignments use normalized relationship rows',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716140000_normalize_assignments.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.task_assignments/);
+      assert.match(migrationSource, /create table if not exists public\.project_phase_assignments/);
+      assert.match(migrationSource, /create table if not exists public\.project_step_assignments/);
+      assert.match(migrationSource, /resolve_assignee_person_key/);
+      assert.match(migrationSource, /tasks_normalized_assignments_trigger/);
+      assert.match(migrationSource, /phases_normalized_assignments_trigger/);
+      assert.match(migrationSource, /steps_normalized_assignments_trigger/);
+
+      const hydrated = hydrateTrackerWithNormalizedAssignments(
+        [{ id: 'p1', phases: [{ id: 'ph1', assignees: [], steps: [{ id: 's1', assignees: [] }] }] }],
+        [{ id: 't1', label: 'Call inspector', assignees: [] }],
+        [
+          { task_id: 't1', assignee: 'Alex Builder', position: 1 },
+          { task_id: 't1', assignee: 'Dana Smith', position: 0 },
+        ],
+        [{ project_id: 'p1', phase_id: 'ph1', assignee: 'Alex Builder', position: 0 }],
+        [{ project_id: 'p1', phase_id: 'ph1', step_id: 's1', assignee: 'Dana Smith', position: 0 }],
+      );
+      assert.deepEqual(hydrated.tasks[0].assignees, ['Dana Smith', 'Alex Builder']);
+      assert.equal(hydrated.tasks[0].assignee, 'Dana Smith');
+      assert.deepEqual(hydrated.projects[0].phases[0].assignees, ['Alex Builder']);
+      assert.deepEqual(hydrated.projects[0].phases[0].steps[0].assignees, ['Dana Smith']);
+    },
+  },
+  {
+    name: 'project access uses normalized project-user relationship rows',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716150000_normalize_project_access.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_user_access/);
+      assert.match(migrationSource, /references public\.projects\(id\) on delete cascade/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_project_access/);
+      assert.match(migrationSource, /projects_normalized_access_trigger/);
+
+      const [project] = hydrateProjectsWithNormalizedAccess(
+        [{ id: 'p1', name: 'Lake House', accessUserIds: ['legacy-user'] }],
+        [
+          { project_id: 'p1', user_id: 'user-2', position: 1 },
+          { project_id: 'p1', user_id: 'user-1', position: 0 },
+        ],
+      );
+      assert.deepEqual(project.accessUserIds, ['user-1', 'user-2']);
+    },
+  },
+  {
+    name: 'selection task relationships use normalized link rows',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716160000_normalize_selection_task_links.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.selection_task_links/);
+      assert.match(migrationSource, /references public\.tasks\(id\) on delete cascade/);
+      assert.match(migrationSource, /references public\.project_selections\(project_id, id\) on delete cascade/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_selection_task_links/);
+      assert.match(migrationSource, /selections_normalized_task_links_trigger/);
+
+      const [project] = hydrateProjectsWithNormalizedSelectionTaskLinks(
+        [{ id: 'p1', selections: [{ id: 'sel1', itemName: 'Flooring', taskIds: ['legacy-task'] }] }],
+        [
+          { project_id: 'p1', selection_id: 'sel1', task_id: 'task-2', position: 1 },
+          { project_id: 'p1', selection_id: 'sel1', task_id: 'task-1', position: 0 },
+        ],
+      );
+      assert.deepEqual(project.selections[0].taskIds, ['task-1', 'task-2']);
+
+      const tasks = hydrateTasksWithNormalizedSelectionLinks(
+        [
+          { id: 'task-1', label: 'Choose flooring', sourceSelectionId: 'legacy', sourceSelectionLabel: 'Old label' },
+          { id: 'task-3', label: 'Unlinked task', sourceSelectionId: 'orphan', sourceSelectionLabel: 'Orphan' },
+        ],
+        [project],
+        [{ project_id: 'p1', selection_id: 'sel1', task_id: 'task-1', position: 0 }],
+      );
+      assert.equal(tasks[0].sourceSelectionId, 'sel1');
+      assert.equal(tasks[0].sourceSelectionProjectId, 'p1');
+      assert.equal(tasks[0].sourceSelectionLabel, 'Flooring');
+      assert.equal(tasks[1].sourceSelectionId, '');
+      assert.equal(tasks[1].sourceSelectionLabel, '');
+    },
+  },
+  {
+    name: 'schedule dependencies and delays use normalized cycle-safe relationship rows',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716170000_normalize_schedule_relationships.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.project_phase_dependencies/);
+      assert.match(migrationSource, /create table if not exists public\.project_step_dependencies/);
+      assert.match(migrationSource, /create table if not exists public\.project_schedule_delays/);
+      assert.match(migrationSource, /create constraint trigger phase_dependency_cycle_trigger/);
+      assert.match(migrationSource, /create constraint trigger step_dependency_cycle_trigger/);
+      assert.match(migrationSource, /SCHEDULE_DEPENDENCY_CYCLE:phase/);
+      assert.match(migrationSource, /SCHEDULE_DEPENDENCY_CYCLE:step/);
+      assert.match(migrationSource, /sync_phase_dependencies/);
+      assert.match(migrationSource, /sync_step_dependencies/);
+      assert.match(migrationSource, /sync_phase_delays/);
+      assert.match(trackerSource, /export function hydrateProjectsWithNormalizedScheduleRelationships/);
+      assert.match(trackerSource, /\/rest\/v1\/project_phase_dependencies\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_step_dependencies\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_schedule_delays\?select=/);
+
+      const [project] = hydrateProjectsWithNormalizedScheduleRelationships(
+        [{
+          id: 'p1',
+          phases: [
+            { id: 'ph1', predecessors: [], delays: [], steps: [{ id: 's1' }, { id: 's2' }] },
+            { id: 'ph2', predecessors: [], delays: [], steps: [] },
+          ],
+        }],
+        [{ project_id: 'p1', phase_id: 'ph2', predecessor_phase_id: 'ph1', position: 0, lag: 2 }],
+        [{ project_id: 'p1', phase_id: 'ph1', step_id: 's2', predecessor_step_id: 's1', position: 0, lag: 1 }],
+        [{ project_id: 'p1', phase_id: 'ph1', id: 'delay-1', step_id: 's2', position: 0, data: { days: 3, cause: 'Weather' } }],
+      );
+      assert.deepEqual(project.phases[1].predecessors, [{ id: 'ph1', lag: 2 }]);
+      assert.deepEqual(project.phases[0].successors, ['ph2']);
+      assert.deepEqual(project.phases[0].steps[1].predecessors, [{ id: 's1', lag: 1 }]);
+      assert.deepEqual(project.phases[0].steps[0].successors, ['s2']);
+      assert.deepEqual(project.phases[0].delays[0], { id: 'delay-1', stepId: 's2', days: 3, cause: 'Weather' });
+    },
+  },
+  {
+    name: 'employees and subcontractors use one normalized People read model',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716180000_unify_people.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.people/);
+      assert.match(migrationSource, /unique \(source_table, legacy_id\)/);
+      assert.match(migrationSource, /create or replace function public\.sync_unified_person/);
+      assert.match(migrationSource, /subs_unified_people_trigger/);
+      assert.match(migrationSource, /employees_unified_people_trigger/);
+      assert.match(migrationSource, /task_assignments_person_fk/);
+      assert.match(migrationSource, /phase_assignments_person_fk/);
+      assert.match(migrationSource, /step_assignments_person_fk/);
+      assert.match(trackerSource, /export function hydratePeopleFromNormalizedRows/);
+      assert.match(trackerSource, /async function loadPeopleReadModel/);
+      assert.match(trackerSource, /\/rest\/v1\/people\?select=/);
+      assert.match(trackerSource, /loadProjectReadModel\(\),\s*loadTaskReadModel\(\),\s*loadPeopleReadModel\(\)/s);
+      assert.match(trackerSource, /Unified People table is not available yet; using legacy People tables/);
+      assert.match(trackerSource, /versionRows: \[\.\.\.subsRows, \.\.\.employeeRows\]/);
+      assert.match(trackerSource, /personLabels\.get\(String\(row\?\.person_key/);
+
+      const people = hydratePeopleFromNormalizedRows([
+        { id: 'sub:sub1', source_table: 'subs', legacy_id: 'sub1', people_type: 'sub', data: { first: 'Alex', company: 'Build Co' }, version: 4 },
+        { id: 'employee:emp1', source_table: 'employees', legacy_id: 'emp1', people_type: 'consultant', data: { first: 'Dana', last: 'Smith' }, version: 6 },
+      ]);
+      assert.equal(people.subs[0].id, 'sub1');
+      assert.equal(people.subs[0]._personKey, 'sub:sub1');
+      assert.equal(people.subs[0]._version, 4);
+      assert.equal(people.employees[0].peopleType, 'consultant');
+      assert.equal(people.employees[0]._personKey, 'employee:emp1');
+
+      const assigned = hydrateTrackerWithNormalizedAssignments(
+        [],
+        [{ id: 't1', label: 'Review plans' }],
+        [{ task_id: 't1', assignee: 'Old Name', person_key: 'employee:emp1', position: 0 }],
+        [],
+        [],
+        people.subs,
+        people.employees,
+      );
+      assert.deepEqual(assigned.tasks[0].assignees, ['Dana Smith']);
+    },
+  },
+  {
+    name: 'project and task reads use lightweight normalized core views with safe fallback',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716200000_add_normalized_core_views.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create or replace view public\.project_core_records/);
+      assert.match(migrationSource, /create or replace view public\.task_core_records/);
+      assert.match(migrationSource, /security_invoker = true/);
+      for (const key of ['phases', 'files', 'photos', 'selections', 'inspections', 'accessUserIds']) {
+        assert.match(migrationSource, new RegExp(`- '${key}'`));
+      }
+      for (const key of ['attachments', 'assignees', 'sourceSelectionId', 'sourceSelectionProjectId', 'sourceSelectionLabel']) {
+        assert.match(migrationSource, new RegExp(`- '${key}'`));
+      }
+      assert.match(trackerSource, /async function loadProjectReadModel/);
+      assert.match(trackerSource, /async function loadTaskReadModel/);
+      assert.match(trackerSource, /\/rest\/v1\/project_core_records\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/task_core_records\?select=/);
+      assert.match(trackerSource, /projectReadModel\?\.core && !projectNormalizedSourcesReady/);
+      assert.match(trackerSource, /taskReadModel\?\.core && !taskNormalizedSourcesReady/);
+      assert.match(trackerSource, /\/rest\/v1\/projects\?select=\*&order=created_at\.asc/);
+      assert.match(trackerSource, /\/rest\/v1\/tasks\?select=\*&order=created_at\.asc/);
+    },
+  },
+  {
+    name: 'application users use normalized rows linked to project access',
+    async run() {
+      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716210000_normalize_app_users.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table if not exists public\.app_users/);
+      assert.match(migrationSource, /create or replace function public\.sync_normalized_app_users/);
+      assert.match(migrationSource, /settings_normalized_app_users_trigger/);
+      assert.match(migrationSource, /project_user_access_app_user_fk/);
+      assert.match(migrationSource, /references public\.app_users\(id\) on delete cascade not valid/);
+      assert.match(trackerSource, /export function hydrateSettingsWithNormalizedUsers/);
+      assert.match(trackerSource, /\/rest\/v1\/app_users\?select=/);
+      assert.match(trackerSource, /using settings JSON users/);
+
+      const settings = hydrateSettingsWithNormalizedUsers(
+        { currentUserId: 'user-2', users: [{ id: 'legacy', name: 'Legacy', role: 'Admin' }] },
+        [
+          { id: 'user-2', position: 1, data: { name: 'Viewer', email: 'viewer@example.com', role: 'View Only' } },
+          { id: 'user-1', position: 0, data: { name: 'Admin', email: 'admin@example.com', role: 'Admin' } },
+        ],
+      );
+      assert.deepEqual(settings.users.map((user) => user.id), ['user-1', 'user-2']);
+      assert.equal(settings.currentUserId, 'user-2');
+      assert.equal(settings.users[1].email, 'viewer@example.com');
     },
   },
   {
@@ -1680,6 +2120,211 @@ const tests = [
       assert.equal(weeks[0].bars.length, 3);
       assert.equal(weeks[0].holidayBars.length, 1);
       assert.equal(weeks[0].holidayBars[0].id, 'holiday-1');
+    },
+  },
+  {
+    name: 'normalized authorization policies use app-user helpers instead of settings JSON',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716220000_use_normalized_authorization.sql', import.meta.url),
+        'utf8',
+      );
+
+      assert.match(migrationSource, /create or replace function public\.current_app_user_id\(\)/);
+      assert.match(migrationSource, /create or replace function public\.current_app_user_role\(\)/);
+      assert.match(migrationSource, /create or replace function public\.is_app_user\(\)/);
+      assert.match(migrationSource, /create or replace function public\.app_user_can_edit\(\)/);
+      assert.match(migrationSource, /security definer/g);
+      assert.match(migrationSource, /grant execute on function public\.is_app_user\(\) to authenticated/);
+      assert.doesNotMatch(migrationSource, /jsonb_array_elements[\s\S]*?data->'users'/);
+      assert.equal(
+        (migrationSource.match(/using \(public\.is_app_user\(\)\)/g) || []).length,
+        22,
+      );
+    },
+  },
+  {
+    name: 'write RPCs authorize through normalized users and project access',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260716230000_use_normalized_write_authorization.sql', import.meta.url),
+        'utf8',
+      );
+
+      assert.match(migrationSource, /create or replace function public\.app_user_can_edit_project\(p_project_id text\)/);
+      assert.match(migrationSource, /from public\.project_user_access access_row/);
+      assert.match(migrationSource, /access_row\.user_id = public\.current_app_user_id\(\)/);
+      assert.match(migrationSource, /coalesce\(public\.current_app_user_role\(\) in \('Admin', 'Edit'\), false\)/);
+      for (const functionName of [
+        'apply_tracker_batch',
+        'save_normalized_project_sections',
+        'save_normalized_project_inspections',
+        'save_task_with_attachments',
+      ]) {
+        assert.match(migrationSource, new RegExp(`create or replace function public\\.${functionName}\\(`));
+      }
+      assert.doesNotMatch(migrationSource, /app_settings|accessUserIds|data->'users'/);
+      assert.ok((migrationSource.match(/public\.app_user_can_edit_project\(/g) || []).length >= 6);
+    },
+  },
+  {
+    name: 'project records and normalized children enforce server-side visibility',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260717000000_scope_project_reads.sql', import.meta.url),
+        'utf8',
+      );
+
+      assert.match(migrationSource, /create or replace function public\.app_user_can_view_project\(p_project_id text\)/);
+      assert.match(migrationSource, /create or replace function public\.app_user_can_view_task\(p_task_id text\)/);
+      assert.match(migrationSource, /when public\.current_app_user_role\(\) = 'Admin' then true/);
+      assert.match(migrationSource, /else public\.current_app_user_role\(\) = 'Edit'/);
+      assert.match(migrationSource, /access_row\.user_id = public\.current_app_user_id\(\)/);
+      assert.match(migrationSource, /create policy "App users can select projects"[\s\S]*?as permissive for select/s);
+      assert.match(migrationSource, /create policy "App users can select tasks"[\s\S]*?as permissive for select/s);
+      assert.match(migrationSource, /create policy "App users can read visible projects"[\s\S]*?as restrictive for select/s);
+      assert.match(migrationSource, /create policy "App users can read visible tasks"[\s\S]*?as restrictive for select/s);
+      for (const tableName of [
+        'project_phases',
+        'project_steps',
+        'project_file_folders',
+        'project_files',
+        'project_photos',
+        'project_selections',
+        'project_selection_attachments',
+        'project_selection_photos',
+        'project_inspections',
+        'project_inspection_files',
+        'project_phase_assignments',
+        'project_step_assignments',
+        'project_user_access',
+        'selection_task_links',
+        'project_phase_dependencies',
+        'project_step_dependencies',
+        'project_schedule_delays',
+      ]) {
+        assert.match(
+          migrationSource,
+          new RegExp(`create policy [\\s\\S]*? on public\\.${tableName}[\\s\\S]*?app_user_can_view_project\\(project_id\\)`),
+        );
+      }
+      assert.match(migrationSource, /on public\.task_attachments[\s\S]*?app_user_can_view_task\(task_id\)/);
+      assert.match(migrationSource, /on public\.task_assignments[\s\S]*?app_user_can_view_task\(task_id\)/);
+    },
+  },
+  {
+    name: 'schedule cascades save normalized projects and tasks in one transaction',
+    async run() {
+      const [migrationSource, trackerSource] = await Promise.all([
+        readFile(
+          new URL('../supabase/migrations/20260717010000_add_normalized_project_task_batch.sql', import.meta.url),
+          'utf8',
+        ),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(migrationSource, /create or replace function public\.save_normalized_project_task_batch/);
+      assert.match(migrationSource, /public\.save_normalized_project_sections\(/);
+      assert.match(migrationSource, /public\.save_normalized_project_inspections\(/);
+      assert.match(migrationSource, /task_results := public\.apply_tracker_batch\(p_task_operations\)/);
+      assert.match(migrationSource, /operation->>'table' <> 'tasks'/);
+      assert.match(trackerSource, /rpc\/save_normalized_project_task_batch/);
+      assert.match(trackerSource, /canUseNormalizedBatch/);
+      assert.match(trackerSource, /applyNormalizedProjectTaskBatch\(normalizedProjectUpdates, taskOperations\)/);
+    },
+  },
+  {
+    name: 'schedule synchronization is explicit instead of project-trigger driven',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260717020000_make_schedule_sync_explicit.sql', import.meta.url),
+        'utf8',
+      );
+
+      assert.match(migrationSource, /drop trigger if exists projects_normalized_schedule_insert_trigger/);
+      assert.match(migrationSource, /drop trigger if exists projects_normalized_schedule_update_trigger/);
+      assert.match(migrationSource, /create or replace function public\.apply_tracker_batch/);
+      assert.match(migrationSource, /record_data := operation->'data'/);
+      assert.match(migrationSource, /table_name = 'projects' and not delete_record and record_data \? 'phases'/);
+      assert.match(migrationSource, /perform public\.sync_normalized_project_schedule\(record_id, record_data\)/);
+      assert.doesNotMatch(migrationSource, /create trigger projects_normalized_schedule/);
+    },
+  },
+  {
+    name: 'all project-owned normalized sections synchronize explicitly',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260717030000_make_project_section_sync_explicit.sql', import.meta.url),
+        'utf8',
+      );
+
+      for (const triggerName of [
+        'projects_normalized_assets_insert_trigger',
+        'projects_normalized_assets_update_trigger',
+        'projects_normalized_selections_insert_trigger',
+        'projects_normalized_selections_update_trigger',
+        'projects_normalized_inspections_insert_trigger',
+        'projects_normalized_inspections_update_trigger',
+        'projects_normalized_access_trigger',
+      ]) {
+        assert.match(migrationSource, new RegExp(`drop trigger if exists ${triggerName}`));
+      }
+      assert.match(migrationSource, /create or replace function public\.sync_explicit_project_sections/);
+      for (const functionName of [
+        'sync_normalized_project_schedule',
+        'sync_normalized_project_assets',
+        'sync_normalized_project_selections',
+        'sync_normalized_project_inspections',
+        'sync_normalized_project_access',
+      ]) {
+        assert.match(migrationSource, new RegExp(`perform public\\.${functionName}\\(p_project_id, p_project_data\\)`));
+      }
+      assert.match(migrationSource, /perform public\.sync_explicit_project_sections\(record_id, record_data\)/);
+      assert.doesNotMatch(migrationSource, /create trigger projects_normalized_(assets|selections|inspections|access)/);
+    },
+  },
+  {
+    name: 'task attachments and assignees synchronize explicitly',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260717040000_make_task_section_sync_explicit.sql', import.meta.url),
+        'utf8',
+      );
+
+      assert.match(migrationSource, /drop trigger if exists tasks_normalized_attachments_insert_trigger/);
+      assert.match(migrationSource, /drop trigger if exists tasks_normalized_attachments_update_trigger/);
+      assert.match(migrationSource, /drop trigger if exists tasks_normalized_assignments_trigger/);
+      assert.match(migrationSource, /create or replace function public\.sync_explicit_task_sections/);
+      assert.match(migrationSource, /perform public\.sync_normalized_task_attachments\(p_task_id, p_task_data\)/);
+      assert.match(migrationSource, /perform public\.sync_task_assignments\(p_task_id, p_task_data\)/);
+      assert.match(migrationSource, /perform public\.sync_explicit_task_sections\(record_id, record_data\)/);
+      assert.match(migrationSource, /perform public\.sync_explicit_task_sections\(p_task_id, p_task_data\)/);
+      assert.doesNotMatch(migrationSource, /create trigger tasks_normalized_(attachments|assignments)/);
+    },
+  },
+  {
+    name: 'legacy People and settings synchronize explicitly',
+    async run() {
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260717050000_make_people_and_user_sync_explicit.sql', import.meta.url),
+        'utf8',
+      );
+
+      for (const triggerName of [
+        'subs_unified_people_trigger',
+        'employees_unified_people_trigger',
+        'subs_delete_unified_people_trigger',
+        'employees_delete_unified_people_trigger',
+        'settings_normalized_app_users_trigger',
+      ]) {
+        assert.match(migrationSource, new RegExp(`drop trigger if exists ${triggerName}`));
+      }
+      assert.match(migrationSource, /create or replace function public\.sync_explicit_legacy_record/);
+      assert.match(migrationSource, /perform public\.sync_unified_person\(/);
+      assert.match(migrationSource, /delete from public\.people/);
+      assert.match(migrationSource, /perform public\.sync_normalized_app_users\(p_record_data\)/);
+      assert.match(migrationSource, /perform public\.sync_explicit_legacy_record\(/);
+      assert.doesNotMatch(migrationSource, /create trigger (subs|employees|settings)_(unified_people|normalized_app_users)/);
     },
   },
 ];

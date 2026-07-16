@@ -537,6 +537,54 @@ function normalizeProject(project) {
   };
 }
 
+export function hydrateSettingsWithNormalizedUsers(settings, rows) {
+  if (!Array.isArray(rows)) return normalizeSettings(settings);
+  const users = rows
+    .map((row) => ({
+      ...(row.data || {}),
+      id: String(row?.id || '').trim(),
+      _position: Number(row.position) || 0,
+    }))
+    .filter((user) => user.id)
+    .sort((left, right) => left._position - right._position)
+    .map(({ _position, ...user }, index) => normalizeAppUser(user, index));
+  return normalizeSettings({ ...settings, users });
+}
+
+export function hydratePeopleFromNormalizedRows(rows) {
+  if (!Array.isArray(rows)) return null;
+  const subs = [];
+  const employees = [];
+  rows.forEach((row) => {
+    const legacyId = String(row?.legacy_id || '').trim();
+    const sourceTable = String(row?.source_table || '').trim();
+    if (!legacyId || !['subs', 'employees'].includes(sourceTable)) return;
+    const type = sourceTable === 'subs' ? 'sub' : normalizePeopleType(row?.people_type || row?.data?.peopleType || 'emp');
+    const person = normalizePerson(type, {
+      ...(row.data || {}),
+      id: legacyId,
+      peopleType: type,
+      _personKey: String(row?.id || '').trim(),
+      _version: Number(row.version) || 0,
+    });
+    if (sourceTable === 'subs') subs.push(person);
+    else employees.push(person);
+  });
+  return { subs, employees };
+}
+
+function buildNormalizedVersionMaps(rows, keyForRow) {
+  const maps = new Map();
+  (rows || []).forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const key = keyForRow(row);
+    if (!projectId || !key) return;
+    if (!maps.has(projectId)) maps.set(projectId, {});
+    maps.get(projectId)[key] = Number(row.version) || 0;
+  });
+  return maps;
+}
+
 export function hydrateProjectsWithNormalizedSchedule(projects, phaseRows, stepRows) {
   if (!Array.isArray(phaseRows) || !Array.isArray(stepRows)) return projects;
 
@@ -571,9 +619,202 @@ export function hydrateProjectsWithNormalizedSchedule(projects, phaseRows, stepR
   });
   phasesByProject.forEach((phases) => phases.sort((left, right) => left._position - right._position));
 
+  const phaseVersions = buildNormalizedVersionMaps(phaseRows, (row) => String(row?.id || '').trim());
+  const stepVersions = buildNormalizedVersionMaps(
+    stepRows,
+    (row) => `${String(row?.phase_id || '').trim()}:${String(row?.id || '').trim()}`,
+  );
+
   return (projects || []).map((project) => normalizeProject({
     ...project,
     phases: (phasesByProject.get(project.id) || []).map(({ _position, ...phase }) => phase),
+    _normalizedVersions: {
+      ...(project._normalizedVersions || {}),
+      phases: phaseVersions.get(project.id) || {},
+      steps: stepVersions.get(project.id) || {},
+    },
+  }));
+}
+
+export function hydrateProjectsWithNormalizedAssets(projects, folderRows, fileRows, photoRows) {
+  if (!Array.isArray(folderRows) || !Array.isArray(fileRows) || !Array.isArray(photoRows)) return projects;
+
+  const filesByFolder = new Map();
+  fileRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const folderId = String(row?.folder_id || '').trim();
+    const fileId = String(row?.id || '').trim();
+    if (!projectId || !folderId || !fileId) return;
+    const key = `${projectId}:${folderId}`;
+    if (!filesByFolder.has(key)) filesByFolder.set(key, []);
+    filesByFolder.get(key).push({
+      ...(row.data || {}),
+      id: fileId,
+      _position: Number(row.position) || 0,
+    });
+  });
+  filesByFolder.forEach((files) => files.sort((left, right) => left._position - right._position));
+
+  const foldersByProject = new Map();
+  folderRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const folderId = String(row?.id || '').trim();
+    if (!projectId || !folderId) return;
+    if (!foldersByProject.has(projectId)) foldersByProject.set(projectId, []);
+    foldersByProject.get(projectId).push({
+      ...(row.data || {}),
+      id: folderId,
+      files: (filesByFolder.get(`${projectId}:${folderId}`) || []).map(({ _position, ...file }) => file),
+      _position: Number(row.position) || 0,
+    });
+  });
+  foldersByProject.forEach((folders) => folders.sort((left, right) => left._position - right._position));
+
+  const photosByProject = new Map();
+  photoRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const photoId = String(row?.id || '').trim();
+    if (!projectId || !photoId) return;
+    if (!photosByProject.has(projectId)) photosByProject.set(projectId, []);
+    photosByProject.get(projectId).push({
+      ...(row.data || {}),
+      id: photoId,
+      _position: Number(row.position) || 0,
+    });
+  });
+  photosByProject.forEach((photos) => photos.sort((left, right) => left._position - right._position));
+
+  const folderVersions = buildNormalizedVersionMaps(folderRows, (row) => String(row?.id || '').trim());
+  const fileVersions = buildNormalizedVersionMaps(
+    fileRows,
+    (row) => `${String(row?.folder_id || '').trim()}:${String(row?.id || '').trim()}`,
+  );
+  const photoVersions = buildNormalizedVersionMaps(photoRows, (row) => String(row?.id || '').trim());
+
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    files: {
+      folders: (foldersByProject.get(project.id) || []).map(({ _position, ...folder }) => folder),
+    },
+    photos: (photosByProject.get(project.id) || []).map(({ _position, ...photo }) => photo),
+    _normalizedVersions: {
+      ...(project._normalizedVersions || {}),
+      folders: folderVersions.get(project.id) || {},
+      files: fileVersions.get(project.id) || {},
+      photos: photoVersions.get(project.id) || {},
+    },
+  }));
+}
+
+export function hydrateProjectsWithNormalizedSelections(projects, selectionRows, attachmentRows, photoRows) {
+  if (!Array.isArray(selectionRows) || !Array.isArray(attachmentRows) || !Array.isArray(photoRows)) return projects;
+
+  function groupSelectionFiles(rows) {
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const projectId = String(row?.project_id || '').trim();
+      const selectionId = String(row?.selection_id || '').trim();
+      const fileId = String(row?.id || '').trim();
+      if (!projectId || !selectionId || !fileId) return;
+      const key = `${projectId}:${selectionId}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push({
+        ...(row.data || {}),
+        id: fileId,
+        _position: Number(row.position) || 0,
+      });
+    });
+    grouped.forEach((files) => files.sort((left, right) => left._position - right._position));
+    return grouped;
+  }
+
+  const attachmentsBySelection = groupSelectionFiles(attachmentRows);
+  const photosBySelection = groupSelectionFiles(photoRows);
+  const selectionsByProject = new Map();
+  selectionRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const selectionId = String(row?.id || '').trim();
+    if (!projectId || !selectionId) return;
+    const key = `${projectId}:${selectionId}`;
+    if (!selectionsByProject.has(projectId)) selectionsByProject.set(projectId, []);
+    selectionsByProject.get(projectId).push({
+      ...(row.data || {}),
+      id: selectionId,
+      attachments: (attachmentsBySelection.get(key) || []).map(({ _position, ...file }) => file),
+      photos: (photosBySelection.get(key) || []).map(({ _position, ...file }) => file),
+      _position: Number(row.position) || 0,
+    });
+  });
+  selectionsByProject.forEach((selections) => selections.sort((left, right) => left._position - right._position));
+
+  const selectionVersions = buildNormalizedVersionMaps(selectionRows, (row) => String(row?.id || '').trim());
+  const attachmentVersions = buildNormalizedVersionMaps(
+    attachmentRows,
+    (row) => `${String(row?.selection_id || '').trim()}:${String(row?.id || '').trim()}`,
+  );
+  const photoVersions = buildNormalizedVersionMaps(
+    photoRows,
+    (row) => `${String(row?.selection_id || '').trim()}:${String(row?.id || '').trim()}`,
+  );
+
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    selections: (selectionsByProject.get(project.id) || []).map(({ _position, ...selection }) => selection),
+    _normalizedVersions: {
+      ...(project._normalizedVersions || {}),
+      selections: selectionVersions.get(project.id) || {},
+      selectionAttachments: attachmentVersions.get(project.id) || {},
+      selectionPhotos: photoVersions.get(project.id) || {},
+    },
+  }));
+}
+
+export function hydrateProjectsWithNormalizedInspections(projects, inspectionRows, fileRows) {
+  if (!Array.isArray(inspectionRows) || !Array.isArray(fileRows)) return projects;
+
+  const filesByInspection = new Map();
+  fileRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const inspectionId = String(row?.inspection_id || '').trim();
+    const kind = String(row?.kind || '').trim();
+    const fileId = String(row?.id || '').trim();
+    if (!projectId || !inspectionId || !['sticker', 'report'].includes(kind) || !fileId) return;
+    const key = `${projectId}:${inspectionId}`;
+    if (!filesByInspection.has(key)) filesByInspection.set(key, {});
+    filesByInspection.get(key)[kind] = { ...(row.data || {}), id: fileId };
+  });
+
+  const inspectionsByProject = new Map();
+  inspectionRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const inspectionId = String(row?.id || '').trim();
+    if (!projectId || !inspectionId) return;
+    const files = filesByInspection.get(`${projectId}:${inspectionId}`) || {};
+    if (!inspectionsByProject.has(projectId)) inspectionsByProject.set(projectId, []);
+    inspectionsByProject.get(projectId).push({
+      ...(row.data || {}),
+      id: inspectionId,
+      stickerFile: files.sticker || null,
+      reportFile: files.report || null,
+      _position: Number(row.position) || 0,
+    });
+  });
+  inspectionsByProject.forEach((inspections) => inspections.sort((left, right) => left._position - right._position));
+
+  const inspectionVersions = buildNormalizedVersionMaps(inspectionRows, (row) => String(row?.id || '').trim());
+  const fileVersions = buildNormalizedVersionMaps(
+    fileRows,
+    (row) => `${String(row?.inspection_id || '').trim()}:${String(row?.kind || '').trim()}`,
+  );
+
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    inspections: (inspectionsByProject.get(project.id) || []).map(({ _position, ...inspection }) => inspection),
+    _normalizedVersions: {
+      ...(project._normalizedVersions || {}),
+      inspections: inspectionVersions.get(project.id) || {},
+      inspectionFiles: fileVersions.get(project.id) || {},
+    },
   }));
 }
 
@@ -652,6 +893,251 @@ function normalizeTask(task = {}) {
       ? task.attachments.map((attachment, index) => normalizeProjectFile(attachment, index))
       : [],
   };
+}
+
+export function hydrateTasksWithNormalizedAttachments(tasks, attachmentRows) {
+  if (!Array.isArray(attachmentRows)) return tasks;
+  const attachmentsByTask = new Map();
+  attachmentRows.forEach((row) => {
+    const taskId = String(row?.task_id || '').trim();
+    const attachmentId = String(row?.id || '').trim();
+    if (!taskId || !attachmentId) return;
+    if (!attachmentsByTask.has(taskId)) attachmentsByTask.set(taskId, []);
+    attachmentsByTask.get(taskId).push({
+      ...(row.data || {}),
+      id: attachmentId,
+      _position: Number(row.position) || 0,
+    });
+  });
+  attachmentsByTask.forEach((attachments) => attachments.sort((left, right) => left._position - right._position));
+  const attachmentVersions = new Map();
+  attachmentRows.forEach((row) => {
+    const taskId = String(row?.task_id || '').trim();
+    const attachmentId = String(row?.id || '').trim();
+    if (!taskId || !attachmentId) return;
+    if (!attachmentVersions.has(taskId)) attachmentVersions.set(taskId, {});
+    attachmentVersions.get(taskId)[attachmentId] = Number(row.version) || 0;
+  });
+
+  return (tasks || []).map((task) => normalizeTask({
+    ...task,
+    attachments: (attachmentsByTask.get(task.id) || []).map(({ _position, ...attachment }) => attachment),
+    _normalizedVersions: {
+      ...(task._normalizedVersions || {}),
+      attachments: attachmentVersions.get(task.id) || {},
+    },
+  }));
+}
+
+function groupOrderedRelationshipValues(rows, groupKey, valueKey) {
+  const grouped = new Map();
+  (rows || []).forEach((row) => {
+    const key = groupKey(row);
+    const value = valueKey(row);
+    if (!key || !value) return;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ value, position: Number(row.position) || 0 });
+  });
+  grouped.forEach((values, key) => {
+    grouped.set(key, values.sort((left, right) => left.position - right.position).map((item) => item.value));
+  });
+  return grouped;
+}
+
+export function hydrateTrackerWithNormalizedAssignments(
+  projects,
+  tasks,
+  taskRows,
+  phaseRows,
+  stepRows,
+  subs = [],
+  employees = [],
+) {
+  if (!Array.isArray(taskRows) || !Array.isArray(phaseRows) || !Array.isArray(stepRows)) return { projects, tasks };
+  const personLabels = new Map();
+  [...(subs || []), ...(employees || [])].forEach((person) => {
+    const key = String(person?._personKey || '').trim();
+    const name = `${person?.first || ''} ${person?.last || ''}`.trim();
+    const label = name && person?.company ? `${name} (${person.company})` : name || person?.company || '';
+    if (key && label) personLabels.set(key, label);
+  });
+  const resolveAssignmentLabel = (row) =>
+    personLabels.get(String(row?.person_key || '').trim()) || String(row?.assignee || '').trim();
+  const taskAssignments = groupOrderedRelationshipValues(
+    taskRows,
+    (row) => String(row?.task_id || '').trim(),
+    resolveAssignmentLabel,
+  );
+  const phaseAssignments = groupOrderedRelationshipValues(
+    phaseRows,
+    (row) => `${String(row?.project_id || '').trim()}:${String(row?.phase_id || '').trim()}`,
+    resolveAssignmentLabel,
+  );
+  const stepAssignments = groupOrderedRelationshipValues(
+    stepRows,
+    (row) => `${String(row?.project_id || '').trim()}:${String(row?.phase_id || '').trim()}:${String(row?.step_id || '').trim()}`,
+    resolveAssignmentLabel,
+  );
+
+  return {
+    projects: (projects || []).map((project) => normalizeProject({
+      ...project,
+      phases: (project.phases || []).map((phase) => {
+        const assignees = phaseAssignments.get(`${project.id}:${phase.id}`) || [];
+        return {
+          ...phase,
+          assignees,
+          assign: assignees[0] || '',
+          steps: (phase.steps || []).map((step) => {
+            const stepAssignees = stepAssignments.get(`${project.id}:${phase.id}:${step.id}`) || [];
+            return { ...step, assignees: stepAssignees, assign: stepAssignees[0] || '' };
+          }),
+        };
+      }),
+    })),
+    tasks: (tasks || []).map((task) => {
+      const assignees = taskAssignments.get(task.id) || [];
+      return normalizeTask({ ...task, assignees, assignee: assignees[0] || '' });
+    }),
+  };
+}
+
+export function hydrateProjectsWithNormalizedScheduleRelationships(projects, phaseRows, stepRows, delayRows) {
+  if (!Array.isArray(phaseRows) || !Array.isArray(stepRows) || !Array.isArray(delayRows)) return projects;
+  const phasePredecessors = new Map();
+  phaseRows.forEach((row) => {
+    const key = `${String(row?.project_id || '').trim()}:${String(row?.phase_id || '').trim()}`;
+    const predecessorId = String(row?.predecessor_phase_id || '').trim();
+    if (!predecessorId || key === ':') return;
+    if (!phasePredecessors.has(key)) phasePredecessors.set(key, []);
+    phasePredecessors.get(key).push({ id: predecessorId, lag: Number(row.lag) || 0, position: Number(row.position) || 0 });
+  });
+  phasePredecessors.forEach((values) => values.sort((left, right) => left.position - right.position));
+
+  const stepPredecessors = new Map();
+  stepRows.forEach((row) => {
+    const key = `${String(row?.project_id || '').trim()}:${String(row?.phase_id || '').trim()}:${String(row?.step_id || '').trim()}`;
+    const predecessorId = String(row?.predecessor_step_id || '').trim();
+    if (!predecessorId || key === '::') return;
+    if (!stepPredecessors.has(key)) stepPredecessors.set(key, []);
+    stepPredecessors.get(key).push({ id: predecessorId, lag: Number(row.lag) || 0, position: Number(row.position) || 0 });
+  });
+  stepPredecessors.forEach((values) => values.sort((left, right) => left.position - right.position));
+
+  const delaysByPhase = new Map();
+  delayRows.forEach((row) => {
+    const projectId = String(row?.project_id || '').trim();
+    const phaseId = String(row?.phase_id || '').trim();
+    const delayId = String(row?.id || '').trim();
+    const stepId = String(row?.step_id || '').trim();
+    if (!projectId || !phaseId || !delayId || !stepId) return;
+    const key = `${projectId}:${phaseId}`;
+    if (!delaysByPhase.has(key)) delaysByPhase.set(key, []);
+    delaysByPhase.get(key).push({
+      ...(row.data || {}),
+      id: delayId,
+      stepId,
+      position: Number(row.position) || 0,
+    });
+  });
+  delaysByPhase.forEach((values) => values.sort((left, right) => left.position - right.position));
+
+  return (projects || []).map((project) => {
+    const phaseSuccessors = new Map((project.phases || []).map((phase) => [phase.id, []]));
+    const phasesWithRelationships = (project.phases || []).map((phase) => {
+      const predecessors = (phasePredecessors.get(`${project.id}:${phase.id}`) || [])
+        .map(({ position, ...predecessor }) => predecessor);
+      predecessors.forEach((predecessor) => {
+        if (!phaseSuccessors.has(predecessor.id)) phaseSuccessors.set(predecessor.id, []);
+        phaseSuccessors.get(predecessor.id).push(phase.id);
+      });
+      const stepSuccessors = new Map((phase.steps || []).map((step) => [step.id, []]));
+      const steps = (phase.steps || []).map((step) => {
+        const stepPreds = (stepPredecessors.get(`${project.id}:${phase.id}:${step.id}`) || [])
+          .map(({ position, ...predecessor }) => predecessor);
+        stepPreds.forEach((predecessor) => {
+          if (!stepSuccessors.has(predecessor.id)) stepSuccessors.set(predecessor.id, []);
+          stepSuccessors.get(predecessor.id).push(step.id);
+        });
+        return { ...step, predecessors: stepPreds };
+      }).map((step) => ({ ...step, successors: stepSuccessors.get(step.id) || [] }));
+      return {
+        ...phase,
+        predecessors,
+        delays: (delaysByPhase.get(`${project.id}:${phase.id}`) || []).map(({ position, ...delay }) => delay),
+        steps,
+      };
+    }).map((phase) => ({ ...phase, successors: phaseSuccessors.get(phase.id) || [] }));
+    return normalizeProject({ ...project, phases: phasesWithRelationships });
+  });
+}
+
+export function hydrateProjectsWithNormalizedAccess(projects, accessRows) {
+  if (!Array.isArray(accessRows)) return projects;
+  const accessByProject = groupOrderedRelationshipValues(
+    accessRows,
+    (row) => String(row?.project_id || '').trim(),
+    (row) => String(row?.user_id || '').trim(),
+  );
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    accessUserIds: accessByProject.get(project.id) || [],
+  }));
+}
+
+export function hydrateProjectsWithNormalizedSelectionTaskLinks(projects, linkRows) {
+  if (!Array.isArray(linkRows)) return projects;
+  const linksBySelection = groupOrderedRelationshipValues(
+    linkRows,
+    (row) => `${String(row?.project_id || '').trim()}:${String(row?.selection_id || '').trim()}`,
+    (row) => String(row?.task_id || '').trim(),
+  );
+  return (projects || []).map((project) => normalizeProject({
+    ...project,
+    selections: (project.selections || []).map((selection) => ({
+      ...selection,
+      taskIds: linksBySelection.get(`${project.id}:${selection.id}`) || [],
+    })),
+  }));
+}
+
+export function hydrateTasksWithNormalizedSelectionLinks(tasks, projects, linkRows) {
+  if (!Array.isArray(linkRows)) return tasks;
+  const selections = new Map();
+  (projects || []).forEach((project) => {
+    (project.selections || []).forEach((selection) => {
+      selections.set(`${project.id}:${selection.id}`, selection);
+    });
+  });
+  const linksByTask = new Map();
+  linkRows.forEach((row) => {
+    const taskId = String(row?.task_id || '').trim();
+    const projectId = String(row?.project_id || '').trim();
+    const selectionId = String(row?.selection_id || '').trim();
+    if (!taskId || !projectId || !selectionId) return;
+    if (!linksByTask.has(taskId)) linksByTask.set(taskId, []);
+    linksByTask.get(taskId).push({ projectId, selectionId, position: Number(row.position) || 0 });
+  });
+  linksByTask.forEach((links) => links.sort((left, right) => left.position - right.position));
+
+  return (tasks || []).map((task) => {
+    const link = linksByTask.get(task.id)?.[0] || null;
+    if (!link) {
+      return normalizeTask({
+        ...task,
+        sourceSelectionId: '',
+        sourceSelectionProjectId: '',
+        sourceSelectionLabel: '',
+      });
+    }
+    const selection = selections.get(`${link.projectId}:${link.selectionId}`);
+    return normalizeTask({
+      ...task,
+      sourceSelectionId: link.selectionId,
+      sourceSelectionProjectId: link.projectId,
+      sourceSelectionLabel: String(selection?.itemName || selection?.chosenOption || 'Selection').trim() || 'Selection',
+    });
+  });
 }
 
 function fromStorage(key, fallback) {
@@ -1012,7 +1498,7 @@ function runTrackerMutation(key, mutationFn, invalidate = [['tracker'], ['supaba
 
 function stripRecordMetadata(item) {
   if (!item || typeof item !== 'object') return item;
-  const { _version, ...data } = item;
+  const { _version, _normalizedVersions, _personKey, ...data } = item;
   return data;
 }
 
@@ -1024,6 +1510,122 @@ function concurrencyConflictError() {
   const error = new Error('This record was changed by someone else. Refresh data, review the latest changes, and try again.');
   error.code = 'concurrency-conflict';
   return error;
+}
+
+const NORMALIZED_PROJECT_SECTION_KEYS = ['phases', 'files', 'photos', 'selections', 'inspections'];
+
+export function getNormalizedProjectSectionChanges(previousProject, nextProject) {
+  const sections = {};
+  NORMALIZED_PROJECT_SECTION_KEYS.forEach((key) => {
+    if (JSON.stringify(previousProject?.[key]) !== JSON.stringify(nextProject?.[key])) {
+      sections[key] = nextProject?.[key];
+    }
+  });
+  return sections;
+}
+
+function hasOnlyNormalizedProjectChanges(previousProject, nextProject) {
+  const stripSections = (project) => {
+    const {
+      phases,
+      files,
+      photos,
+      selections,
+      inspections,
+      _version,
+      _normalizedVersions,
+      ...projectFields
+    } = project || {};
+    return projectFields;
+  };
+  return JSON.stringify(stripSections(previousProject)) === JSON.stringify(stripSections(nextProject));
+}
+
+async function persistNormalizedProjectSections(previousProject, nextProject) {
+  const sections = getNormalizedProjectSectionChanges(previousProject, nextProject);
+  const sectionKeys = Object.keys(sections);
+  if (!sectionKeys.length || !previousProject?._normalizedVersions) return null;
+  const inspectionsOnly = sectionKeys.length === 1 && sectionKeys[0] === 'inspections';
+  if (sectionKeys.includes('inspections') && !inspectionsOnly) return null;
+
+  return runTrackerMutation(['project', previousProject.id, 'normalized-sections'], async () => {
+    const rpcName = inspectionsOnly ? 'save_normalized_project_inspections' : 'save_normalized_project_sections';
+    const body = inspectionsOnly
+      ? {
+          p_project_id: previousProject.id,
+          p_inspections: sections.inspections,
+          p_expected_versions: previousProject._normalizedVersions,
+        }
+      : {
+          p_project_id: previousProject.id,
+          p_sections: sections,
+          p_expected_versions: previousProject._normalizedVersions,
+        };
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${rpcName}`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    }, 'Normalized project save');
+    const text = await response.text();
+    if (!response.ok) {
+      if (/NORMALIZED_VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (response.status === 404 || /PGRST202/i.test(text)) return null;
+      throw new Error(`Normalized project save failed: ${text || response.statusText}`);
+    }
+    let result;
+    try {
+      result = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error('Normalized project save returned invalid JSON.');
+    }
+    return {
+      ...nextProject,
+      _version: Number(result?.version) || Number(previousProject._version) || 0,
+      _normalizedVersions: {
+        ...previousProject._normalizedVersions,
+        ...(result?.normalizedVersions || {}),
+      },
+    };
+  });
+}
+
+async function persistTaskWithNormalizedAttachments(previousTask, nextTask) {
+  if (!nextTask) return null;
+  const expectedAttachmentVersions = previousTask?._normalizedVersions?.attachments;
+  if (previousTask && !expectedAttachmentVersions) return null;
+
+  return runTrackerMutation(['task', nextTask.id, 'normalized-attachments'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/save_task_with_attachments`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        p_task_id: nextTask.id,
+        p_task_data: stripRecordMetadata(nextTask),
+        p_expected_version: Number(previousTask?._version) || 0,
+        p_expected_attachment_versions: expectedAttachmentVersions || {},
+      }),
+    }, 'Task save');
+    const text = await response.text();
+    if (!response.ok) {
+      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (response.status === 404 || /PGRST202/i.test(text)) return null;
+      throw new Error(`Task save failed: ${text || response.statusText}`);
+    }
+    let result;
+    try {
+      result = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error('Task save returned invalid JSON.');
+    }
+    return normalizeTask({
+      ...nextTask,
+      _version: Number(result?.version) || Number(previousTask?._version) || 1,
+      _normalizedVersions: {
+        ...(previousTask?._normalizedVersions || {}),
+        ...(result?.normalizedVersions || {}),
+      },
+    });
+  });
 }
 
 async function applyVersionedOperations(operations) {
@@ -1044,6 +1646,31 @@ async function applyVersionedOperations(operations) {
       return Array.isArray(result) ? result : [];
     } catch {
       throw new Error('Versioned save returned invalid JSON.');
+    }
+  });
+}
+
+async function applyNormalizedProjectTaskBatch(projectUpdates, taskOperations) {
+  return runTrackerMutation(['normalized-project-task-batch'], async () => {
+    const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/save_normalized_project_task_batch`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        p_project_updates: projectUpdates,
+        p_task_operations: taskOperations,
+      }),
+    }, 'Normalized project and task save');
+    const text = await response.text();
+    if (!response.ok) {
+      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (response.status === 404 || /PGRST202/i.test(text)) return null;
+      throw new Error(`Normalized project and task save failed: ${text || response.statusText}`);
+    }
+    try {
+      const result = text ? JSON.parse(text) : null;
+      return result && Array.isArray(result.projectResults) && Array.isArray(result.taskResults) ? result : null;
+    } catch {
+      throw new Error('Normalized project and task save returned invalid JSON.');
     }
   });
 }
@@ -1111,10 +1738,59 @@ async function persistVersionedProjectAndTasks(currentState, projects, tasks) {
     await upsertCollection('tasks', tasks);
     return { projects, tasks, storageMode };
   }
-  const operations = [
-    ...buildVersionedCollectionOperations('projects', projects, currentState.projects),
-    ...buildVersionedCollectionOperations('tasks', tasks, currentState.tasks),
-  ];
+  const projectOperations = buildVersionedCollectionOperations('projects', projects, currentState.projects);
+  const taskOperations = buildVersionedCollectionOperations('tasks', tasks, currentState.tasks);
+  const previousProjectMap = new Map((currentState.projects || []).map((project) => [project.id, project]));
+  const nextProjectMap = new Map((projects || []).map((project) => [project.id, project]));
+  const normalizedProjectUpdates = [];
+  let canUseNormalizedBatch = projectOperations.length > 0;
+  for (const operation of projectOperations) {
+    const previousProject = previousProjectMap.get(operation.id);
+    const nextProject = nextProjectMap.get(operation.id);
+    const sections = getNormalizedProjectSectionChanges(previousProject, nextProject);
+    if (
+      operation.delete
+      || !previousProject
+      || !nextProject
+      || !previousProject._normalizedVersions
+      || !hasOnlyNormalizedProjectChanges(previousProject, nextProject)
+      || Object.keys(sections).length === 0
+    ) {
+      canUseNormalizedBatch = false;
+      break;
+    }
+    normalizedProjectUpdates.push({
+      id: operation.id,
+      sections,
+      expectedVersions: previousProject._normalizedVersions,
+    });
+  }
+
+  if (canUseNormalizedBatch) {
+    const normalizedResult = await applyNormalizedProjectTaskBatch(normalizedProjectUpdates, taskOperations);
+    if (normalizedResult) {
+      const projectResults = new Map(normalizedResult.projectResults.map((result) => [result.id, result]));
+      return {
+        projects: projects.map((project) => {
+          const result = projectResults.get(project.id);
+          const previousProject = previousProjectMap.get(project.id);
+          if (!result) return project;
+          return {
+            ...project,
+            _version: Number(result.version) || Number(previousProject?._version) || 0,
+            _normalizedVersions: {
+              ...(previousProject?._normalizedVersions || {}),
+              ...(result.normalizedVersions || {}),
+            },
+          };
+        }),
+        tasks: applyReturnedVersions('tasks', tasks, normalizedResult.taskResults),
+        storageMode: 'supabase',
+      };
+    }
+  }
+
+  const operations = [...projectOperations, ...taskOperations];
   const results = await applyVersionedOperations(operations);
   return {
     projects: applyReturnedVersions('projects', projects, results),
@@ -1131,6 +1807,21 @@ async function loadSupabaseSettingsWithRetry() {
     { retryDelay: (attempt) => [900, 1800, 2500][attempt] || 2500 },
   );
   return Array.isArray(response) ? response : null;
+}
+
+async function loadNormalizedAppUsers() {
+  try {
+    const rows = await querySupabaseJson(
+      ['app-users'],
+      '/rest/v1/app_users?select=id,position,data,version&order=position.asc',
+      'Application users',
+      { retry: 0 },
+    );
+    return Array.isArray(rows) ? rows : null;
+  } catch (error) {
+    console.warn('Normalized application users are not available yet; using settings JSON users.', error);
+    return null;
+  }
 }
 
 async function loadNormalizedProjectSchedule() {
@@ -1153,6 +1844,265 @@ async function loadNormalizedProjectSchedule() {
     return { phases, steps };
   } catch (error) {
     console.warn('Normalized schedule tables are not available yet; using project JSON schedule data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedProjectAssets() {
+  try {
+    const [folders, files, photos] = await Promise.all([
+      querySupabaseJson(
+        ['project-file-folders'],
+        '/rest/v1/project_file_folders?select=project_id,id,position,data,version&order=project_id.asc,position.asc',
+        'Project file folders',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-files'],
+        '/rest/v1/project_files?select=project_id,folder_id,id,position,data,version&order=project_id.asc,folder_id.asc,position.asc',
+        'Project files',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-photos'],
+        '/rest/v1/project_photos?select=project_id,id,position,data,version&order=project_id.asc,position.asc',
+        'Project photos',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(folders) || !Array.isArray(files) || !Array.isArray(photos)) return null;
+    return { folders, files, photos };
+  } catch (error) {
+    console.warn('Normalized project asset tables are not available yet; using project JSON file and photo data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedProjectSelections() {
+  try {
+    const [selections, attachments, photos] = await Promise.all([
+      querySupabaseJson(
+        ['project-selections'],
+        '/rest/v1/project_selections?select=project_id,id,position,data,version&order=project_id.asc,position.asc',
+        'Project selections',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-selection-attachments'],
+        '/rest/v1/project_selection_attachments?select=project_id,selection_id,id,position,data,version&order=project_id.asc,selection_id.asc,position.asc',
+        'Selection attachments',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-selection-photos'],
+        '/rest/v1/project_selection_photos?select=project_id,selection_id,id,position,data,version&order=project_id.asc,selection_id.asc,position.asc',
+        'Selection photos',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(selections) || !Array.isArray(attachments) || !Array.isArray(photos)) return null;
+    return { selections, attachments, photos };
+  } catch (error) {
+    console.warn('Normalized selection tables are not available yet; using project JSON selection data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedProjectInspections() {
+  try {
+    const [inspections, files] = await Promise.all([
+      querySupabaseJson(
+        ['project-inspections'],
+        '/rest/v1/project_inspections?select=project_id,id,position,data,version&order=project_id.asc,position.asc',
+        'Project inspections',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-inspection-files'],
+        '/rest/v1/project_inspection_files?select=project_id,inspection_id,kind,id,data,version&order=project_id.asc,inspection_id.asc,kind.asc',
+        'Inspection files',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(inspections) || !Array.isArray(files)) return null;
+    return { inspections, files };
+  } catch (error) {
+    console.warn('Normalized inspection tables are not available yet; using project JSON inspection data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedTaskAttachments() {
+  try {
+    const attachments = await querySupabaseJson(
+      ['task-attachments'],
+      '/rest/v1/task_attachments?select=task_id,id,position,data,version&order=task_id.asc,position.asc',
+      'Task attachments',
+      { retry: 0 },
+    );
+    return Array.isArray(attachments) ? attachments : null;
+  } catch (error) {
+    console.warn('Normalized task attachment table is not available yet; using task JSON attachment data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedAssignments() {
+  try {
+    const [tasks, phases, steps] = await Promise.all([
+      querySupabaseJson(
+        ['task-assignments'],
+        '/rest/v1/task_assignments?select=task_id,assignee,position,person_key&order=task_id.asc,position.asc',
+        'Task assignments',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-phase-assignments'],
+        '/rest/v1/project_phase_assignments?select=project_id,phase_id,assignee,position,person_key&order=project_id.asc,phase_id.asc,position.asc',
+        'Phase assignments',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-step-assignments'],
+        '/rest/v1/project_step_assignments?select=project_id,phase_id,step_id,assignee,position,person_key&order=project_id.asc,phase_id.asc,step_id.asc,position.asc',
+        'Step assignments',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(tasks) || !Array.isArray(phases) || !Array.isArray(steps)) return null;
+    return { tasks, phases, steps };
+  } catch (error) {
+    console.warn('Normalized assignment tables are not available yet; using embedded assignee data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedScheduleRelationships() {
+  try {
+    const [phases, steps, delays] = await Promise.all([
+      querySupabaseJson(
+        ['project-phase-dependencies'],
+        '/rest/v1/project_phase_dependencies?select=project_id,phase_id,predecessor_phase_id,position,lag&order=project_id.asc,phase_id.asc,position.asc',
+        'Phase dependencies',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-step-dependencies'],
+        '/rest/v1/project_step_dependencies?select=project_id,phase_id,step_id,predecessor_step_id,position,lag&order=project_id.asc,phase_id.asc,step_id.asc,position.asc',
+        'Step dependencies',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
+        ['project-schedule-delays'],
+        '/rest/v1/project_schedule_delays?select=project_id,phase_id,id,step_id,position,data,version&order=project_id.asc,phase_id.asc,position.asc',
+        'Schedule delays',
+        { retry: 0 },
+      ),
+    ]);
+    if (!Array.isArray(phases) || !Array.isArray(steps) || !Array.isArray(delays)) return null;
+    return { phases, steps, delays };
+  } catch (error) {
+    console.warn('Normalized schedule relationship tables are not available yet; using embedded dependency and delay data.', error);
+    return null;
+  }
+}
+
+async function loadPeopleReadModel() {
+  try {
+    const rows = await querySupabaseJson(
+      ['people'],
+      '/rest/v1/people?select=id,source_table,legacy_id,people_type,data,version,created_at&order=source_table.asc,created_at.asc',
+      'People',
+      { retry: 0 },
+    );
+    if (Array.isArray(rows)) {
+      const collections = hydratePeopleFromNormalizedRows(rows);
+      if (collections) return { ...collections, versionRows: rows, normalized: true };
+    }
+  } catch (error) {
+    console.warn('Unified People table is not available yet; using legacy People tables.', error);
+  }
+  const [subsRows, employeeRows] = await Promise.all([
+    querySupabaseJson(['subs'], '/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
+    querySupabaseJson(['employees'], '/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
+  ]);
+  if (!Array.isArray(subsRows) || !Array.isArray(employeeRows)) {
+    throw new Error('Supabase returned an unexpected People response.');
+  }
+  return {
+    subs: subsRows.map((row) => normalizePerson('sub', { ...(row.data || row), _version: Number(row.version) || 0 })),
+    employees: employeeRows.map((row) => normalizePerson('emp', { ...(row.data || row), _version: Number(row.version) || 0 })),
+    versionRows: [...subsRows, ...employeeRows],
+    normalized: false,
+  };
+}
+
+async function loadProjectReadModel() {
+  try {
+    const rows = await querySupabaseJson(
+      ['project-core-records'],
+      '/rest/v1/project_core_records?select=*&order=created_at.asc',
+      'Project core records',
+      { retry: 0 },
+    );
+    if (Array.isArray(rows)) return { rows, core: true };
+  } catch (error) {
+    console.warn('Project core view is not available; using full project records.', error);
+  }
+  const rows = await querySupabaseJson(
+    ['projects'],
+    '/rest/v1/projects?select=*&order=created_at.asc',
+    'Projects',
+  );
+  return { rows, core: false };
+}
+
+async function loadTaskReadModel() {
+  try {
+    const rows = await querySupabaseJson(
+      ['task-core-records'],
+      '/rest/v1/task_core_records?select=*&order=created_at.asc',
+      'Task core records',
+      { retry: 0 },
+    );
+    if (Array.isArray(rows)) return { rows, core: true };
+  } catch (error) {
+    console.warn('Task core view is not available; using full task records.', error);
+  }
+  const rows = await querySupabaseJson(
+    ['tasks'],
+    '/rest/v1/tasks?select=*&order=created_at.asc',
+    'Tasks',
+  );
+  return { rows, core: false };
+}
+
+async function loadNormalizedProjectAccess() {
+  try {
+    const rows = await querySupabaseJson(
+      ['project-user-access'],
+      '/rest/v1/project_user_access?select=project_id,user_id,position&order=project_id.asc,position.asc',
+      'Project access',
+      { retry: 0 },
+    );
+    return Array.isArray(rows) ? rows : null;
+  } catch (error) {
+    console.warn('Normalized project access table is not available yet; using project JSON access data.', error);
+    return null;
+  }
+}
+
+async function loadNormalizedSelectionTaskLinks() {
+  try {
+    const rows = await querySupabaseJson(
+      ['selection-task-links'],
+      '/rest/v1/selection_task_links?select=project_id,selection_id,task_id,position&order=project_id.asc,selection_id.asc,position.asc',
+      'Selection task links',
+      { retry: 0 },
+    );
+    return Array.isArray(rows) ? rows : null;
+  } catch (error) {
+    console.warn('Normalized selection task link table is not available yet; using selection JSON task links.', error);
     return null;
   }
 }
@@ -1219,22 +2169,78 @@ async function fetchTrackerData() {
   }
 
   try {
-    const [projectsResponse, tasksResponse, subsResponse, employeesResponse, normalizedSchedule] =
+    const [
+      projectReadModel,
+      taskReadModel,
+      peopleReadModel,
+      normalizedSchedule,
+      normalizedAssets,
+      normalizedSelections,
+      normalizedInspections,
+      normalizedTaskAttachments,
+      normalizedAssignments,
+      normalizedProjectAccess,
+      normalizedSelectionTaskLinks,
+      normalizedScheduleRelationships,
+      normalizedAppUsers,
+    ] =
       await Promise.all([
-        querySupabaseJson(['projects'], '/rest/v1/projects?select=*&order=created_at.asc', 'Projects'),
-        querySupabaseJson(['tasks'], '/rest/v1/tasks?select=*&order=created_at.asc', 'Tasks'),
-        querySupabaseJson(['subs'], '/rest/v1/subs?select=*&order=created_at.asc', 'Subcontractors'),
-        querySupabaseJson(['employees'], '/rest/v1/employees?select=*&order=created_at.asc', 'Employees'),
+        loadProjectReadModel(),
+        loadTaskReadModel(),
+        loadPeopleReadModel(),
         loadNormalizedProjectSchedule(),
+        loadNormalizedProjectAssets(),
+        loadNormalizedProjectSelections(),
+        loadNormalizedProjectInspections(),
+        loadNormalizedTaskAttachments(),
+        loadNormalizedAssignments(),
+        loadNormalizedProjectAccess(),
+        loadNormalizedSelectionTaskLinks(),
+        loadNormalizedScheduleRelationships(),
+        loadNormalizedAppUsers(),
       ]);
 
+    let projectsResponse = projectReadModel?.rows;
+    let tasksResponse = taskReadModel?.rows;
     if (
       !Array.isArray(projectsResponse) ||
       !Array.isArray(tasksResponse) ||
-      !Array.isArray(subsResponse) ||
-      !Array.isArray(employeesResponse)
+      !Array.isArray(peopleReadModel?.subs) ||
+      !Array.isArray(peopleReadModel?.employees)
     ) {
       throw new Error('Supabase returned an unexpected response.');
+    }
+
+    const projectNormalizedSourcesReady = [
+      normalizedSchedule,
+      normalizedAssets,
+      normalizedSelections,
+      normalizedInspections,
+      normalizedAssignments,
+      normalizedProjectAccess,
+      normalizedSelectionTaskLinks,
+      normalizedScheduleRelationships,
+    ].every(Boolean);
+    const taskNormalizedSourcesReady = [
+      normalizedTaskAttachments,
+      normalizedAssignments,
+      normalizedSelectionTaskLinks,
+    ].every(Boolean);
+    if (projectReadModel?.core && !projectNormalizedSourcesReady) {
+      projectsResponse = await querySupabaseJson(
+        ['projects-core-fallback'],
+        '/rest/v1/projects?select=*&order=created_at.asc',
+        'Project fallback records',
+        { retry: 0, force: true },
+      );
+    }
+    if (taskReadModel?.core && !taskNormalizedSourcesReady) {
+      tasksResponse = await querySupabaseJson(
+        ['tasks-core-fallback'],
+        '/rest/v1/tasks?select=*&order=created_at.asc',
+        'Task fallback records',
+        { retry: 0, force: true },
+      );
     }
 
     let settingsResponse = null;
@@ -1246,31 +2252,85 @@ async function fetchTrackerData() {
       console.warn('Settings load failed; using cached/default settings for this session.', error);
     }
 
+    const subs = peopleReadModel.subs;
+    const employees = peopleReadModel.employees;
+
     const projectRecords = projectsResponse.map((row) => normalizeProject({
       ...(row.data || row),
       _version: Number(row.version) || 0,
     }));
-    const projects = normalizedSchedule
-      ? hydrateProjectsWithNormalizedSchedule(projectRecords, normalizedSchedule.phases, normalizedSchedule.steps)
+    const projectsWithAccess = normalizedProjectAccess
+      ? hydrateProjectsWithNormalizedAccess(projectRecords, normalizedProjectAccess)
       : projectRecords;
-    const tasks = tasksResponse.map((row) => normalizeTask({ ...(row.data || row), _version: Number(row.version) || 0 }));
-    const subs = Array.isArray(subsResponse)
-      ? subsResponse.map((row) => normalizePerson('sub', { ...(row.data || row), _version: Number(row.version) || 0 }))
-      : [];
-    const employees = Array.isArray(employeesResponse)
-      ? employeesResponse.map((row) => normalizePerson('emp', { ...(row.data || row), _version: Number(row.version) || 0 }))
-      : [];
-    const settings =
+    const projectsWithSchedule = normalizedSchedule
+      ? hydrateProjectsWithNormalizedSchedule(projectsWithAccess, normalizedSchedule.phases, normalizedSchedule.steps)
+      : projectsWithAccess;
+    const projectsWithScheduleRelationships = normalizedScheduleRelationships
+      ? hydrateProjectsWithNormalizedScheduleRelationships(
+          projectsWithSchedule,
+          normalizedScheduleRelationships.phases,
+          normalizedScheduleRelationships.steps,
+          normalizedScheduleRelationships.delays,
+        )
+      : projectsWithSchedule;
+    const projectsWithAssets = normalizedAssets
+      ? hydrateProjectsWithNormalizedAssets(
+          projectsWithScheduleRelationships,
+          normalizedAssets.folders,
+          normalizedAssets.files,
+          normalizedAssets.photos,
+        )
+      : projectsWithScheduleRelationships;
+    const projectsWithSelections = normalizedSelections
+      ? hydrateProjectsWithNormalizedSelections(
+          projectsWithAssets,
+          normalizedSelections.selections,
+          normalizedSelections.attachments,
+          normalizedSelections.photos,
+        )
+      : projectsWithAssets;
+    const projectsWithSelectionLinks = normalizedSelectionTaskLinks
+      ? hydrateProjectsWithNormalizedSelectionTaskLinks(projectsWithSelections, normalizedSelectionTaskLinks)
+      : projectsWithSelections;
+    const projectsBeforeAssignments = normalizedInspections
+      ? hydrateProjectsWithNormalizedInspections(
+          projectsWithSelectionLinks,
+          normalizedInspections.inspections,
+          normalizedInspections.files,
+        )
+      : projectsWithSelectionLinks;
+    const taskRecords = tasksResponse.map((row) => normalizeTask({ ...(row.data || row), _version: Number(row.version) || 0 }));
+    const tasksWithAttachments = normalizedTaskAttachments
+      ? hydrateTasksWithNormalizedAttachments(taskRecords, normalizedTaskAttachments)
+      : taskRecords;
+    const tasksBeforeAssignments = normalizedSelectionTaskLinks
+      ? hydrateTasksWithNormalizedSelectionLinks(tasksWithAttachments, projectsBeforeAssignments, normalizedSelectionTaskLinks)
+      : tasksWithAttachments;
+    const assignedTracker = normalizedAssignments
+      ? hydrateTrackerWithNormalizedAssignments(
+          projectsBeforeAssignments,
+          tasksBeforeAssignments,
+          normalizedAssignments.tasks,
+          normalizedAssignments.phases,
+          normalizedAssignments.steps,
+          subs,
+          employees,
+        )
+      : { projects: projectsBeforeAssignments, tasks: tasksBeforeAssignments };
+    const { projects, tasks } = assignedTracker;
+    const baseSettings =
       Array.isArray(settingsResponse) && settingsResponse.length
         ? normalizeSettings(settingsResponse[0].data || EMPTY_SETTINGS)
         : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
+    const settings = normalizedAppUsers
+      ? hydrateSettingsWithNormalizedUsers(baseSettings, normalizedAppUsers)
+      : baseSettings;
     const settingsLoadedFromSupabase = Array.isArray(settingsResponse) && settingsResponse.length > 0;
     const settingsVersion = Number(settingsResponse?.[0]?.version) || 0;
     const concurrencyEnabled = [
       ...projectsResponse,
       ...tasksResponse,
-      ...subsResponse,
-      ...employeesResponse,
+      ...(peopleReadModel.versionRows || []),
       ...(Array.isArray(settingsResponse) ? settingsResponse : []),
     ].some((row) => Number(row?.version) > 0);
     if (settingsLoadedFromSupabase) {
@@ -1347,6 +2407,12 @@ export async function createTask(currentState, payload) {
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   });
   const tasks = [...currentState.tasks, task];
+  if (currentState.storageMode === 'supabase' && currentState.concurrencyEnabled) {
+    const normalizedTask = await persistTaskWithNormalizedAttachments(null, task);
+    if (normalizedTask) {
+      return { ...currentState, tasks: [...currentState.tasks, normalizedTask], storageMode: 'supabase' };
+    }
+  }
   const persisted = await persistVersionedCollection({
     table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
     storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
@@ -1365,10 +2431,19 @@ export async function updateTask(currentState, taskId, updates) {
     (attachment) => attachment?.storagePath && !nextAttachmentIds.has(attachment.id),
   );
 
-  const persisted = await persistVersionedCollection({
-    table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
-    storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
-  });
+  let persisted;
+  if (currentState.storageMode === 'supabase' && currentState.concurrencyEnabled && existingTask && nextTask) {
+    const normalizedTask = await persistTaskWithNormalizedAttachments(existingTask, nextTask);
+    persisted = normalizedTask
+      ? { items: tasks.map((task) => (task.id === taskId ? normalizedTask : task)), storageMode: 'supabase' }
+      : null;
+  }
+  if (!persisted) {
+    persisted = await persistVersionedCollection({
+      table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
+      storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
+    });
+  }
   for (const attachment of removedAttachments) {
     try {
       await deleteProjectFileFromStorage(attachment);
@@ -1457,6 +2532,24 @@ export async function updateProject(currentState, projectId, updates) {
         })
       : project,
   );
+  const previousProject = currentState.projects.find((project) => project.id === projectId);
+  const nextProject = projects.find((project) => project.id === projectId);
+  if (
+    currentState.storageMode === 'supabase'
+    && currentState.concurrencyEnabled
+    && previousProject
+    && nextProject
+    && hasOnlyNormalizedProjectChanges(previousProject, nextProject)
+  ) {
+    const normalizedProject = await persistNormalizedProjectSections(previousProject, nextProject);
+    if (normalizedProject) {
+      return {
+        ...currentState,
+        projects: projects.map((project) => (project.id === projectId ? normalizedProject : project)),
+        storageMode: 'supabase',
+      };
+    }
+  }
   const persisted = await persistVersionedCollection({
     table: 'projects', nextItems: projects, previousItems: currentState.projects,
     storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
