@@ -109,8 +109,10 @@ Treat that folder as a preserved reference copy. The active integrated source is
   3. migrations `20260717060000_add_project_takeoffs.sql` and `20260717070000_add_android_push_notifications.sql` were applied to production;
   4. `send-project-notification` was deployed and verified `ACTIVE` at version 1;
   5. a Firebase-enabled Capacitor sync and Android debug build passed, including Gradle's `processDebugGoogleServices` task;
-  6. GitHub Actions uses the `GOOGLE_SERVICES_JSON` repository secret and enables `VITE_FIREBASE_PUSH_ENABLED=true` for Android builds.
-- Remaining validation: install the Firebase-enabled APK on a physical Android device, grant notification permission, confirm registration in `device_push_tokens`, and send an authorized project notification end to end.
+  6. GitHub Actions uses the `GOOGLE_SERVICES_JSON` repository secret and enables `VITE_FIREBASE_PUSH_ENABLED=true` for Android builds;
+  7. the token RPC client sends JSON content types explicitly, fixing the `PGRST202` unnamed-text-parameter error found during device activation;
+  8. physical-device validation passed on a Samsung `SM-X218U`: notification permission was granted, the FCM token registered in `device_push_tokens`, Firebase accepted a smoke-test message, and Android posted it privately on `project-tasks-v2`.
+- Production project events intentionally exclude the user who made the change. Validate the multi-user recipient path by making a project change from a different authorized account than the account signed in on the receiving device.
 - Verification completed: 106 regression tests, production build, Capacitor Android sync, `assembleDebug`, and `git diff --check` pass.
 
 ### Project main photo milestone

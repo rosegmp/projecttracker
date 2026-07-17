@@ -4,6 +4,7 @@ import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 import { ANDROID_NOTIFICATION_CHANNELS, getAndroidNotificationPreferences } from './androidNotifications.js';
 
 const TOKEN_STORAGE_PREFIX = 'project-tracker:android-push-token:';
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const LIVE_PUSH_ENABLED = String(import.meta.env?.VITE_FIREBASE_PUSH_ENABLED || '').toLowerCase() === 'true';
 let registrationChain = Promise.resolve();
 
@@ -35,6 +36,7 @@ async function savePushToken(activeUser, token) {
     '/rest/v1/rpc/register_device_push_token',
     {
       method: 'POST',
+      headers: JSON_HEADERS,
       body: JSON.stringify({
         p_token: token,
         p_device_label: typeof navigator === 'undefined' ? '' : navigator.userAgent.slice(0, 240),
@@ -54,7 +56,7 @@ async function deletePushToken(activeUser) {
   if (!token) return;
   const response = await fetchAuthorizedSupabase(
     '/rest/v1/rpc/unregister_device_push_token',
-    { method: 'POST', body: JSON.stringify({ p_token: token }) },
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ p_token: token }) },
     'Push notification removal',
   );
   if (!response.ok) throw new Error('Unable to remove this device from live notifications.');
@@ -166,6 +168,7 @@ export async function sendProjectPushNotification(event) {
     '/functions/v1/send-project-notification',
     {
       method: 'POST',
+      headers: JSON_HEADERS,
       body: JSON.stringify({
         eventId: event.eventId || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
         projectId: String(event.projectId),

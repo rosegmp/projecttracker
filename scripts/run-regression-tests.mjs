@@ -666,6 +666,7 @@ const tests = [
       ]);
 
       assert.match(pushSource, /register_device_push_token/);
+      assert.match(pushSource, /['"]Content-Type['"]:\s*['"]application\/json['"]/);
       assert.match(pushSource, /pushNotificationActionPerformed/);
       assert.match(migrationSource, /create table if not exists public\.device_push_tokens/);
       assert.match(migrationSource, /auth_user_id = auth\.uid\(\)/);
