@@ -141,6 +141,8 @@ function applyReadOnlyMode(root) {
   [
     "uploadButton",
     "emptyUploadButton",
+    "selectProjectPdfButton",
+    "emptySelectProjectPdfButton",
     "saveProjectButton",
     "saveAsProjectButton",
     "importProjectButton",
@@ -167,6 +169,7 @@ function bindElements(root) {
     "pdfInput",
     "projectInput",
     "uploadButton",
+    "selectProjectPdfButton",
     "openProjectButton",
     "saveProjectButton",
     "saveAsProjectButton",
@@ -179,6 +182,7 @@ function bindElements(root) {
     "importProjectButton",
     "closeProjectBrowser",
     "emptyUploadButton",
+    "emptySelectProjectPdfButton",
     "fileName",
     "scaleBadge",
     "prevPage",
@@ -246,6 +250,8 @@ function bindElements(root) {
 function bindEvents() {
   els.uploadButton.addEventListener("click", () => els.pdfInput.click());
   els.emptyUploadButton.addEventListener("click", () => els.pdfInput.click());
+  els.selectProjectPdfButton.addEventListener("click", selectProjectPdf);
+  els.emptySelectProjectPdfButton.addEventListener("click", selectProjectPdf);
   els.openProjectButton.addEventListener("click", openProjectBrowser);
   els.saveProjectButton.addEventListener("click", () => {
     saveTakeoffProject({ promptForName: false, duplicateProject: false });
@@ -256,7 +262,7 @@ function bindEvents() {
   els.closeProjectBrowser.addEventListener("click", closeProjectBrowser);
   els.pdfInput.addEventListener("change", (event) => {
     const [file] = event.target.files;
-    if (file) loadPdf(file);
+    if (file) requestPdfLoad(file);
     event.target.value = "";
   });
   els.projectInput.addEventListener("change", (event) => {
@@ -354,12 +360,29 @@ function bindEvents() {
     event.preventDefault();
     els.viewer.classList.remove("drag-over");
     const file = [...event.dataTransfer.files].find((item) => item.type === "application/pdf");
-    if (file) loadPdf(file);
+    if (file) requestPdfLoad(file);
   });
 
   document.addEventListener("keydown", handleDocumentKeydown);
   document.addEventListener("click", handleDocumentClick);
   window.addEventListener("beforeunload", handleBeforeUnload);
+}
+
+function confirmReplaceCurrentDrawing() {
+  if (!state.dirty) return true;
+  return window.confirm("Replace this drawing? Unsaved Takeoff changes will be discarded.");
+}
+
+async function requestPdfLoad(file) {
+  if (!file || !confirmReplaceCurrentDrawing()) return;
+  await loadPdf(file);
+}
+
+async function selectProjectPdf() {
+  if (readOnly || typeof dataService?.selectProjectPdf !== "function") return;
+  if (!confirmReplaceCurrentDrawing()) return;
+  const file = await dataService.selectProjectPdf();
+  if (file) await loadPdf(file);
 }
 
 function handleDocumentKeydown(event) {

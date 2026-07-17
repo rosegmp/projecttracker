@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 ## Working copy
 
@@ -65,6 +65,19 @@ Treat that folder as a preserved reference copy. The active integrated source is
 2. With an authenticated test user, smoke-test opening a project, loading the Takeoff tab, uploading a PDF, saving, reopening, renaming, and deleting a takeoff.
 3. Confirm mappings between legacy Takeoff records/PDFs and Project Tracker project IDs before importing existing data.
 4. After the compatibility milestone is stable, normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables.
+
+### Implemented milestone: Project Files picker and collapsible Takeoff sidebars
+
+- Takeoff can now open a PDF directly from the current project's **Files** collection without exposing cross-project records.
+- The picker searches PDF names and folders, supports authenticated Supabase Storage files and legacy inline files, and reports download errors without closing the picker.
+- Project Files are converted to a browser `File` and passed through Takeoff's existing PDF loader; Takeoff's independent source-PDF save behavior remains unchanged so a saved takeoff does not break if the original Project File is removed.
+- Uploading or selecting a replacement PDF now warns before discarding dirty Takeoff work.
+- The Sheets and Takeoff sidebars have accessible collapse controls. Preferences persist locally, desktop uses slim reopen rails, and Android/mobile uses compact expandable sections with Takeoff controls initially collapsed on first use.
+- Read-only users can still collapse panels but cannot start a new takeoff from Upload PDF or Project Files.
+- Focused regression coverage now verifies current-project PDF filtering and the picker/sidebar integration. `npm test` passes with 107 tests; the production build, Capacitor Android sync, and Gradle `assembleDebug` all pass.
+- Authenticated browser smoke testing passed in **105 Destiny Way**: the picker listed/search-filtered current-project PDFs, downloaded and rendered the five-page `Door Emporium 105 DESTINY.pdf`, both sidebars collapsed and expanded correctly, and the stacked 412 px Android layout kept each section full-width and reachable. No takeoff was saved and no server-side project data was changed.
+- UI cleanup follow-up: the embedded editor now uses container-aware header, toolbar, sidebar, and phone layouts instead of relying only on browser breakpoints. The document name is separated from file actions, labels are shorter, tool controls wrap without horizontal overflow, Count/Markup options have clear headings, and 681–899 px workspaces keep only one sidebar open at a time so the drawing remains usable.
+- Live checks passed at the 764 px embedded project width and a 412 px Android viewport with no toolbar overflow. Commit-checkpoint verification passed with 107 regression tests, the production build, Capacitor Android sync, and Gradle `assembleDebug`.
 
 ### Original recommended implementation
 

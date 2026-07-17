@@ -376,7 +376,7 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'takeoff' ? (
         <section id="project-panel-takeoff" className="project-detail-section project-detail-subtab-panel project-takeoff-panel" role="tabpanel" aria-labelledby="project-tab-takeoff">
-          <TakeoffWorkspace projectId={project.id} canEdit={canEdit} />
+          <TakeoffWorkspace project={project} projectId={project.id} canEdit={canEdit} />
         </section>
       ) : null}
 

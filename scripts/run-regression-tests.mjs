@@ -49,6 +49,11 @@ import {
   calculateVirtualRange,
   timelineItemIntersectsWindow,
 } from '../src/utils/virtualization.js';
+import {
+  isProjectPdf,
+  listProjectPdfFiles,
+  projectFileDisplayName,
+} from '../src/features/takeoff/projectFilePicker.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -2490,17 +2495,55 @@ const tests = [
     },
   },
   {
+    name: 'Takeoff project file picker lists PDFs from the current project',
+    run() {
+      const project = {
+        files: {
+          folders: [
+            {
+              id: 'plans',
+              name: 'Plans',
+              files: [
+                { id: 'pdf-by-type', name: 'Drawing', type: 'application/pdf' },
+                { id: 'pdf-by-name', originalName: 'Details.PDF', type: 'application/octet-stream' },
+                { id: 'image', name: 'Elevation.jpg', type: 'image/jpeg' },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.equal(isProjectPdf(project.files.folders[0].files[0]), true);
+      assert.equal(isProjectPdf(project.files.folders[0].files[1]), true);
+      assert.equal(isProjectPdf(project.files.folders[0].files[2]), false);
+      assert.equal(projectFileDisplayName(project.files.folders[0].files[1]), 'Details.PDF');
+      assert.deepEqual(listProjectPdfFiles(project).map((file) => ({ id: file.id, folderName: file.folderName })), [
+        { id: 'pdf-by-type', folderName: 'Plans' },
+        { id: 'pdf-by-name', folderName: 'Plans' },
+      ]);
+    },
+  },
+  {
     name: 'Takeoff stays lazy loaded and uses project-scoped authenticated storage',
     async run() {
-      const [projectDetailSource, takeoffServiceSource, takeoffEditorSource, takeoffMigrationSource] = await Promise.all([
+      const [projectDetailSource, takeoffWorkspaceSource, takeoffStyleSource, takeoffServiceSource, takeoffEditorSource, takeoffMigrationSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/features/takeoff/TakeoffWorkspace.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/features/takeoff/takeoff.css', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/services/projectTakeoffData.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/lib/takeoffApp.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260717060000_add_project_takeoffs.sql', import.meta.url), 'utf8'),
       ]);
 
       assert.match(projectDetailSource, /lazy\(\(\) => import\('\.\.\/features\/takeoff\/TakeoffWorkspace\.jsx'\)\)/);
-      assert.match(projectDetailSource, /<TakeoffWorkspace projectId=\{project\.id\} canEdit=\{canEdit\}/);
+      assert.match(projectDetailSource, /<TakeoffWorkspace project=\{project\} projectId=\{project\.id\} canEdit=\{canEdit\}/);
+      assert.match(takeoffWorkspaceSource, /selectProjectPdf/);
+      assert.match(takeoffWorkspaceSource, /projectFileToBrowserFile/);
+      assert.match(takeoffWorkspaceSource, /Project PDF/);
+      assert.match(takeoffEditorSource, /Replace this drawing\? Unsaved Takeoff changes will be discarded\./);
+      assert.match(takeoffWorkspaceSource, /project-tracker:takeoff-sidebar-layout:v1/);
+      assert.match(takeoffStyleSource, /\.workspace\.pages-collapsed/);
+      assert.match(takeoffStyleSource, /\.workspace\.takeoff-collapsed/);
       assert.match(takeoffServiceSource, /fetchAuthorizedSupabase/);
       assert.match(takeoffServiceSource, /project_id=eq\.\$\{encodeURIComponent\(scopedProjectId\)\}/);
       assert.match(takeoffServiceSource, /plan-takeoff:autosave:\$\{scopedProjectId\}/);

@@ -1,16 +1,145 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { formatFileSize } from "../../utils/fileUi.js";
 import { initTakeoffApp } from "./lib/takeoffApp.js";
+import {
+  listProjectPdfFiles,
+  projectFileDisplayName,
+  projectFileToBrowserFile,
+} from "./projectFilePicker.js";
 import { createProjectTakeoffDataService } from "./services/projectTakeoffData.js";
 import "./takeoff.css";
 
-export default function TakeoffWorkspace({ projectId, canEdit = true }) {
+const SIDEBAR_LAYOUT_STORAGE_KEY = "project-tracker:takeoff-sidebar-layout:v1";
+
+function initialSidebarLayout() {
+  const mobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 820px)")?.matches;
+  const fallback = { pagesCollapsed: false, takeoffCollapsed: Boolean(mobile) };
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SIDEBAR_LAYOUT_STORAGE_KEY) || "null");
+    if (!stored || typeof stored !== "object") return fallback;
+    return {
+      pagesCollapsed: Boolean(stored.pagesCollapsed),
+      takeoffCollapsed: Boolean(stored.takeoffCollapsed),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function formatProjectFileDate(value) {
+  if (!value) return "Date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+}
+
+export default function TakeoffWorkspace({ project, projectId, canEdit = true }) {
   const appRef = useRef(null);
+  const pickerResolverRef = useRef(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [pickerError, setPickerError] = useState("");
+  const [loadingFileId, setLoadingFileId] = useState("");
+  const [sidebarLayout, setSidebarLayout] = useState(initialSidebarLayout);
+
+  const projectPdfs = useMemo(() => listProjectPdfFiles(project), [project]);
+  const filteredProjectPdfs = useMemo(() => {
+    const query = pickerSearch.trim().toLowerCase();
+    if (!query) return projectPdfs;
+    return projectPdfs.filter((file) => (
+      `${projectFileDisplayName(file)} ${file.folderName || ""}`.toLowerCase().includes(query)
+    ));
+  }, [pickerSearch, projectPdfs]);
+
+  function closeProjectFilePicker(result = null) {
+    const resolve = pickerResolverRef.current;
+    pickerResolverRef.current = null;
+    setPickerOpen(false);
+    setPickerSearch("");
+    setPickerError("");
+    setLoadingFileId("");
+    resolve?.(result);
+  }
+
+  async function chooseProjectFile(file) {
+    setLoadingFileId(file.id || projectFileDisplayName(file));
+    setPickerError("");
+    try {
+      closeProjectFilePicker(await projectFileToBrowserFile(file));
+    } catch (error) {
+      setLoadingFileId("");
+      setPickerError(error instanceof Error ? error.message : "Unable to open that project file.");
+    }
+  }
+
+  function toggleSidebar(sidebar) {
+    const workspaceWidth = appRef.current?.getBoundingClientRect().width || 0;
+    const useSingleSidebar = workspaceWidth > 680 && workspaceWidth < 900;
+    setSidebarLayout((current) => {
+      if (sidebar === "pages") {
+        const pagesCollapsed = !current.pagesCollapsed;
+        return {
+          ...current,
+          pagesCollapsed,
+          takeoffCollapsed: useSingleSidebar && !pagesCollapsed ? true : current.takeoffCollapsed,
+        };
+      }
+      const takeoffCollapsed = !current.takeoffCollapsed;
+      return {
+        ...current,
+        takeoffCollapsed,
+        pagesCollapsed: useSingleSidebar && !takeoffCollapsed ? true : current.pagesCollapsed,
+      };
+    });
+  }
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_LAYOUT_STORAGE_KEY, JSON.stringify(sidebarLayout));
+    } catch {
+      // Layout preferences are optional when storage is unavailable.
+    }
+  }, [sidebarLayout]);
+
+  useEffect(() => {
+    const workspaceWidth = appRef.current?.getBoundingClientRect().width || 0;
+    if (workspaceWidth <= 680 || workspaceWidth >= 900) return;
+    if (!sidebarLayout.pagesCollapsed && !sidebarLayout.takeoffCollapsed) {
+      setSidebarLayout((current) => ({ ...current, takeoffCollapsed: true }));
+    }
+  }, [sidebarLayout.pagesCollapsed, sidebarLayout.takeoffCollapsed]);
+
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape" || loadingFileId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeProjectFilePicker();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [loadingFileId, pickerOpen]);
 
   useEffect(() => {
     if (!appRef.current) return undefined;
-    const services = createProjectTakeoffDataService({ projectId, canEdit });
+    const services = {
+      ...createProjectTakeoffDataService({ projectId, canEdit }),
+      selectProjectPdf: () => new Promise((resolve) => {
+        if (!canEdit) {
+          resolve(null);
+          return;
+        }
+        pickerResolverRef.current?.(null);
+        pickerResolverRef.current = resolve;
+        setPickerError("");
+        setPickerOpen(true);
+      }),
+    };
     const teardown = initTakeoffApp(appRef.current, services);
     return () => {
+      pickerResolverRef.current?.(null);
+      pickerResolverRef.current = null;
       if (typeof teardown === "function") teardown();
     };
   }, [canEdit, projectId]);
@@ -32,17 +161,19 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
           </div>
         </div>
 
+        <div className="project-meta">
+          <strong id="projectNameDisplay" className="project-name-display">Untitled project</strong>
+          <span id="fileName" className="file-name">No drawing loaded</span>
+        </div>
+
         <div className="file-cluster">
           <input id="pdfInput" className="visually-hidden" type="file" accept="application/pdf" />
           <input id="projectInput" className="visually-hidden" type="file" accept=".takeoff.json,application/json" />
           <button id="uploadButton" className="button primary" type="button">Upload PDF</button>
-          <button id="openProjectButton" className="button" type="button">Open Project</button>
+          <button id="selectProjectPdfButton" className="button" type="button" title="Choose a PDF from this project's Files">Project PDF</button>
+          <button id="openProjectButton" className="button" type="button" title="Open a saved takeoff">Saved Takeoffs</button>
           <button id="saveProjectButton" className="button" type="button" disabled>Save</button>
           <button id="saveAsProjectButton" className="button" type="button" disabled>Save As</button>
-          <div className="project-meta">
-            <strong id="projectNameDisplay" className="project-name-display">Untitled project</strong>
-            <span id="fileName" className="file-name">No drawing loaded</span>
-          </div>
         </div>
 
         <div className="control-cluster project-unit-cluster" aria-label="Project units">
@@ -71,11 +202,19 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
         </div>
       </header>
 
-      <main className="workspace">
+      <main className={`workspace${sidebarLayout.pagesCollapsed ? " pages-collapsed" : ""}${sidebarLayout.takeoffCollapsed ? " takeoff-collapsed" : ""}`}>
         <aside className="pages-pane" aria-label="Pages">
           <div className="pane-heading">
-            <span>Sheets</span>
-            <span id="sheetCount">0</span>
+            <span className="pages-pane-title">Sheets <span id="sheetCount">0</span></span>
+            <button
+              className="pane-toggle"
+              type="button"
+              aria-controls="pagesList"
+              aria-expanded={!sidebarLayout.pagesCollapsed}
+              aria-label={`${sidebarLayout.pagesCollapsed ? "Expand" : "Collapse"} sheets`}
+              title={`${sidebarLayout.pagesCollapsed ? "Expand" : "Collapse"} sheets`}
+              onClick={() => toggleSidebar("pages")}
+            >{sidebarLayout.pagesCollapsed ? "›" : "‹"}</button>
           </div>
           <div id="pagesList" className="pages-list"></div>
         </aside>
@@ -106,7 +245,10 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
                 <span></span>
               </div>
               <h1>Open a drawing set</h1>
-              <button id="emptyUploadButton" className="button primary" type="button">Upload PDF</button>
+              <div className="empty-state-actions">
+                <button id="emptyUploadButton" className="button primary" type="button">Upload PDF</button>
+                <button id="emptySelectProjectPdfButton" className="button" type="button">Project PDF</button>
+              </div>
             </div>
 
             <div id="pageStage" className="page-stage" hidden>
@@ -122,6 +264,19 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
         </section>
 
         <aside className="takeoff-pane" aria-label="Takeoff">
+          <div className="takeoff-sidebar-heading">
+            <span className="takeoff-pane-title">Takeoff</span>
+            <button
+              className="pane-toggle"
+              type="button"
+              aria-controls="takeoffPaneContent"
+              aria-expanded={!sidebarLayout.takeoffCollapsed}
+              aria-label={`${sidebarLayout.takeoffCollapsed ? "Expand" : "Collapse"} takeoff controls`}
+              title={`${sidebarLayout.takeoffCollapsed ? "Expand" : "Collapse"} takeoff controls`}
+              onClick={() => toggleSidebar("takeoff")}
+            >{sidebarLayout.takeoffCollapsed ? "‹" : "›"}</button>
+          </div>
+          <div id="takeoffPaneContent" className="takeoff-pane-content">
           <section className="panel-section">
             <div className="pane-heading">
               <span>Scale</span>
@@ -134,6 +289,7 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
           </section>
 
           <section className="panel-section">
+            <div className="pane-heading tool-options-heading">Count tool</div>
             <div className="field-grid count-grid">
               <label>
                 <span className="field-label">Symbol</span>
@@ -156,6 +312,7 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
           </section>
 
           <section className="panel-section">
+            <div className="pane-heading tool-options-heading">Markup tool</div>
             <div className="field-grid markup-grid">
               <label>
                 <span className="field-label">Color</span>
@@ -195,6 +352,7 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
             </div>
             <div id="totalsList" className="totals-list"></div>
           </section>
+          </div>
         </aside>
       </main>
 
@@ -281,6 +439,54 @@ export default function TakeoffWorkspace({ projectId, canEdit = true }) {
           </div>
         </form>
       </dialog>
+
+      {pickerOpen ? (
+        <div className="project-file-picker-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !loadingFileId) closeProjectFilePicker();
+        }}>
+          <section className="project-file-picker" role="dialog" aria-modal="true" aria-labelledby="projectFilePickerTitle">
+            <div className="project-file-picker-header">
+              <div>
+                <h2 id="projectFilePickerTitle">Choose a project PDF</h2>
+                <p className="muted">Select a drawing from this project's Files tab.</p>
+              </div>
+              <button className="button compact" type="button" disabled={Boolean(loadingFileId)} onClick={() => closeProjectFilePicker()}>Close</button>
+            </div>
+            <div className="project-file-picker-body">
+              <label className="field-label" htmlFor="projectFileSearch">Search project files</label>
+              <input
+                id="projectFileSearch"
+                className="text-input project-file-search"
+                type="search"
+                value={pickerSearch}
+                autoFocus
+                onChange={(event) => setPickerSearch(event.target.value)}
+                placeholder="File or folder name"
+              />
+              {pickerError ? <div className="project-file-picker-error" role="alert">{pickerError}</div> : null}
+              <div className="project-file-picker-list">
+                {filteredProjectPdfs.length ? filteredProjectPdfs.map((file) => {
+                  const key = file.id || `${file.folderId}:${projectFileDisplayName(file)}`;
+                  const loading = loadingFileId === (file.id || projectFileDisplayName(file));
+                  return (
+                    <button className="project-file-picker-item" type="button" key={key} disabled={Boolean(loadingFileId)} onClick={() => void chooseProjectFile(file)}>
+                      <span className="project-file-picker-name">{projectFileDisplayName(file)}</span>
+                      <span className="project-file-picker-meta">
+                        {file.folderName || "Project Files"} · {formatFileSize(file.size)} · {formatProjectFileDate(file.uploadedAt)}
+                      </span>
+                      <span className="project-file-picker-action">{loading ? "Opening…" : "Open"}</span>
+                    </button>
+                  );
+                }) : (
+                  <div className="project-file-picker-empty">
+                    {projectPdfs.length ? "No PDFs match your search." : "No PDFs are available in this project's Files tab."}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
       </div>
     </div>
   );
