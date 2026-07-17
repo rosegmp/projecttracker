@@ -78,6 +78,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Authenticated browser smoke testing passed in **105 Destiny Way**: the picker listed/search-filtered current-project PDFs, downloaded and rendered the five-page `Door Emporium 105 DESTINY.pdf`, both sidebars collapsed and expanded correctly, and the stacked 412 px Android layout kept each section full-width and reachable. No takeoff was saved and no server-side project data was changed.
 - UI cleanup follow-up: the embedded editor now uses container-aware header, toolbar, sidebar, and phone layouts instead of relying only on browser breakpoints. The document name is separated from file actions, labels are shorter, tool controls wrap without horizontal overflow, Count/Markup options have clear headings, and 681–899 px workspaces keep only one sidebar open at a time so the drawing remains usable.
 - Live checks passed at the 764 px embedded project width and a 412 px Android viewport with no toolbar overflow. Commit-checkpoint verification passed with 107 regression tests, the production build, Capacitor Android sync, and Gradle `assembleDebug`.
+- Deployment completed on 2026-07-17: commit `f558a0e` was pushed to `origin/main`, GitHub Actions run `29614788803` passed, Netlify completed the linked production deploy, and `https://projecthub.destinyhomesnj.com` returned HTTP 200 serving release asset `index-0h9hceO4.js`.
 
 ### Original recommended implementation
 
