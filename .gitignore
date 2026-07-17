@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 .env.*.local
+android/app/google-services.json
 .tmp-edge-qa-profile/
 qa-output/
 supabase/.temp/

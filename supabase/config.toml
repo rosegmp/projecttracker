@@ -1,0 +1,7 @@
+project_id = "project-tracker"
+
+[functions.create-auth-user]
+verify_jwt = true
+
+[functions.send-project-notification]
+verify_jwt = true

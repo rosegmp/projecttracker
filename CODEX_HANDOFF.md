@@ -85,7 +85,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Both commits were pushed to `origin/main`; GitHub Actions run `29572735201` passed the web build/tests/audit and Android debug APK jobs.
 - Netlify reported the production deployment complete on 2026-07-17 at `https://projecthub.destinyhomesnj.com`.
 - A direct production check returned HTTP 200 and served the verified build assets `index-Ca3bcqlD.js` and `index-CEyEcB_J.css`.
-- Remote Supabase migrations, the notification Edge Function, and Firebase/FCM activation remain configuration-gated as documented below; they were not deployed by this release.
+- The Takeoff and Android push migrations plus the notification Edge Function were deployed during the FCM activation milestone below.
 
 ## Android artifact
 
@@ -99,17 +99,18 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Notification taps deep-link to the permitted project/task/calendar context, reminders resync when the app becomes visible, and denied users can open Android's notification settings directly.
 - Notification preferences are available from the Android account menu for every signed-in role, in addition to the Admin Settings page.
 - Added explicit Android 13+ notification permission and retained inexact scheduling when Android does not grant exact-alarm access.
-- Added the Capacitor push-notifications integration and configuration-safe registration. Live push remains disabled unless `VITE_FIREBASE_PUSH_ENABLED=true` is present in the Android build.
+- Added the Capacitor push-notifications integration and configuration-safe registration. Android CI now builds with `VITE_FIREBASE_PUSH_ENABLED=true`.
 - Added `20260717070000_add_android_push_notifications.sql` with account-bound device tokens, RLS, secure registration RPCs, and idempotent delivery event records.
 - Added `send-project-notification`, a Supabase Edge Function that verifies the editor, filters recipients by project access, sends private normal-priority FCM messages, and removes invalid tokens.
 - Task creation/updates/assignments and inspection changes now enqueue live notification delivery without blocking the saved project mutation.
-- Live FCM activation still requires:
-  1. Firebase `google-services.json` at `android/app/google-services.json`;
-  2. `FIREBASE_SERVICE_ACCOUNT_JSON` in Supabase Edge Function secrets;
-  3. applying migration `20260717070000_add_android_push_notifications.sql`;
-  4. deploying `send-project-notification`;
-  5. building with `VITE_FIREBASE_PUSH_ENABLED=true`.
-- The current Supabase CLI session is not authenticated (`functions list` returned 401), and remote migration inspection also returned a database handler exit, so no remote migration/function deployment was attempted.
+- Live FCM activation completed on 2026-07-17:
+  1. Firebase Android client `com.destinyhomes.projecthub` was configured and its `google-services.json` validated;
+  2. `FIREBASE_SERVICE_ACCOUNT_JSON` was stored as a Supabase Edge Function secret;
+  3. migrations `20260717060000_add_project_takeoffs.sql` and `20260717070000_add_android_push_notifications.sql` were applied to production;
+  4. `send-project-notification` was deployed and verified `ACTIVE` at version 1;
+  5. a Firebase-enabled Capacitor sync and Android debug build passed, including Gradle's `processDebugGoogleServices` task;
+  6. GitHub Actions uses the `GOOGLE_SERVICES_JSON` repository secret and enables `VITE_FIREBASE_PUSH_ENABLED=true` for Android builds.
+- Remaining validation: install the Firebase-enabled APK on a physical Android device, grant notification permission, confirm registration in `device_push_tokens`, and send an authorized project notification end to end.
 - Verification completed: 106 regression tests, production build, Capacitor Android sync, `assembleDebug`, and `git diff --check` pass.
 
 ### Project main photo milestone
