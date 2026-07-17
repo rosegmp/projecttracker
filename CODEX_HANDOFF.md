@@ -61,11 +61,10 @@ Treat that folder as a preserved reference copy. The active integrated source is
 
 ### Next Takeoff steps
 
-1. Review and commit the current milestone.
-2. Apply `20260717060000_add_project_takeoffs.sql` to the Project Tracker Supabase project.
-3. With an authenticated test user, smoke-test opening a project, loading the Takeoff tab, uploading a PDF, saving, reopening, renaming, and deleting a takeoff.
-4. Confirm mappings between legacy Takeoff records/PDFs and Project Tracker project IDs before importing existing data.
-5. After the compatibility milestone is stable, normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables.
+1. Apply `20260717060000_add_project_takeoffs.sql` to the Project Tracker Supabase project.
+2. With an authenticated test user, smoke-test opening a project, loading the Takeoff tab, uploading a PDF, saving, reopening, renaming, and deleting a takeoff.
+3. Confirm mappings between legacy Takeoff records/PDFs and Project Tracker project IDs before importing existing data.
+4. After the compatibility milestone is stable, normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables.
 
 ### Original recommended implementation
 
@@ -79,12 +78,14 @@ Treat that folder as a preserved reference copy. The active integrated source is
 8. Import existing `takeoff_projects.data` snapshots and PDFs after project mappings are confirmed.
 9. Preserve full desktop editing initially; use a simplified mobile review/summary experience until touch editing is designed.
 
-## Deployment state to verify
+## Deployment milestone: integrated release live
 
-- Commit `6e94084` fixes a startup splash that could hang by adding timeouts around authentication-related fetches.
-- Commit `5994a9e` was pushed to trigger the Netlify Git deployment.
-- At the last verification, the production site was still serving the older asset bundle, and direct Netlify CLI deployment returned `Forbidden`.
-- The user had the Netlify email-login page open. Authenticate Netlify, then verify the deployed commit/assets before assuming the startup fix is live.
+- Commit `26d55f2` integrates Takeoff, Android file opening, project main photos, and the Android notification work.
+- Commit `7110621` upgrades PDF.js to the secure 4.10.38 release after the first production audit rejected the older dependency.
+- Both commits were pushed to `origin/main`; GitHub Actions run `29572735201` passed the web build/tests/audit and Android debug APK jobs.
+- Netlify reported the production deployment complete on 2026-07-17 at `https://projecthub.destinyhomesnj.com`.
+- A direct production check returned HTTP 200 and served the verified build assets `index-Ca3bcqlD.js` and `index-CEyEcB_J.css`.
+- Remote Supabase migrations, the notification Edge Function, and Firebase/FCM activation remain configuration-gated as documented below; they were not deployed by this release.
 
 ## Android artifact
 
