@@ -1,5 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
+import { downloadProjectFileFromStorage } from '../services/trackerData.js';
 import { formatShortDate } from '../utils/calendarUi.js';
+import FluentIcon from './FluentIcon.jsx';
 
 const NativeInspectionsView = lazy(() => import('./NativeInspectionsView.jsx'));
 const NativeTasksView = lazy(() => import('./NativeTasksView.jsx'));
@@ -7,6 +9,58 @@ const ProjectDetailCalendar = lazy(() => import('./ProjectDetailCalendar.jsx'));
 const ProjectFilesManager = lazy(() => import('./ProjectFilesManager.jsx'));
 const ProjectPhotosManager = lazy(() => import('./ProjectPhotosManager.jsx'));
 const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.jsx'));
+const TakeoffWorkspace = lazy(() => import('../features/takeoff/TakeoffWorkspace.jsx'));
+
+function ProjectOverviewMainPhoto({ project }) {
+  const mainPhoto = (project?.photos || []).find((photo) => photo.id === project?.mainPhotoId) || null;
+  const [previewUrl, setPreviewUrl] = useState(mainPhoto?.dataUrl || '');
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    setPreviewUrl(mainPhoto?.dataUrl || '');
+
+    if (mainPhoto?.storagePath && mainPhoto?.storageBucket) {
+      void downloadProjectFileFromStorage(mainPhoto)
+        .then((blob) => {
+          if (cancelled) return;
+          objectUrl = URL.createObjectURL(blob);
+          setPreviewUrl(objectUrl);
+        })
+        .catch(() => {
+          // Keep the rest of the overview available if the selected photo cannot be loaded.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mainPhoto?.dataUrl, mainPhoto?.id, mainPhoto?.storageBucket, mainPhoto?.storagePath]);
+
+  if (!mainPhoto) return null;
+  const photoName = String(mainPhoto.name || mainPhoto.originalName || 'Main project photo');
+
+  return (
+    <figure className="project-overview-main-photo">
+      {previewUrl ? (
+        <img src={previewUrl} alt={`${project.name || 'Project'} main photo`} />
+      ) : (
+        <div className="project-overview-main-photo-placeholder">
+          <FluentIcon name="camera" size={32} />
+          <span>Photo preview unavailable</span>
+        </div>
+      )}
+      <figcaption>
+        <span className="main-photo-badge is-static">
+          <FluentIcon name="check" size={14} />
+          Main photo
+        </span>
+        <strong>{photoName}</strong>
+      </figcaption>
+    </figure>
+  );
+}
 
 export default function ProjectDetailView({
   data,
@@ -36,7 +90,7 @@ export default function ProjectDetailView({
   useEffect(() => {
     const requestedTab = selectionNavigationRequest?.detailTab;
     if (selectionNavigationRequest?.projectId !== project.id) return;
-    if (!['overview', 'tasks', 'calendar', 'inspections', 'selections', 'files', 'photos'].includes(requestedTab)) return;
+    if (!['overview', 'tasks', 'calendar', 'inspections', 'selections', 'takeoff', 'files', 'photos'].includes(requestedTab)) return;
     setActiveDetailTab(requestedTab);
     if (requestedTab === 'selections' && selectionNavigationRequest?.selectionId) {
       setSelectionHighlightRequest(selectionNavigationRequest);
@@ -126,6 +180,18 @@ export default function ProjectDetailView({
           Selections
         </button>
         <button
+          id="project-tab-takeoff"
+          className={`react-tab${activeDetailTab === 'takeoff' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'takeoff' ? 'true' : 'false'}
+          aria-controls="project-panel-takeoff"
+          tabIndex={activeDetailTab === 'takeoff' ? 0 : -1}
+          onClick={() => setActiveDetailTab('takeoff')}
+        >
+          Takeoff
+        </button>
+        <button
           id="project-tab-files"
           className={`react-tab${activeDetailTab === 'files' ? ' active' : ''}`}
           type="button"
@@ -163,6 +229,7 @@ export default function ProjectDetailView({
               </button>
             ) : null}
           </div>
+          <ProjectOverviewMainPhoto project={project} />
           <dl className="project-facts project-detail-facts">
             <div>
               <dt>Address</dt>
@@ -304,6 +371,12 @@ export default function ProjectDetailView({
             forcedViewMode="list"
             hideViewToggle
           />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'takeoff' ? (
+        <section id="project-panel-takeoff" className="project-detail-section project-detail-subtab-panel project-takeoff-panel" role="tabpanel" aria-labelledby="project-tab-takeoff">
+          <TakeoffWorkspace projectId={project.id} canEdit={canEdit} />
         </section>
       ) : null}
 

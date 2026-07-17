@@ -4,12 +4,14 @@ import { addDays, toIsoDate } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
-import { getAppRedirectUrl, isNativeAndroidApp } from '../platform/platformAdapter.js';
+import { getAppRedirectUrl, isNativeAndroidApp, openAndroidNotificationSettings } from '../platform/platformAdapter.js';
 import {
+  getAndroidNotificationPermissionStatus,
   getAndroidNotificationPreferences,
   saveAndroidNotificationPreferences,
   syncAndroidNotifications,
 } from '../utils/androidNotifications.js';
+import { syncAndroidPushRegistration } from '../utils/androidPushNotifications.js';
 import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
@@ -189,6 +191,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState({ tone: '', message: '' });
+  const [notificationPermission, setNotificationPermission] = useState('');
   const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
   const [auditRows, setAuditRows] = useState([]);
@@ -206,6 +209,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   }));
   const settingsStateRef = useRef(data);
   const settingsSaveChainRef = useRef(Promise.resolve());
+
+  useEffect(() => {
+    if (!isNativeAndroidApp()) return;
+    void getAndroidNotificationPermissionStatus()
+      .then(setNotificationPermission)
+      .catch(() => setNotificationPermission(''));
+  }, [activeUser?.id]);
 
   const settings = useMemo(
     () => {
@@ -833,13 +843,20 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         requestPermission: preferences.enabled,
       });
       if (result.status === 'permission-denied') {
+        setNotificationPermission('denied');
         setNotificationStatus({ tone: 'error', message: 'Android notification permission was not granted.' });
       } else if (result.status === 'disabled') {
+        await syncAndroidPushRegistration({ activeUser }).catch(() => {});
         setNotificationStatus({ tone: 'success', message: 'Android reminders are disabled and pending reminders were cleared.' });
       } else {
+        setNotificationPermission('granted');
+        const pushResult = await syncAndroidPushRegistration({ activeUser, requestPermission: true });
+        const liveStatus = pushResult.status === 'registered'
+          ? ' Live project updates are enabled.'
+          : ` Scheduled reminders are active; live updates still need Firebase configuration${pushResult.message ? ` (${pushResult.message})` : ''}.`;
         setNotificationStatus({
-          tone: 'success',
-          message: `${result.scheduled} reminder${result.scheduled === 1 ? '' : 's'} scheduled on this device.`,
+          tone: pushResult.status === 'registered' ? 'success' : '',
+          message: `${result.scheduled} reminder${result.scheduled === 1 ? '' : 's'} scheduled on this device.${liveStatus}`,
         });
       }
     } catch (error) {
@@ -1259,6 +1276,15 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   <div className={`android-notification-status ${notificationStatus.tone}`} role="status">
                     {notificationStatus.message}
                   </div>
+                ) : null}
+                {notificationPermission === 'denied' ? (
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void openAndroidNotificationSettings()}
+                  >
+                    Open Android notification settings
+                  </button>
                 ) : null}
               </section>
             </div>

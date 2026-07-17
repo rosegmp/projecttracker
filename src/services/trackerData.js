@@ -1342,6 +1342,17 @@ async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs 
   }
 }
 
+export async function fetchAuthorizedSupabase(path, options = {}, label = 'Supabase request', timeoutMs = 12000) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured.');
+  }
+  const url = /^https?:\/\//i.test(String(path || '')) ? path : `${SUPABASE_URL}${path}`;
+  return fetchWithTimeout(url, {
+    ...options,
+    headers: storageAuthHeaders(options.headers || {}),
+  }, label, timeoutMs);
+}
+
 function buildProjectStoragePath(projectId, folderId, fileId, originalName) {
   const cleanName = String(originalName || 'file')
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
@@ -2406,6 +2417,47 @@ export async function loadAuditEvents({ limit = 250, projectId = '', entityType 
   return Array.isArray(rows) ? rows : [];
 }
 
+function queueProjectPushNotification(currentState, event) {
+  if (currentState?.storageMode !== 'supabase' || !event?.projectId || typeof window === 'undefined') return;
+  void import('../utils/androidPushNotifications.js')
+    .then(({ sendProjectPushNotification }) => sendProjectPushNotification(event))
+    .catch((error) => console.warn('The project change was saved, but live notification delivery failed.', error));
+}
+
+function assignedAppUserIds(settings, task) {
+  const assignees = new Set(
+    (Array.isArray(task?.assignees) ? task.assignees : [task?.assignee])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (!assignees.size) return [];
+  return (settings?.users || [])
+    .filter((user) => {
+      const name = String(user?.name || '').trim().toLowerCase();
+      const email = String(user?.email || '').trim().toLowerCase();
+      return assignees.has(name) || assignees.has(email);
+    })
+    .map((user) => user.id)
+    .filter(Boolean);
+}
+
+function taskNotificationEvent(currentState, previousTask, nextTask, kind) {
+  const project = currentState.projects?.find((item) => item.id === nextTask?.projectId);
+  if (!nextTask?.projectId || !project) return null;
+  const projectName = project.name || 'Project';
+  const assigneesChanged = JSON.stringify(previousTask?.assignees || []) !== JSON.stringify(nextTask.assignees || []);
+  const eventKind = kind === 'task-created' ? kind : assigneesChanged ? 'task-assigned' : 'task-updated';
+  return {
+    projectId: nextTask.projectId,
+    kind: eventKind,
+    entityId: nextTask.id,
+    title: eventKind === 'task-created' ? `New task · ${projectName}` : eventKind === 'task-assigned' ? `Task assignment · ${projectName}` : `Task updated · ${projectName}`,
+    body: nextTask.done ? `${nextTask.label} was marked complete.` : `${nextTask.label}${nextTask.due ? ` · Due ${nextTask.due}` : ''}`,
+    tab: 'tasks',
+    recipientAppUserIds: eventKind === 'task-assigned' ? assignedAppUserIds(currentState.settings, nextTask) : [],
+  };
+}
+
 export async function createTask(currentState, payload) {
   const task = normalizeTask({
     id: payload.id || `t${Date.now()}`,
@@ -2425,6 +2477,7 @@ export async function createTask(currentState, payload) {
   if (currentState.storageMode === 'supabase' && currentState.concurrencyEnabled) {
     const normalizedTask = await persistTaskWithNormalizedAttachments(null, task);
     if (normalizedTask) {
+      queueProjectPushNotification(currentState, taskNotificationEvent(currentState, null, normalizedTask, 'task-created'));
       return { ...currentState, tasks: [...currentState.tasks, normalizedTask], storageMode: 'supabase' };
     }
   }
@@ -2432,6 +2485,7 @@ export async function createTask(currentState, payload) {
     table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
     storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
   });
+  queueProjectPushNotification(currentState, taskNotificationEvent(currentState, null, task, 'task-created'));
   return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
@@ -2466,6 +2520,7 @@ export async function updateTask(currentState, taskId, updates) {
       console.warn('Task attachment metadata was saved, but storage cleanup failed.', error);
     }
   }
+  queueProjectPushNotification(currentState, taskNotificationEvent(currentState, existingTask, nextTask, 'task-updated'));
   return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
@@ -2549,6 +2604,18 @@ export async function updateProject(currentState, projectId, updates) {
   );
   const previousProject = currentState.projects.find((project) => project.id === projectId);
   const nextProject = projects.find((project) => project.id === projectId);
+  const inspectionsChanged = JSON.stringify(previousProject?.inspections || []) !== JSON.stringify(nextProject?.inspections || []);
+  const notifyInspectionChange = () => {
+    if (!inspectionsChanged || !nextProject) return;
+    queueProjectPushNotification(currentState, {
+      projectId,
+      kind: 'inspection-updated',
+      entityId: '',
+      title: `Inspection updated · ${nextProject.name || 'Project'}`,
+      body: 'The inspection schedule or status changed.',
+      tab: 'calendar',
+    });
+  };
   if (
     currentState.storageMode === 'supabase'
     && currentState.concurrencyEnabled
@@ -2558,6 +2625,7 @@ export async function updateProject(currentState, projectId, updates) {
   ) {
     const normalizedProject = await persistNormalizedProjectSections(previousProject, nextProject);
     if (normalizedProject) {
+      notifyInspectionChange();
       return {
         ...currentState,
         projects: projects.map((project) => (project.id === projectId ? normalizedProject : project)),
@@ -2569,6 +2637,7 @@ export async function updateProject(currentState, projectId, updates) {
     table: 'projects', nextItems: projects, previousItems: currentState.projects,
     storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
   });
+  notifyInspectionChange();
   return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
 }
 

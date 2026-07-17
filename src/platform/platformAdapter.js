@@ -1,4 +1,5 @@
 let nativeFileModulesPromise = null;
+let notificationSettingsPluginPromise = null;
 
 async function loadNativeFileModules() {
   if (!nativeFileModulesPromise) {
@@ -21,6 +22,18 @@ export function isNativeAndroidApp() {
   const isNativePlatform = window.Capacitor?.isNativePlatform?.() === true;
   const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
   return isNativePlatform && /Android/i.test(userAgent);
+}
+
+export async function openAndroidNotificationSettings() {
+  if (!isNativeAndroidApp()) return false;
+  if (!notificationSettingsPluginPromise) {
+    notificationSettingsPluginPromise = import('@capacitor/core').then(({ registerPlugin }) =>
+      registerPlugin('NotificationSettings'),
+    );
+  }
+  const plugin = await notificationSettingsPluginPromise;
+  await plugin.open();
+  return true;
 }
 
 export function isShareDismissed(error) {
@@ -54,8 +67,18 @@ export async function deliverBlob(blob, fileName = 'download', options = {}) {
       directory: Directory.Cache,
       recursive: true,
     });
+    let deleteCachedFile = true;
     try {
       const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
+      if (options.action === 'open') {
+        await Downloads.openFile({
+          sourceUri: uri,
+          fileName: name,
+          mimeType: blob.type || 'application/octet-stream',
+        });
+        deleteCachedFile = false;
+        return { action: 'opened' };
+      }
       if (options.action === 'save') {
         await Downloads.saveFile({
           sourceUri: uri,
@@ -67,7 +90,9 @@ export async function deliverBlob(blob, fileName = 'download', options = {}) {
       await Share.share({ title: name, url: uri, dialogTitle: `Share ${name}` });
       return { action: 'shared' };
     } finally {
-      await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(() => {});
+      if (deleteCachedFile) {
+        await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(() => {});
+      }
     }
   }
 

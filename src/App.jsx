@@ -11,6 +11,7 @@ const NativeScheduleView = lazy(() => import('./components/NativeScheduleView.js
 const NativeTasksView = lazy(() => import('./components/NativeTasksView.jsx'));
 const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'));
 const NativeSettingsView = lazy(() => import('./components/NativeSettingsView.jsx'));
+const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
 const NativeFilesView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativeFilesView })),
 );
@@ -214,6 +215,7 @@ export default function App() {
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
+  const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
   const [projectDrawerOpen, setProjectDrawerOpen] = useState(false);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState({ taskId: '', token: '' });
   const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
@@ -328,11 +330,39 @@ export default function App() {
   }, [activeUser, authSession, loading, nativeAndroid, trackerState.projects, trackerState.settings, trackerState.tasks]);
 
   useEffect(() => {
+    if (!nativeAndroid || loading || !authSession || !activeUser?.id) return undefined;
+    function handleVisibilityChange() {
+      if (document.visibilityState !== 'visible') return;
+      void loadAndroidNotificationsModule()
+        .then(({ syncAndroidNotifications }) => syncAndroidNotifications({ data: trackerStateRef.current, activeUser }))
+        .catch(() => {});
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [activeUser, authSession, loading, nativeAndroid]);
+
+  useEffect(() => {
     if (!nativeAndroid) return undefined;
-    let listenerHandle = null;
+    const listenerHandles = [];
     let cancelled = false;
-    void loadAndroidNotificationsModule()
-      .then(({ addAndroidNotificationActionListener }) => addAndroidNotificationActionListener((extra) => {
+
+    async function handleNotificationAction({ actionId, notification, extra }) {
+      if (actionId === 'snooze-tomorrow') {
+        const { snoozeAndroidNotification } = await loadAndroidNotificationsModule();
+        await snoozeAndroidNotification(notification, activeUser?.id);
+        return;
+      }
+      if (actionId === 'mark-done' && extra.taskId && capabilities.canEdit) {
+        try {
+          const { updateTask } = await loadTrackerDataModule();
+          const nextState = await updateTask(trackerStateRef.current, extra.taskId, { done: true });
+          trackerStateRef.current = nextState;
+          setTrackerState(nextState);
+        } catch (actionError) {
+          setError(actionError instanceof Error ? actionError.message : 'Unable to mark the task complete.');
+        }
+      }
+
         const requestedTab = String(extra.tab || 'projects');
         const targetTab = capabilities.allowedTabs.includes(requestedTab) ? requestedTab : 'projects';
         if (extra.projectId) setSessionProjectFilter(extra.projectId || 'all');
@@ -343,16 +373,27 @@ export default function App() {
           setProjectNavigationTarget({ projectId: extra.projectId, token: `${Date.now()}` });
         }
         setActiveTab(targetTab);
-      }))
-      .then((handle) => {
-        if (cancelled) void handle.remove();
-        else listenerHandle = handle;
-      });
+    }
+
+    void Promise.all([
+      loadAndroidNotificationsModule()
+        .then(({ addAndroidNotificationActionListener }) => addAndroidNotificationActionListener(handleNotificationAction)),
+      import('./utils/androidPushNotifications.js')
+        .then(({ addAndroidPushActionListener, syncAndroidPushRegistration }) =>
+          Promise.all([
+            addAndroidPushActionListener(handleNotificationAction),
+            activeUser?.id ? syncAndroidPushRegistration({ activeUser }) : Promise.resolve(null),
+          ]).then(([handle]) => handle),
+        ),
+    ]).then((handles) => {
+      if (cancelled) handles.forEach((handle) => void handle.remove());
+      else listenerHandles.push(...handles);
+    }).catch(() => {});
     return () => {
       cancelled = true;
-      if (listenerHandle) void listenerHandle.remove();
+      listenerHandles.forEach((handle) => void handle.remove());
     };
-  }, [capabilities.allowedTabs, nativeAndroid]);
+  }, [activeUser, capabilities.allowedTabs, capabilities.canEdit, nativeAndroid]);
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser),
     [trackerState.projects, trackerState.settings, activeUser],
@@ -729,6 +770,22 @@ export default function App() {
   return (
     <main className="app-shell">
       <AppDialogHost />
+      {nativeAndroid && showAndroidNotificationSettings ? (
+        <div className="modal-backdrop" onClick={() => setShowAndroidNotificationSettings(false)}>
+          <div className="modal-card notification-preferences-modal" role="dialog" aria-modal="true" aria-labelledby="notification-preferences-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 id="notification-preferences-title">Android notifications</h2>
+                <p>Choose the project updates this device should show.</p>
+              </div>
+              <button className="button secondary" type="button" onClick={() => setShowAndroidNotificationSettings(false)}>Close</button>
+            </div>
+            <Suspense fallback={<WorkspaceSplash label="Loading notification settings..." />}>
+              <AndroidNotificationPreferences data={trackerState} activeUser={activeUser} />
+            </Suspense>
+          </div>
+        </div>
+      ) : null}
       {nativeAndroid || capabilities.showTabs ? (
         <section className={`workspace-shell-bar android-shell-bar material-top-app-bar${nativeAndroid ? '' : ' browser-mobile-app-bar'}`}>
           <div className="android-shell-main">
@@ -860,6 +917,16 @@ export default function App() {
                   {signedInUserEmail ? <small>{signedInUserEmail}</small> : null}
                 </div>
               </div>
+              <button
+                className="button secondary android-notification-settings-button"
+                type="button"
+                onClick={() => {
+                  setShowAndroidAccountMenu(false);
+                  setShowAndroidNotificationSettings(true);
+                }}
+              >
+                Notification settings
+              </button>
               <button
                 className="button secondary android-signout-button"
                 type="button"

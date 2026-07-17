@@ -14,7 +14,8 @@ export async function downloadFileWithUi(file, options = {}) {
     androidAction = await showAppChoice(`Choose what to do with "${fileName}".`, {
       title: 'Download file',
       options: [
-        { value: 'save', label: 'Save to Downloads', tone: 'primary' },
+        { value: 'open', label: 'Open file', tone: 'primary' },
+        { value: 'save', label: 'Save to Downloads' },
         { value: 'share', label: 'Share' },
       ],
     });
@@ -39,11 +40,13 @@ export async function downloadFileWithUi(file, options = {}) {
 
     const result = await deliverBlob(blob, fileName, { action: androidAction });
     progress.complete(
-      result?.action === 'saved'
-        ? 'Saved to Downloads'
-        : result?.action === 'shared'
-          ? 'Ready to share'
-          : 'Download complete',
+      result?.action === 'opened'
+        ? 'Opened file'
+        : result?.action === 'saved'
+          ? 'Saved to Downloads'
+          : result?.action === 'shared'
+            ? 'Ready to share'
+            : 'Download complete',
     );
     return result;
   } catch (error) {

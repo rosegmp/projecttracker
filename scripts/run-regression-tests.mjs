@@ -439,7 +439,7 @@ const tests = [
     },
   },
   {
-    name: 'Android downloads offer Save and Share with visible progress',
+    name: 'Android downloads offer Open Save and Share with visible progress',
     async run() {
       const dialogSource = await readFile(new URL('../src/components/AppDialogs.jsx', import.meta.url), 'utf8');
       const downloadSource = await readFile(new URL('../src/utils/downloadUi.js', import.meta.url), 'utf8');
@@ -449,12 +449,15 @@ const tests = [
 
       assert.match(dialogSource, /export function beginDownloadProgress/);
       assert.match(dialogSource, /className="download-progress-bar"/);
+      assert.match(downloadSource, /label: 'Open file'/);
       assert.match(downloadSource, /label: 'Save to Downloads'/);
       assert.match(downloadSource, /label: 'Share'/);
       assert.match(trackerSource, /response\.body\.getReader\(\)/);
       assert.match(trackerSource, /onProgress\(loaded, total\)/);
       assert.match(nativeSource, /MediaStore\.Downloads\.EXTERNAL_CONTENT_URI/);
       assert.match(nativeSource, /Environment\.DIRECTORY_DOWNLOADS/);
+      assert.match(nativeSource, /Intent\.ACTION_VIEW/);
+      assert.match(nativeSource, /FileProvider\.getUriForFile/);
       assert.match(activitySource, /registerPlugin\(DownloadsPlugin\.class\)/);
     },
   },
@@ -628,6 +631,56 @@ const tests = [
     },
   },
   {
+    name: 'Android reminders digest matching project work and use scoped channels',
+    run() {
+      const notifications = buildAndroidReminderNotifications({
+        data: {
+          settings: {},
+          projects: [{ id: 'project-1', name: 'Lake House', inspections: [] }],
+          tasks: [
+            { id: 'task-1', projectId: 'project-1', label: 'Order windows', due: '2026-07-14', done: false },
+            { id: 'task-2', projectId: 'project-1', label: 'Confirm delivery', due: '2026-07-14', done: false },
+          ],
+        },
+        activeUser: { id: 'user-1', role: 'Admin' },
+        preferences: { enabled: true, reminderDays: 1, reminderTime: '08:00' },
+        now: new Date(2026, 6, 13, 7, 0, 0),
+      });
+
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].extra.kind, 'task-summary');
+      assert.equal(notifications[0].channelId, 'project-tasks-v2');
+      assert.deepEqual(notifications[0].inboxList, ['Order windows', 'Confirm delivery']);
+      assert.match(notifications[0].body, /Lake House/);
+    },
+  },
+  {
+    name: 'Android live notifications secure tokens and project delivery',
+    async run() {
+      const [pushSource, migrationSource, functionSource, appSource, manifestSource] = await Promise.all([
+        readFile(new URL('../src/utils/androidPushNotifications.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260717070000_add_android_push_notifications.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(pushSource, /register_device_push_token/);
+      assert.match(pushSource, /pushNotificationActionPerformed/);
+      assert.match(migrationSource, /create table if not exists public\.device_push_tokens/);
+      assert.match(migrationSource, /auth_user_id = auth\.uid\(\)/);
+      assert.match(migrationSource, /public\.current_app_user_id\(\)/);
+      assert.match(functionSource, /FIREBASE_SERVICE_ACCOUNT_JSON/);
+      assert.match(functionSource, /project_user_access/);
+      assert.match(functionSource, /visibility: 'PRIVATE'/);
+      assert.match(appSource, /snoozeAndroidNotification/);
+      assert.match(appSource, /actionId === 'mark-done'/);
+      assert.match(appSource, /AndroidNotificationPreferences/);
+      assert.match(appSource, /Notification settings/);
+      assert.match(manifestSource, /android\.permission\.POST_NOTIFICATIONS/);
+    },
+  },
+  {
     name: 'audit history expands project dates dependencies statuses and file changes',
     run() {
       const [event] = buildAuditTrailEntries([{
@@ -763,6 +816,26 @@ const tests = [
       assert.deepEqual(project.files.folders.slice(0, 2).map((folder) => folder.id), ['folder-1', 'folder-2']);
       assert.deepEqual(project.files.folders[0].files.map((file) => file.id), ['file-1', 'file-2']);
       assert.deepEqual(project.photos.map((photo) => photo.id), ['photo-1', 'photo-2']);
+    },
+  },
+  {
+    name: 'project photos can select one main photo for the overview',
+    async run() {
+      const [photosSource, detailSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectPhotosManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(photosSource, /mainPhotoId: photoId/);
+      assert.match(photosSource, /mainPhotoId: wasMainPhoto \? '' : currentProject\.mainPhotoId/);
+      assert.match(photosSource, /Set as main project photo/);
+      assert.match(photosSource, /className="main-photo-badge"/);
+      assert.match(detailSource, /function ProjectOverviewMainPhoto/);
+      assert.match(detailSource, /photo\.id === project\?\.mainPhotoId/);
+      assert.match(detailSource, /downloadProjectFileFromStorage\(mainPhoto\)/);
+      assert.match(detailSource, /<ProjectOverviewMainPhoto project=\{project\}/);
+      assert.match(styleSource, /\.project-overview-main-photo/);
     },
   },
   {
@@ -2413,6 +2486,31 @@ const tests = [
       assert.match(migrationSource, /perform public\.sync_explicit_task_sections\(record_id, record_data\)/);
       assert.match(migrationSource, /perform public\.sync_explicit_task_sections\(p_task_id, p_task_data\)/);
       assert.doesNotMatch(migrationSource, /create trigger tasks_normalized_(attachments|assignments)/);
+    },
+  },
+  {
+    name: 'Takeoff stays lazy loaded and uses project-scoped authenticated storage',
+    async run() {
+      const [projectDetailSource, takeoffServiceSource, takeoffEditorSource, takeoffMigrationSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/features/takeoff/services/projectTakeoffData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/features/takeoff/lib/takeoffApp.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260717060000_add_project_takeoffs.sql', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(projectDetailSource, /lazy\(\(\) => import\('\.\.\/features\/takeoff\/TakeoffWorkspace\.jsx'\)\)/);
+      assert.match(projectDetailSource, /<TakeoffWorkspace projectId=\{project\.id\} canEdit=\{canEdit\}/);
+      assert.match(takeoffServiceSource, /fetchAuthorizedSupabase/);
+      assert.match(takeoffServiceSource, /project_id=eq\.\$\{encodeURIComponent\(scopedProjectId\)\}/);
+      assert.match(takeoffServiceSource, /plan-takeoff:autosave:\$\{scopedProjectId\}/);
+      assert.doesNotMatch(takeoffServiceSource, /VITE_SUPABASE_KEY|Bearer \$\{SUPABASE_KEY\}/);
+      assert.match(takeoffEditorSource, /document\.removeEventListener\("keydown", handleDocumentKeydown\)/);
+      assert.match(takeoffEditorSource, /sessionStorageKey = String\(services\.sessionKey/);
+      assert.match(takeoffMigrationSource, /create table if not exists public\.project_takeoffs/);
+      assert.match(takeoffMigrationSource, /public\.app_user_can_view_project\(project_id\)/);
+      assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(project_id\)/);
+      assert.match(takeoffMigrationSource, /values \('takeoff-files', 'takeoff-files', false\)/);
+      assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(\(storage\.foldername\(name\)\)\[2\]\)/);
     },
   },
   {

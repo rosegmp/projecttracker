@@ -4,7 +4,15 @@ import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 
 const MANAGED_NOTIFICATION_MIN_ID = 100_000_000;
 const MANAGED_NOTIFICATION_MAX_ID = 399_999_999;
-const REMINDER_CHANNEL_ID = 'project-reminders';
+export const ANDROID_NOTIFICATION_CHANNELS = {
+  tasks: 'project-tasks-v2',
+  inspections: 'project-inspections-v2',
+  overdue: 'project-overdue-v2',
+};
+const LEGACY_REMINDER_CHANNEL_ID = 'project-reminders';
+const TASK_ACTION_TYPE_ID = 'project-task-reminder';
+const PROJECT_ACTION_TYPE_ID = 'project-reminder';
+const OVERDUE_ACTION_TYPE_ID = 'project-overdue-reminder';
 let notificationSyncChain = Promise.resolve();
 
 export const DEFAULT_ANDROID_NOTIFICATION_PREFERENCES = {
@@ -95,6 +103,43 @@ function relativeDueText(dateKey, today) {
   return `in ${days} days`;
 }
 
+function digestMatchingReminders(notifications) {
+  const batches = new Map();
+  notifications.forEach((notification) => {
+    const key = [
+      notification.extra.kind,
+      notification.extra.projectId || 'all',
+      notification.schedule.at.getTime(),
+    ].join(':');
+    const batch = batches.get(key) || [];
+    batch.push(notification);
+    batches.set(key, batch);
+  });
+
+  return Array.from(batches.values()).map((batch) => {
+    if (batch.length === 1) return batch[0];
+    const first = batch[0];
+    const isTaskBatch = first.extra.kind === 'task';
+    const itemLabel = isTaskBatch ? 'task' : 'inspection';
+    const projectName = first.extra.projectName || 'Project';
+    return {
+      ...first,
+      id: stableNotificationId(isTaskBatch ? 'task' : 'inspection', `digest:${first.extra.projectId}:${first.schedule.at.toISOString()}`),
+      title: `${batch.length} ${itemLabel}s need attention`,
+      body: `${projectName} · ${batch.map((item) => item.extra.itemLabel).slice(0, 2).join(', ')}${batch.length > 2 ? ` +${batch.length - 2} more` : ''}`,
+      inboxList: batch.map((item) => item.extra.itemLabel).slice(0, 5),
+      actionTypeId: PROJECT_ACTION_TYPE_ID,
+      extra: {
+        ...first.extra,
+        kind: `${first.extra.kind}-summary`,
+        taskId: '',
+        inspectionId: '',
+        itemIds: batch.map((item) => item.extra.taskId || item.extra.inspectionId).filter(Boolean),
+      },
+    };
+  });
+}
+
 export function buildAndroidReminderNotifications({ data, activeUser, preferences, now = new Date() }) {
   const normalizedPreferences = normalizeAndroidNotificationPreferences(preferences);
   if (!normalizedPreferences.enabled) return [];
@@ -102,7 +147,7 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
   const visibleTasks = getVisibleTasksForUser(data.tasks || [], data.settings || {}, visibleProjects);
   const projectById = new Map(visibleProjects.map((project) => [project.id, project]));
   const today = startOfLocalDay(now);
-  const notifications = [];
+  const timedNotifications = [];
 
   if (normalizedPreferences.upcomingTasks) {
     visibleTasks
@@ -112,15 +157,19 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
         const at = reminderDateFor(task.due, normalizedPreferences);
         if (!dueDate || dueDate < today || !at || at <= now) return;
         const projectName = projectById.get(task.projectId)?.name || 'Unassigned';
-        notifications.push({
+        timedNotifications.push({
           id: stableNotificationId('task', task.id),
           title: `Task due ${relativeDueText(task.due, today)}`,
           body: `${task.label} · ${projectName}`,
           schedule: { at },
-          channelId: REMINDER_CHANNEL_ID,
-          group: 'project-work',
+          channelId: ANDROID_NOTIFICATION_CHANNELS.tasks,
+          group: `project-work:${task.projectId || 'all'}`,
+          actionTypeId: TASK_ACTION_TYPE_ID,
           autoCancel: true,
-          extra: { managedBy: 'project-tracker', kind: 'task', tab: 'tasks', taskId: task.id, projectId: task.projectId || 'all' },
+          extra: {
+            managedBy: 'project-tracker', kind: 'task', tab: 'tasks', taskId: task.id,
+            projectId: task.projectId || 'all', projectName, itemLabel: task.label,
+          },
         });
       });
   }
@@ -137,20 +186,25 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
         const at = reminderDateFor(inspection.date, normalizedPreferences);
         if (!at || at <= now) return;
         const label = inspection.subcode || inspection.inspectionType || 'Inspection';
-        notifications.push({
+        timedNotifications.push({
           id: stableNotificationId('inspection', inspection.id),
           title: `Inspection ${relativeDueText(inspection.date, today)}`,
           body: `${label} · ${project.name}`,
           schedule: { at },
-          channelId: REMINDER_CHANNEL_ID,
-          group: 'project-work',
+          channelId: ANDROID_NOTIFICATION_CHANNELS.inspections,
+          group: `project-work:${project.id}`,
+          actionTypeId: PROJECT_ACTION_TYPE_ID,
           autoCancel: true,
-          extra: { managedBy: 'project-tracker', kind: 'inspection', tab: 'calendar', inspectionId: inspection.id, projectId: project.id },
+          extra: {
+            managedBy: 'project-tracker', kind: 'inspection', tab: 'calendar', inspectionId: inspection.id,
+            projectId: project.id, projectName: project.name, itemLabel: label,
+          },
         });
       });
     });
   }
 
+  const notifications = digestMatchingReminders(timedNotifications);
   if (normalizedPreferences.overdueWork) {
     const overdueTasks = visibleTasks.filter((task) => {
       const dueDate = parseLocalDate(task.due);
@@ -166,8 +220,9 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
         title: 'Overdue project work',
         body: summaryParts.join(' · '),
         schedule: { on: { hour, minute } },
-        channelId: REMINDER_CHANNEL_ID,
-        group: 'project-work',
+        channelId: ANDROID_NOTIFICATION_CHANNELS.overdue,
+        group: 'project-work:overdue',
+        actionTypeId: OVERDUE_ACTION_TYPE_ID,
         autoCancel: true,
         extra: { managedBy: 'project-tracker', kind: 'overdue', tab: 'tasks', projectId: 'all' },
       });
@@ -175,11 +230,11 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
   }
 
   const recurringNotifications = notifications.filter((notification) => notification.extra.kind === 'overdue');
-  const timedNotifications = notifications
+  const oneTimeNotifications = notifications
     .filter((notification) => notification.extra.kind !== 'overdue')
     .sort((left, right) => left.schedule.at.getTime() - right.schedule.at.getTime())
     .slice(0, 60 - recurringNotifications.length);
-  return [...timedNotifications, ...recurringNotifications];
+  return [...oneTimeNotifications, ...recurringNotifications];
 }
 
 async function cancelManagedNotifications() {
@@ -188,6 +243,54 @@ async function cancelManagedNotifications() {
     (notification) => notification.id >= MANAGED_NOTIFICATION_MIN_ID && notification.id <= MANAGED_NOTIFICATION_MAX_ID,
   );
   if (notifications.length) await LocalNotifications.cancel({ notifications });
+}
+
+async function configureAndroidNotifications() {
+  await LocalNotifications.registerActionTypes({
+    types: [
+      {
+        id: TASK_ACTION_TYPE_ID,
+        actions: [
+          { id: 'mark-done', title: 'Mark done' },
+          { id: 'snooze-tomorrow', title: 'Snooze' },
+          { id: 'open', title: 'Open' },
+        ],
+      },
+      {
+        id: PROJECT_ACTION_TYPE_ID,
+        actions: [
+          { id: 'snooze-tomorrow', title: 'Snooze' },
+          { id: 'open', title: 'Open' },
+        ],
+      },
+      { id: OVERDUE_ACTION_TYPE_ID, actions: [{ id: 'open', title: 'Open' }] },
+    ],
+  });
+  await Promise.all([
+    LocalNotifications.createChannel({
+      id: ANDROID_NOTIFICATION_CHANNELS.tasks,
+      name: 'Due soon',
+      description: 'Upcoming tasks and assignments',
+      importance: 3,
+      visibility: 0,
+    }),
+    LocalNotifications.createChannel({
+      id: ANDROID_NOTIFICATION_CHANNELS.inspections,
+      name: 'Inspections',
+      description: 'Upcoming project inspections',
+      importance: 3,
+      visibility: 0,
+    }),
+    LocalNotifications.createChannel({
+      id: ANDROID_NOTIFICATION_CHANNELS.overdue,
+      name: 'Overdue summary',
+      description: 'A quiet daily summary of overdue project work',
+      importance: 2,
+      visibility: 0,
+      vibration: false,
+    }),
+  ]);
+  await LocalNotifications.deleteChannel({ id: LEGACY_REMINDER_CHANNEL_ID }).catch(() => {});
 }
 
 async function performAndroidNotificationSync({ data, activeUser, requestPermission = false }) {
@@ -202,13 +305,7 @@ async function performAndroidNotificationSync({ data, activeUser, requestPermiss
   }
   if (permission.display !== 'granted') return { status: 'permission-denied', scheduled: 0 };
 
-  await LocalNotifications.createChannel({
-    id: REMINDER_CHANNEL_ID,
-    name: 'Project reminders',
-    description: 'Upcoming tasks, inspections, and overdue project work',
-    importance: 4,
-    visibility: 1,
-  });
+  await configureAndroidNotifications();
   const notifications = buildAndroidReminderNotifications({ data, activeUser, preferences });
   if (notifications.length) await LocalNotifications.schedule({ notifications });
   return { status: 'scheduled', scheduled: notifications.length };
@@ -222,9 +319,36 @@ export function syncAndroidNotifications(options) {
   return nextSync;
 }
 
+export async function getAndroidNotificationPermissionStatus() {
+  if (!isNativeAndroidApp()) return 'unsupported';
+  const permission = await LocalNotifications.checkPermissions();
+  return permission.display;
+}
+
+export async function snoozeAndroidNotification(notification, userId) {
+  if (!isNativeAndroidApp() || !notification?.id) return false;
+  const preferences = getAndroidNotificationPreferences(userId);
+  const [hour, minute] = preferences.reminderTime.split(':').map(Number);
+  const at = new Date();
+  at.setDate(at.getDate() + 1);
+  at.setHours(hour, minute, 0, 0);
+  await LocalNotifications.schedule({
+    notifications: [{
+      ...notification,
+      schedule: { at },
+      extra: { ...(notification.extra || {}), snoozed: true },
+    }],
+  });
+  return true;
+}
+
 export async function addAndroidNotificationActionListener(listener) {
   if (!isNativeAndroidApp()) return { remove: async () => {} };
   return LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
-    listener(action.notification?.extra || {});
+    listener({
+      actionId: action.actionId || 'tap',
+      notification: action.notification,
+      extra: action.notification?.extra || {},
+    });
   });
 }

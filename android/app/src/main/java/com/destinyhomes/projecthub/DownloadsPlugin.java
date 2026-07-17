@@ -1,8 +1,10 @@
 package com.destinyhomes.projecthub;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.Intent;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -16,6 +18,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -29,6 +32,45 @@ import java.io.OutputStream;
     }
 )
 public class DownloadsPlugin extends Plugin {
+
+    @PluginMethod
+    public void openFile(PluginCall call) {
+        String sourceUriValue = call.getString("sourceUri");
+        String mimeType = call.getString("mimeType", "application/octet-stream");
+        if (sourceUriValue == null || sourceUriValue.trim().isEmpty()) {
+            call.reject("The downloaded file is missing its source.");
+            return;
+        }
+
+        try {
+            Uri sourceUri = Uri.parse(sourceUriValue);
+            Uri openUri = sourceUri;
+            if (sourceUri.getScheme() == null || "file".equalsIgnoreCase(sourceUri.getScheme())) {
+                File sourceFile = new File(sourceUri.getPath());
+                openUri = FileProvider.getUriForFile(
+                    getContext(),
+                    getContext().getPackageName() + ".fileprovider",
+                    sourceFile
+                );
+            }
+
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(openUri, mimeType);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                getContext().startActivity(intent);
+            } catch (ActivityNotFoundException error) {
+                call.reject("No app is installed that can open this file type.", error);
+                return;
+            }
+
+            JSObject result = new JSObject();
+            result.put("action", "opened");
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Unable to open the file.", error);
+        }
+    }
 
     @PluginMethod
     public void saveFile(PluginCall call) {

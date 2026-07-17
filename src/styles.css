@@ -2800,6 +2800,16 @@ button.calendar-chip {
   color: var(--danger);
 }
 
+.notification-preferences-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.android-notification-settings-button {
+  width: 100%;
+}
+
 .audit-trail-header {
   align-items: end;
 }
@@ -3388,7 +3398,13 @@ button.calendar-chip {
   box-shadow: 0 10px 24px rgba(25, 30, 70, 0.06);
 }
 
+.photo-card.is-main-photo {
+  border-color: rgba(61, 66, 120, 0.48);
+  box-shadow: 0 12px 28px rgba(61, 66, 120, 0.14);
+}
+
 .photo-thumb-button {
+  position: relative;
   display: block;
   width: 100%;
   padding: 0;
@@ -3455,6 +3471,22 @@ button.calendar-chip {
 
 .photo-actions {
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.photo-main-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.photo-main-button.active {
+  border-color: rgba(61, 66, 120, 0.4);
+  background: rgba(61, 66, 120, 0.1);
+  color: var(--brand);
 }
 
 .files-hierarchy-file-row::before {
@@ -4558,6 +4590,30 @@ button.calendar-chip {
   cursor: pointer;
 }
 
+.main-photo-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(32, 42, 86, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 6px 16px rgba(20, 27, 58, 0.2);
+}
+
+.main-photo-badge.is-static {
+  position: static;
+  flex: 0 0 auto;
+  box-shadow: none;
+}
+
 .task-attachment-link-chip {
   display: inline-flex;
   align-items: center;
@@ -5518,6 +5574,11 @@ button.calendar-chip {
   gap: 14px;
 }
 
+.project-takeoff-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
 .project-inspections-embedded {
   display: grid;
   gap: 14px;
@@ -6046,6 +6107,59 @@ textarea:focus-visible {
 
 .project-detail-overview-full {
   width: 100%;
+}
+
+.project-overview-main-photo {
+  position: relative;
+  display: grid;
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-alt);
+  box-shadow: 0 12px 32px rgba(25, 30, 70, 0.1);
+}
+
+.project-overview-main-photo img,
+.project-overview-main-photo-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  max-height: 380px;
+}
+
+.project-overview-main-photo img {
+  object-fit: cover;
+}
+
+.project-overview-main-photo-placeholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.project-overview-main-photo figcaption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.project-overview-main-photo figcaption strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .project-overview-main-photo img,
+  .project-overview-main-photo-placeholder {
+    aspect-ratio: 4 / 3;
+  }
 }
 
 .project-calendar-month {

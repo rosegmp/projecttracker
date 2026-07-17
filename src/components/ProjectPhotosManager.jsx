@@ -19,6 +19,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
   const replacePhotoInputRefs = useRef({});
 
   const photos = project?.photos || [];
+  const mainPhotoId = String(project?.mainPhotoId || '');
 
   useEffect(() => {
     dataRef.current = data;
@@ -195,6 +196,18 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     }
   }
 
+  async function setMainProjectPhoto(photoId) {
+    if (!project?.id || !photoId || photoId === mainPhotoId) return;
+    try {
+      await runPhotosMutation(['project', project.id, 'main-photo'], (currentProject) => ({
+        ...currentProject,
+        mainPhotoId: photoId,
+      }));
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to set the main project photo.', 'Main photo failed');
+    }
+  }
+
   function getPhotoPreview(photo) {
     if (!photo) return '';
     return photo.dataUrl || previewUrls[photo.id] || '';
@@ -290,9 +303,11 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
         const photoIndex = (currentProject.photos || []).findIndex((photo) => photo.id === photoId);
         const existing = (currentProject.photos || [])[photoIndex];
         if (!existing) return;
+        const wasMainPhoto = currentProject.mainPhotoId === photoId;
         const nextProject = {
           ...currentProject,
           photos: (currentProject.photos || []).filter((photo) => photo.id !== photoId),
+          mainPhotoId: wasMainPhoto ? '' : currentProject.mainPhotoId,
         };
         const nextState = await updateProject(currentState, project.id, nextProject);
         dataRef.current = nextState;
@@ -308,6 +323,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
             const restoredState = await updateProject(undoState, project.id, {
               ...undoProject,
               photos: restoredPhotos,
+              mainPhotoId: wasMainPhoto && !undoProject.mainPhotoId ? existing.id : undoProject.mainPhotoId,
             });
             dataRef.current = restoredState;
             onStateChange(restoredState);
@@ -376,9 +392,17 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
 
       {photos.length ? (
         <div className="photos-grid">
-          {photos.map((photo) => (
-            <article key={photo.id} className="photo-card">
+          {photos.map((photo) => {
+            const isMainPhoto = photo.id === mainPhotoId;
+            return (
+            <article key={photo.id} className={`photo-card${isMainPhoto ? ' is-main-photo' : ''}`}>
               <button className="photo-thumb-button" type="button" onClick={() => void openPhoto(photo)}>
+                {isMainPhoto ? (
+                  <span className="main-photo-badge">
+                    <FluentIcon name="check" size={14} />
+                    Main photo
+                  </span>
+                ) : null}
                 {getPhotoPreview(photo) ? (
                   <img
                     className="photo-thumb"
@@ -430,6 +454,17 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     onChange={(event) => handleReplacePhoto(photo, event.target.files)}
                   />
                   <button
+                    className={`button secondary photo-main-button${isMainPhoto ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => void setMainProjectPhoto(photo.id)}
+                    disabled={isMainPhoto || isMutating(['project', project.id, 'main-photo']) || isMutating(['photo', photo.id])}
+                    title={isMainPhoto ? 'Main project photo' : 'Set as main project photo'}
+                    aria-label={isMainPhoto ? `${getDisplayPhotoName(photo)} is the main project photo` : `Set ${getDisplayPhotoName(photo)} as the main project photo`}
+                  >
+                    <FluentIcon name="check" />
+                    <span>{isMainPhoto ? 'Main photo' : 'Set as main'}</span>
+                  </button>
+                  <button
                     className="button secondary gantt-icon-button"
                     type="button"
                     onClick={() => void openPhoto(photo)}
@@ -480,7 +515,8 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                 </div> : null}
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="empty-state compact">
