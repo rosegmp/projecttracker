@@ -43,7 +43,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Imported and CSS-scoped the existing PDF editor so its generic styles do not affect Project Tracker.
 - Added project-specific autosave/session keys and editor teardown so switching projects or tabs does not leak state or document listeners.
 - Added review-mode protection for users without edit access.
-- Added `pdfjs-dist@3.11.174` to Project Tracker.
+- Added PDF.js to Project Tracker; the release now uses `pdfjs-dist@4.10.38` with ESM imports after CI identified the older 3.x line's malicious-PDF execution advisory.
 - Replaced the old anonymous Takeoff Supabase adapter with `src/features/takeoff/services/projectTakeoffData.js`, which uses Project Tracker's current authenticated session.
 - Added `supabase/migrations/20260717060000_add_project_takeoffs.sql` with:
   - project-scoped `project_takeoffs` snapshot records;
@@ -54,6 +54,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Verification completed:
   - `npm run build` passes;
   - `npm test` passes with 103 tests;
+  - `npm audit --omit=dev` reports zero production vulnerabilities after the PDF.js upgrade;
   - `node --check` passes for the imported editor and new data service;
   - `git diff --check` passes.
 - Browser verification reached the local sign-in screen, but the isolated test browser had no Project Tracker session and its Supabase refresh timed out. The authenticated project-tab flow still needs a live-session smoke test after the migration is applied.

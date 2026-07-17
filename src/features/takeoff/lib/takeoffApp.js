@@ -1,5 +1,5 @@
-import * as pdfjsLib from "pdfjs-dist/build/pdf";
-import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min?url";
+import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 const COLORS = {
   length: "#e4572e",
