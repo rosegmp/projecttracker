@@ -1,13 +1,16 @@
 # Project Tracker handoff
 
-Updated: 2026-07-17
+Updated: 2026-07-20
 
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
 - Branch: `main`
-- The working tree now contains the uncommitted Takeoff integration milestone described below.
+- The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `33789d7` Handle portal response timestamps safely
+  - `92a3e71` Keep portal account controls accessible
+  - `58e451b` Add construction workflows and secure project portal
   - `5994a9e` Trigger production deployment
   - `6e94084` Prevent startup splash from hanging
   - `d9d0e1c` Add Home dashboard and weather forecast
@@ -101,6 +104,22 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Portal data-isolation hardening on 2026-07-20 adds `20260720200000_harden_project_portal_reads.sql`. The client now requests only the current app-user profile first; Customer/Subcontractor accounts load a minimal security-definer portal bootstrap containing their own profile and assigned project id/name/address/status/dates, with empty tasks and People collections. They no longer enter the normal tracker loader, Home is removed from their allowed top-level tabs, and Project Detail skips audit loading. Restrictive RLS policies deny those roles direct reads from internal legacy/normalized tracker tables and Storage, while `project_portal_items` remains audience-filtered through its own policy. Staff continue through the existing full loader; an authenticated admin smoke test passed while the new RPC is unapplied by falling back only when the profile function is absent. `npm run build` passes with 301 modules and `git diff --check` passes. Focused regression assertions cover the safe bootstrap and restrictive policies; the full suite and APK remain deferred. Both portal migrations are still unapplied, so external accounts must remain inactive until they are applied together and a real assigned Customer/Subcontractor account verifies project listing, audience filtering, responding, approval/decline, and direct internal-table denial. After that validation, recommendation #8 can proceed to warranty/closeout.
 - Full regression checkpoint after portal workflows and data-isolation hardening on 2026-07-20 passes all **113 regression tests**. This supersedes the phase notes that the portal assertions had not yet been included in a full-suite run. The Android APK has not been rebuilt since the preceding 112-test checkpoint.
 - Login-invite reliability follow-up on 2026-07-20 routes `inviteAuthUser` through the shared authenticated Supabase request path instead of raw `fetch`. Invite requests now require a live signed-in token, refresh an expired JWT and retry through the existing session logic, use a 20-second labeled timeout, and replace the browser's unhelpful `Failed to fetch` with an actionable connection/session message. The deployed `create-auth-user` Edge Function is ACTIVE at version 4 and its production CORS preflight returns HTTP 200 with the required authorization/apikey/content-type headers. `npm run build` passes with 301 modules. A focused regression assertion was added; the full suite was last run immediately before this small client fix (113 passing), and the APK was not rebuilt.
+
+### Production portal rollout completed
+
+- Release commit `58e451b` and portal account-control follow-up `92a3e71` were pushed to `origin/main` and deployed successfully by Netlify to `https://projecthub.destinyhomesnj.com`.
+- GitHub Actions run `29770573901` passed the web build, regression tests, production audit, Android debug build, and APK artifact upload.
+- The following migrations were applied to the linked production Supabase project, and `supabase migration list` confirmed local/remote parity:
+  - `20260719180000_add_daily_logs_and_change_orders.sql`
+  - `20260720140000_add_rfis_and_submittals.sql`
+  - `20260720170000_add_budget_and_commitments.sql`
+  - `20260720190000_add_project_portal_workflows.sql`
+  - `20260720200000_harden_project_portal_reads.sql`
+- Live validation used Customer account `aaronengelman@gmail.com`, assigned only to **105 Destiny Way**. The account loaded one project, empty internal tasks/inspections/phases/schedule data, and only the Portal project tab. The always-visible portal account bar displayed the account identity and a working Sign out action.
+- Audience filtering passed: the Customer saw the Customers-only approval request and did not see the Subcontractors-only update. The Customer approved the request with a response, and the Admin account subsequently saw the Approved status and saved response.
+- The response exposed a timestamp-rendering bug because the shared short-date helper appended a date-only suffix to a full timestamp. Commit `33789d7` now accepts both calendar dates and timestamps and safely handles invalid values. All **114 regression tests** and the 301-module production build pass, Netlify deployed the hotfix, and the live Customer portal rendered the response date successfully.
+- Both temporary rollout records (`POR-001` and `POR-002`) were deleted from production after validation; a linked Supabase query confirmed no `ROLL-OUT TEST` portal items remain for the project.
+- A real Subcontractor account was not used during this rollout. Customer-side exclusion of the Subcontractors-only record is verified; a later optional smoke test can validate the positive Subcontractor view with an assigned account.
 
 ### Original recommended implementation
 
