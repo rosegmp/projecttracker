@@ -963,6 +963,18 @@ export default function App() {
         </section>
       ) : null}
 
+      {!nativeAndroid && !capabilities.showTabs ? (
+        <section className="portal-account-bar" aria-label="Portal account">
+          <div>
+            <strong>{signedInUserName}</strong>
+            {signedInUserEmail ? <span>{signedInUserEmail}</span> : null}
+          </div>
+          <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
+            <FluentIcon name="signOut" size={16} />Sign out
+          </button>
+        </section>
+      ) : null}
+
       {storageBanner ? (
         <section className="storage-banner">
           <div className="storage-banner-copy">

@@ -660,6 +660,28 @@ a {
   display: none;
 }
 
+.portal-account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface);
+}
+
+.portal-account-bar > div {
+  min-width: 0;
+  display: grid;
+  text-align: right;
+}
+
+.portal-account-bar span {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
 .android-shell-main {
   display: flex;
   align-items: center;
@@ -8571,6 +8593,20 @@ textarea:focus-visible {
 
 /* Keep Android overlays rooted to the viewport instead of the filtered app bar. */
 @media (max-width: 720px) {
+  .portal-account-bar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: var(--space-3);
+  }
+
+  .portal-account-bar > div {
+    text-align: left;
+  }
+
+  .portal-account-bar .button {
+    width: 100%;
+  }
+
   .browser-mobile-app-bar {
     display: grid;
   }

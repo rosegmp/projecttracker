@@ -2808,6 +2808,8 @@ const tests = [
       ]);
       assert.match(appSource, /normalizedRole === 'Customer' \|\| normalizedRole === 'Subcontractor'/);
       assert.match(appSource, /showTabs: !portalRole/);
+      assert.match(appSource, /className="portal-account-bar"/);
+      assert.match(appSource, /portal-account-bar[\s\S]*handleSignOut/);
       assert.match(appSource, /loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData/);
       assert.match(appSource, /\? await loadPortalTrackerData/);
       assert.match(accessSource, /'Customer', 'Subcontractor'/);
@@ -2839,6 +2841,7 @@ const tests = [
       assert.match(trackerSource, /portalMode: true/);
       assert.match(detailSource, /if \(portalOnly\) return/);
       assert.match(styleSource, /\.portal-user-view > \.project-detail-tabs/);
+      assert.match(styleSource, /\.portal-account-bar/);
       assert.match(styleSource, /\.project-portal-response-form/);
     },
   },
