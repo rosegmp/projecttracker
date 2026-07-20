@@ -5,7 +5,7 @@ export function normalizeProjectAccessUserIds(userIds) {
 }
 
 export function canUserViewProject(project, activeUser) {
-  const role = ['Admin', 'Edit', 'View Only', 'Customer'].includes(activeUser?.role)
+  const role = ['Admin', 'Edit', 'View Only', 'Customer', 'Subcontractor'].includes(activeUser?.role)
     ? activeUser.role
     : 'View Only';
   if (role === 'Admin') return true;

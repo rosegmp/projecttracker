@@ -120,16 +120,14 @@ export function initTakeoffApp(root, services = {}) {
   readOnly = Boolean(services.readOnly);
   bindElements(root);
   applyReadOnlyMode(root);
-  bindEvents();
+  const unbindEvents = bindEvents();
   configurePdfJs();
   syncScaleLengthInput();
   restoreSessionState().finally(renderAll);
   return () => {
     persistSessionState();
     if (state.sessionSaveTimer) window.clearTimeout(state.sessionSaveTimer);
-    document.removeEventListener("keydown", handleDocumentKeydown);
-    document.removeEventListener("click", handleDocumentClick);
-    window.removeEventListener("beforeunload", handleBeforeUnload);
+    unbindEvents();
     appRoot = null;
     dataService = null;
   };
@@ -248,39 +246,45 @@ function bindElements(root) {
 }
 
 function bindEvents() {
-  els.uploadButton.addEventListener("click", () => els.pdfInput.click());
-  els.emptyUploadButton.addEventListener("click", () => els.pdfInput.click());
-  els.selectProjectPdfButton.addEventListener("click", selectProjectPdf);
-  els.emptySelectProjectPdfButton.addEventListener("click", selectProjectPdf);
-  els.openProjectButton.addEventListener("click", openProjectBrowser);
-  els.saveProjectButton.addEventListener("click", () => {
+  const eventController = new AbortController();
+  const { signal } = eventController;
+  const on = (target, type, listener, options = {}) => {
+    target.addEventListener(type, listener, { ...options, signal });
+  };
+
+  on(els.uploadButton, "click", () => els.pdfInput.click());
+  on(els.emptyUploadButton, "click", () => els.pdfInput.click());
+  on(els.selectProjectPdfButton, "click", selectProjectPdf);
+  on(els.emptySelectProjectPdfButton, "click", selectProjectPdf);
+  on(els.openProjectButton, "click", openProjectBrowser);
+  on(els.saveProjectButton, "click", () => {
     saveTakeoffProject({ promptForName: false, duplicateProject: false });
   });
-  els.saveAsProjectButton.addEventListener("click", openSaveAsDialog);
-  els.importProjectButton.addEventListener("click", () => els.projectInput.click());
-  els.refreshProjectsButton.addEventListener("click", refreshProjectBrowser);
-  els.closeProjectBrowser.addEventListener("click", closeProjectBrowser);
-  els.pdfInput.addEventListener("change", (event) => {
+  on(els.saveAsProjectButton, "click", openSaveAsDialog);
+  on(els.importProjectButton, "click", () => els.projectInput.click());
+  on(els.refreshProjectsButton, "click", refreshProjectBrowser);
+  on(els.closeProjectBrowser, "click", closeProjectBrowser);
+  on(els.pdfInput, "change", (event) => {
     const [file] = event.target.files;
     if (file) requestPdfLoad(file);
     event.target.value = "";
   });
-  els.projectInput.addEventListener("change", (event) => {
+  on(els.projectInput, "change", (event) => {
     const [file] = event.target.files;
     if (file) loadTakeoffProject(file);
     event.target.value = "";
   });
 
-  els.prevPage.addEventListener("click", () => setPage(state.pageNumber - 1));
-  els.nextPage.addEventListener("click", () => setPage(state.pageNumber + 1));
-  els.zoomOut.addEventListener("click", () => setZoom(state.zoom - 0.1));
-  els.zoomIn.addEventListener("click", () => setZoom(state.zoom + 0.1));
-  els.undoAction.addEventListener("click", undoAction);
-  els.redoAction.addEventListener("click", redoAction);
-  els.viewer.addEventListener("wheel", handleViewerWheel, { passive: false });
-  els.viewer.addEventListener("pointerdown", handleViewerPointerDown);
-  els.viewer.addEventListener("contextmenu", handleViewerContextMenu);
-  els.pagesList.addEventListener("click", (event) => {
+  on(els.prevPage, "click", () => setPage(state.pageNumber - 1));
+  on(els.nextPage, "click", () => setPage(state.pageNumber + 1));
+  on(els.zoomOut, "click", () => setZoom(state.zoom - 0.1));
+  on(els.zoomIn, "click", () => setZoom(state.zoom + 0.1));
+  on(els.undoAction, "click", undoAction);
+  on(els.redoAction, "click", redoAction);
+  on(els.viewer, "wheel", handleViewerWheel, { passive: false });
+  on(els.viewer, "pointerdown", handleViewerPointerDown);
+  on(els.viewer, "contextmenu", handleViewerContextMenu);
+  on(els.pagesList, "click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const button = target?.closest(".page-thumb");
     if (!button) return;
@@ -288,23 +292,23 @@ function bindEvents() {
   });
 
   els.toolButtons.forEach((button) => {
-    button.addEventListener("click", () => setTool(button.dataset.tool));
+    on(button, "click", () => setTool(button.dataset.tool));
   });
-  els.snapToggle.addEventListener("click", toggleSnapToLine);
+  on(els.snapToggle, "click", toggleSnapToLine);
 
-  els.measureOverlay.addEventListener("pointerdown", handleOverlayPointerDown);
-  els.measureOverlay.addEventListener("click", handleOverlayClick);
-  els.measureOverlay.addEventListener("dblclick", handleOverlayDoubleClick);
-  els.measureOverlay.addEventListener("pointermove", handleOverlayPointerMove);
-  els.measureOverlay.addEventListener("pointerup", finishActiveMarkup);
-  els.measureOverlay.addEventListener("pointercancel", cancelActiveMarkup);
-  els.measureOverlay.addEventListener("pointerleave", clearPreviewPoint);
-  els.measureOverlay.addEventListener("contextmenu", handleOverlayContextMenu);
+  on(els.measureOverlay, "pointerdown", handleOverlayPointerDown);
+  on(els.measureOverlay, "click", handleOverlayClick);
+  on(els.measureOverlay, "dblclick", handleOverlayDoubleClick);
+  on(els.measureOverlay, "pointermove", handleOverlayPointerMove);
+  on(els.measureOverlay, "pointerup", finishActiveMarkup);
+  on(els.measureOverlay, "pointercancel", cancelActiveMarkup);
+  on(els.measureOverlay, "pointerleave", clearPreviewPoint);
+  on(els.measureOverlay, "contextmenu", handleOverlayContextMenu);
 
-  els.undoPoint.addEventListener("click", undoDraftPoint);
-  els.finishMeasure.addEventListener("click", finishDraft);
+  on(els.undoPoint, "click", undoDraftPoint);
+  on(els.finishMeasure, "click", finishDraft);
 
-  els.clearScale.addEventListener("click", () => {
+  on(els.clearScale, "click", () => {
     const before = createHistorySnapshot();
     delete state.scales[state.pageNumber];
     state.draft = [];
@@ -313,10 +317,10 @@ function bindEvents() {
     renderAll();
     setStatus(`Scale cleared for sheet ${state.pageNumber}.`);
   });
-  els.manualScaleButton.addEventListener("click", () => openScaleDialogForMode("manual"));
+  on(els.manualScaleButton, "click", () => openScaleDialogForMode("manual"));
 
-  els.countSymbolButton.addEventListener("click", () => toggleCountSymbolMenu());
-  els.countColor.addEventListener("input", (event) => {
+  on(els.countSymbolButton, "click", () => toggleCountSymbolMenu());
+  on(els.countColor, "input", (event) => {
     state.countColor = event.target.value;
     const measurement = selectedMeasurement();
     if (measurement?.type === "count") {
@@ -324,48 +328,50 @@ function bindEvents() {
       renderAll();
     }
   });
-  els.markupColor.addEventListener("input", (event) => {
+  on(els.markupColor, "input", (event) => {
     state.markupColor = event.target.value;
   });
 
-  els.deleteSelected.addEventListener("click", deleteSelected);
-  els.clearMeasurements.addEventListener("click", clearMeasurements);
-  els.clearMarkups.addEventListener("click", clearMarkups);
-  els.exportCsv.addEventListener("click", exportCsv);
-  els.selectionPanel.addEventListener("submit", handleSelectionSubmit);
-  els.cancelScale.addEventListener("click", closeScaleDialog);
-  els.scaleForm.addEventListener("submit", applyScale);
-  els.saveNameForm.addEventListener("submit", submitSaveAsDialog);
-  els.saveNameCancel.addEventListener("click", closeSaveAsDialog);
-  els.scaleUnit.addEventListener("change", (event) => {
+  on(els.deleteSelected, "click", deleteSelected);
+  on(els.clearMeasurements, "click", clearMeasurements);
+  on(els.clearMarkups, "click", clearMarkups);
+  on(els.exportCsv, "click", exportCsv);
+  on(els.selectionPanel, "submit", handleSelectionSubmit);
+  on(els.cancelScale, "click", closeScaleDialog);
+  on(els.scaleForm, "submit", applyScale);
+  on(els.saveNameForm, "submit", submitSaveAsDialog);
+  on(els.saveNameCancel, "click", closeSaveAsDialog);
+  on(els.scaleUnit, "change", (event) => {
     setProjectMeasurementUnit(event.target.value);
   });
-  els.manualScaleUnit.addEventListener("change", (event) => {
+  on(els.manualScaleUnit, "change", (event) => {
     setProjectMeasurementUnit(event.target.value);
   });
-  els.projectUnitSelect.addEventListener("change", (event) => {
+  on(els.projectUnitSelect, "change", (event) => {
     setProjectMeasurementUnit(event.target.value);
     renderAll();
     setStatus("Project measurement units updated.");
   });
-  els.scaleModeMeasured.addEventListener("click", () => setScaleMode("measured"));
-  els.scaleModeManual.addEventListener("click", () => setScaleMode("manual"));
+  on(els.scaleModeMeasured, "click", () => setScaleMode("measured"));
+  on(els.scaleModeManual, "click", () => setScaleMode("manual"));
 
-  els.viewer.addEventListener("dragover", (event) => {
+  on(els.viewer, "dragover", (event) => {
     event.preventDefault();
     els.viewer.classList.add("drag-over");
   });
-  els.viewer.addEventListener("dragleave", () => els.viewer.classList.remove("drag-over"));
-  els.viewer.addEventListener("drop", (event) => {
+  on(els.viewer, "dragleave", () => els.viewer.classList.remove("drag-over"));
+  on(els.viewer, "drop", (event) => {
     event.preventDefault();
     els.viewer.classList.remove("drag-over");
     const file = [...event.dataTransfer.files].find((item) => item.type === "application/pdf");
     if (file) requestPdfLoad(file);
   });
 
-  document.addEventListener("keydown", handleDocumentKeydown);
-  document.addEventListener("click", handleDocumentClick);
-  window.addEventListener("beforeunload", handleBeforeUnload);
+  on(document, "keydown", handleDocumentKeydown);
+  on(document, "click", handleDocumentClick);
+  on(window, "beforeunload", handleBeforeUnload);
+
+  return () => eventController.abort();
 }
 
 function confirmReplaceCurrentDrawing() {

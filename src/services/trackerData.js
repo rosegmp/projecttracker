@@ -241,15 +241,26 @@ export async function inviteAuthUser(email, name = '', redirectTo = '') {
   if (!trimmedEmail) {
     throw new Error('Enter an email address before sending an invite.');
   }
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/create-auth-user`, {
-    method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify({
-      email: trimmedEmail,
-      name: String(name || '').trim(),
-      redirectTo,
-    }),
-  });
+  if (!getAuthAccessToken()) {
+    throw new Error('Your sign-in session is missing. Sign in again before sending an invite.');
+  }
+  let response;
+  try {
+    response = await fetchAuthorizedSupabase('/functions/v1/create-auth-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: trimmedEmail,
+        name: String(name || '').trim(),
+        redirectTo,
+      }),
+    }, 'Login invite', 20000);
+  } catch (error) {
+    if (/failed to fetch|network|connection|load failed/i.test(String(error?.message || error || ''))) {
+      throw new Error('Unable to reach the login invite service. Check your connection, then sign out and back in before trying again.');
+    }
+    throw error;
+  }
   const text = await response.text();
   let payload = {};
   try {
@@ -2396,23 +2407,117 @@ export async function loadTrackerData({ force = false } = {}) {
   });
 }
 
-export async function loadAuditEvents({ limit = 250, projectId = '', entityType = '' } = {}) {
+async function callPortalBootstrapRpc(functionName, label) {
+  const response = await fetchAuthorizedSupabase(`/rest/v1/rpc/${functionName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }, label);
+  const text = await response.text();
+  if (!response.ok) {
+    const error = new Error(`${label} failed (${response.status}): ${text || 'No response body.'}`);
+    error.status = response.status;
+    throw error;
+  }
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${label} returned invalid JSON.`);
+  }
+}
+
+export async function loadCurrentAppUserProfile() {
+  if (!isSupabaseConfigured()) return null;
+  try {
+    return await trackerQueryClient.query({
+      key: ['portal', 'current-user'],
+      staleTime: 15000,
+      retry: 0,
+      queryFn: () => callPortalBootstrapRpc('get_current_app_user_profile', 'Account profile'),
+    });
+  } catch (error) {
+    if (/PGRST202|PGRST205|schema cache|does not exist|404/i.test(String(error?.message || error || ''))) return null;
+    throw error;
+  }
+}
+
+export async function loadPortalTrackerData({ profile, force = false } = {}) {
+  if (!['Customer', 'Subcontractor'].includes(profile?.role)) {
+    throw new Error('A customer or subcontractor portal account is required.');
+  }
+  if (force) trackerQueryClient.invalidateQueries(['portal']);
+  return trackerQueryClient.query({
+    key: ['portal', 'workspace', profile.id],
+    staleTime: 15000,
+    retry: 1,
+    force,
+    queryFn: async () => {
+      const payload = await callPortalBootstrapRpc('get_project_portal_bootstrap', 'Portal workspace');
+      const currentUser = payload?.currentUser;
+      if (!currentUser?.id || !['Customer', 'Subcontractor'].includes(currentUser.role)) {
+        throw new Error('The portal workspace returned an invalid account profile.');
+      }
+      const projects = Array.isArray(payload?.projects)
+        ? payload.projects.map((project) => normalizeProject({ ...project, _version: Number(project.version) || 0 }))
+        : [];
+      return {
+        projects,
+        tasks: [],
+        subs: [],
+        employees: [],
+        settings: normalizeSettings({
+          ...EMPTY_SETTINGS,
+          users: [normalizeAppUser(currentUser, 0)],
+          currentUserId: currentUser.id,
+        }),
+        settingsLoadedFromSupabase: true,
+        settingsVersion: 0,
+        concurrencyEnabled: true,
+        storageMode: 'supabase',
+        storageIssue: '',
+        portalMode: true,
+      };
+    },
+  });
+}
+
+export async function loadAuditEvents({ limit = 50, beforeId = null, projectId = '', entityType = '', since = '' } = {}) {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase is not configured for audit history in this build.');
   }
-  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 250));
-  const params = new URLSearchParams({
-    select: 'id,created_at,actor_user_id,actor_email,entity_type,entity_id,project_id,action,before_data,after_data',
-    order: 'created_at.desc',
-    limit: String(safeLimit),
-  });
-  if (projectId) params.set('project_id', `eq.${projectId}`);
-  if (entityType) params.set('entity_type', `eq.${entityType}`);
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+  const safeBeforeId = Number(beforeId) > 0 ? Number(beforeId) : null;
+  const safeSince = String(since || '').trim();
   const rows = await trackerQueryClient.query({
-    key: ['audit', projectId || 'all', entityType || 'all', safeLimit],
+    key: ['audit', projectId || 'all', entityType || 'all', safeLimit, safeBeforeId || 'latest', safeSince || 'any-time'],
     staleTime: 10000,
     retry: 2,
-    queryFn: () => fetchSupabaseJson(`/rest/v1/audit_events?${params.toString()}`, 'Audit trail'),
+    queryFn: async () => {
+      const response = await fetchAuthorizedSupabase('/rest/v1/rpc/get_audit_events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          p_limit: safeLimit,
+          p_before_id: safeBeforeId,
+          p_project_id: String(projectId || '').trim(),
+          p_entity_type: String(entityType || '').trim(),
+          p_since: safeSince || null,
+        }),
+      }, 'Audit trail', 20000);
+      const text = await response.text();
+      if (!response.ok) {
+        const error = new Error(
+          `Audit trail request failed (${response.status} ${response.statusText}): ${text || 'No response body.'}`,
+        );
+        error.status = response.status;
+        throw error;
+      }
+      try {
+        return text ? JSON.parse(text) : [];
+      } catch {
+        throw new Error('Audit trail returned invalid JSON.');
+      }
+    },
   });
   return Array.isArray(rows) ? rows : [];
 }
@@ -2568,6 +2673,8 @@ export async function createProject(currentState, payload) {
     phases: payload.phases || [],
     files: payload.files,
     photos: payload.photos || [],
+    mainPhotoId: payload.mainPhotoId || '',
+    mainPhotoCrop: payload.mainPhotoCrop === true,
     selections: payload.selections || [],
   });
   const projects = [...currentState.projects, project];

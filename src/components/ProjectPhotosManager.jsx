@@ -196,18 +196,6 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     }
   }
 
-  async function setMainProjectPhoto(photoId) {
-    if (!project?.id || !photoId || photoId === mainPhotoId) return;
-    try {
-      await runPhotosMutation(['project', project.id, 'main-photo'], (currentProject) => ({
-        ...currentProject,
-        mainPhotoId: photoId,
-      }));
-    } catch (error) {
-      await showAppAlert(error instanceof Error ? error.message : 'Failed to set the main project photo.', 'Main photo failed');
-    }
-  }
-
   function getPhotoPreview(photo) {
     if (!photo) return '';
     return photo.dataUrl || previewUrls[photo.id] || '';
@@ -453,17 +441,6 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                     accept="image/*"
                     onChange={(event) => handleReplacePhoto(photo, event.target.files)}
                   />
-                  <button
-                    className={`button secondary photo-main-button${isMainPhoto ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => void setMainProjectPhoto(photo.id)}
-                    disabled={isMainPhoto || isMutating(['project', project.id, 'main-photo']) || isMutating(['photo', photo.id])}
-                    title={isMainPhoto ? 'Main project photo' : 'Set as main project photo'}
-                    aria-label={isMainPhoto ? `${getDisplayPhotoName(photo)} is the main project photo` : `Set ${getDisplayPhotoName(photo)} as the main project photo`}
-                  >
-                    <FluentIcon name="check" />
-                    <span>{isMainPhoto ? 'Main photo' : 'Set as main'}</span>
-                  </button>
                   <button
                     className="button secondary gantt-icon-button"
                     type="button"

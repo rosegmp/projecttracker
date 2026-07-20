@@ -3,6 +3,7 @@ import AppDialogHost from './components/AppDialogs.jsx';
 import FluentIcon from './components/FluentIcon.jsx';
 import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
 import { getVisibleProjectsForUser } from './utils/accessUi.js';
+import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
@@ -39,11 +40,6 @@ function loadAndroidNotificationsModule() {
   return androidNotificationsModulePromise;
 }
 
-function getProjectHealth(project) {
-  const labels = { active: 'On track', planning: 'In planning', delayed: 'Needs attention', done: 'Completed' };
-  return { label: labels[project?.status || 'planning'] || 'Project' };
-}
-
 function getStorageBannerMessage(storageMode, storageIssue = '') {
   if (storageMode === 'supabase' || storageMode === 'loading') return null;
   if (storageMode === 'local-unconfigured') {
@@ -61,7 +57,7 @@ const tabs = [
   {
     id: 'home',
     label: 'Home',
-    description: 'See today and tomorrow at a glance, followed by the latest workspace changes.',
+    description: 'Prioritize overdue and blocked work, then review today and the next seven days.',
   },
   {
     id: 'projects',
@@ -109,9 +105,10 @@ function getUserCapabilities(role) {
   const normalizedRole = normalizeAppUserRole(role);
   const canManageUsers = normalizedRole === 'Admin';
   const canEdit = normalizedRole === 'Admin' || normalizedRole === 'Edit';
+  const portalRole = normalizedRole === 'Customer' || normalizedRole === 'Subcontractor';
   const readOnlyAllowedTabs =
-    normalizedRole === 'Customer'
-      ? ['home', 'projects']
+    portalRole
+      ? ['projects']
       : NON_EDITOR_TAB_IDS;
   const allowedTabs =
     normalizedRole === 'Admin'
@@ -125,7 +122,7 @@ function getUserCapabilities(role) {
     canEdit,
     canManageUsers,
     canAccessSettings: canManageUsers,
-    showTabs: normalizedRole !== 'Customer',
+    showTabs: !portalRole,
     allowedTabs,
   };
 }
@@ -237,8 +234,11 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
-      const { loadTrackerData } = await loadTrackerDataModule();
-      const next = await loadTrackerData({ force: options?.force !== false });
+      const { loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData } = await loadTrackerDataModule();
+      const profile = await loadCurrentAppUserProfile();
+      const next = ['Customer', 'Subcontractor'].includes(profile?.role)
+        ? await loadPortalTrackerData({ profile, force: options?.force !== false })
+        : await loadTrackerData({ force: options?.force !== false });
       setTrackerState(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
@@ -489,6 +489,12 @@ export default function App() {
   }
 
   function openHomeItem(item) {
+    if (item.type === 'project') {
+      setProjectNavigationTarget({ projectId: item.id, token: `${item.id}-${Date.now()}` });
+      syncProjectToLocation(item.id, { push: true });
+      setActiveTab('projects');
+      return;
+    }
     if (item.type === 'task') {
       if (!capabilities.allowedTabs.includes('tasks') && item.projectId) {
         setProjectNavigationTarget({ projectId: item.projectId, detailTab: 'tasks', token: `${Date.now()}` });
@@ -512,6 +518,21 @@ export default function App() {
     }
     setSessionProjectFilter(item.projectId || 'all');
     setActiveTab('schedule');
+  }
+
+  function openHomeCollection(collection) {
+    if (collection === 'tasks') {
+      setSessionProjectFilter('all');
+      setActiveTab('tasks');
+      return;
+    }
+    if (collection === 'schedule') {
+      setSessionProjectFilter('all');
+      setActiveTab('schedule');
+      return;
+    }
+    setSessionProjectFilter('all');
+    goToProjectsHome();
   }
 
   function openNewProjectFromRail() {
@@ -672,7 +693,10 @@ export default function App() {
           activeUser={activeUser}
           refresh={refreshData}
           loading={loading}
+          canEdit={capabilities.canEdit}
+          onStateChange={setTrackerState}
           onOpenItem={openHomeItem}
+          onOpenCollection={openHomeCollection}
         />
       );
     }
@@ -1111,7 +1135,7 @@ export default function App() {
               </button>
               {visibleProjects.map((project) => {
                 const taskCount = railTaskCountByProject.get(project.id) || 0;
-                const health = getProjectHealth(project);
+                const health = getProjectOperationalHealth(project, trackerState.tasks);
                 const isActive = project.id === railActiveProjectId;
                 return (
                   <button

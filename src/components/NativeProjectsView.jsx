@@ -207,6 +207,7 @@ export default function NativeProjectsView({
       start: '',
       end: '',
       status: 'planning',
+      manager: '',
       address: '',
       permitNumber: '',
       drNumber: '',
@@ -218,6 +219,9 @@ export default function NativeProjectsView({
       customerAddress: '',
       customerNotes: '',
       progress: 0,
+      mainPhotoId: '',
+      mainPhotoCrop: false,
+      photos: [],
       accessUserIds: [],
       phases: [],
     });
@@ -231,6 +235,7 @@ export default function NativeProjectsView({
       start: project.start || '',
       end: project.end || '',
       status: project.status || 'planning',
+      manager: project.manager || '',
       address: project.address || '',
       permitNumber: project.permitNumber || '',
       drNumber: project.drNumber || '',
@@ -242,6 +247,9 @@ export default function NativeProjectsView({
       customerAddress: project.customerAddress || '',
       customerNotes: project.customerNotes || '',
       progress: project.progress ?? 0,
+      mainPhotoId: project.mainPhotoId || '',
+      mainPhotoCrop: project.mainPhotoCrop === true,
+      photos: project.photos || [],
       accessUserIds: normalizeProjectAccessUserIds(project.accessUserIds),
       phases: project.phases || [],
     });
@@ -868,6 +876,7 @@ export default function NativeProjectsView({
                       <ProjectCard
                         key={project.id}
                         project={project}
+                        tasks={visibleTasks.filter((task) => task.projectId === project.id)}
                         taskCount={taskCountByProject.get(project.id) || 0}
                         expanded={expandedOverviewProjectIds.has(project.id)}
                         onToggle={toggleOverviewProject}

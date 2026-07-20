@@ -25,8 +25,16 @@ import {
 } from '../src/utils/accessUi.js';
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
-import { buildHomeDaySummary, buildHomeOpenTasks, getLocalIsoDate, groupRecentAuditChanges } from '../src/utils/homeView.js';
-import { describeWeatherCode, normalizeWeatherForecast } from '../src/utils/weather.js';
+import {
+  buildHomeAttentionSummary,
+  buildHomeDaySummary,
+  buildHomeOpenTasks,
+  buildHomeRangeSummary,
+  getLocalIsoDate,
+  getProjectOperationalHealth,
+  groupRecentAuditChanges,
+} from '../src/utils/homeView.js';
+import { describeWeatherCode, formatCurrentWeather, normalizeCurrentWeather, normalizeWeatherForecast } from '../src/utils/weather.js';
 import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
 import {
   getNormalizedProjectSectionChanges,
@@ -77,6 +85,12 @@ const tests = [
       assert.equal(forecast[0].high, 81);
       assert.equal(forecast[2].rainChance, 80);
       assert.equal(describeWeatherCode(999).label, 'Variable weather');
+      const current = normalizeCurrentWeather({ current: {
+        time: '2026-07-20T10:15', weather_code: 2, temperature_2m: 78.2,
+        apparent_temperature: 80.1, wind_speed_10m: 7.6, precipitation: 0,
+      } });
+      assert.equal(current.label, 'Partly cloudy');
+      assert.equal(formatCurrentWeather(current), 'Partly cloudy, 78°F, feels like 80°F, wind 8 mph');
     },
   },
   {
@@ -157,6 +171,49 @@ const tests = [
     },
   },
   {
+    name: 'home prioritizes overdue blocked and upcoming work with operational project health',
+    async run() {
+      const homeSource = await readFile(new URL('../src/components/NativeHomeView.jsx', import.meta.url), 'utf8');
+      const projects = [{
+        id: 'p1',
+        name: 'Lake House',
+        status: 'active',
+        inspections: [
+          { id: 'i-old', date: '2026-07-15', status: 'requested', inspectionType: 'Framing' },
+          { id: 'i-next', date: '2026-07-18', status: 'requested', inspectionType: 'Electric' },
+        ],
+        phases: [{
+          id: 'phase-1',
+          name: 'Roughs',
+          steps: [
+            { id: 'step-1', name: 'Plumbing', start: '2026-07-14', end: '2026-07-15', status: 'active' },
+            { id: 'step-2', name: 'Electric', start: '2026-07-16', end: '2026-07-18', predecessors: [{ id: 'step-1', lag: 0 }] },
+          ],
+        }],
+      }];
+      const tasks = [
+        { id: 'overdue', projectId: 'p1', label: 'Order wire', due: '2026-07-15', done: false, assignees: ['Alex'] },
+        { id: 'upcoming', projectId: 'p1', label: 'Confirm trim', due: '2026-07-20', done: false, assignees: ['Alex'] },
+        { id: 'unassigned', projectId: 'p1', label: 'Call inspector', due: '', done: false, assignees: [] },
+      ];
+      const attention = buildHomeAttentionSummary(projects, tasks, '2026-07-16', tasks);
+      const range = buildHomeRangeSummary(projects, tasks, '2026-07-17', '2026-07-23');
+      const health = getProjectOperationalHealth(projects[0], tasks, '2026-07-16');
+      assert.deepEqual(attention.overdueTasks.map((item) => item.id), ['overdue']);
+      assert.deepEqual(attention.overdueInspections.map((item) => item.id), ['i-old']);
+      assert.deepEqual(attention.blockedSteps.map((item) => item.id), ['step-2']);
+      assert.deepEqual(attention.unassignedTasks.map((item) => item.id), ['unassigned']);
+      assert.deepEqual(range.openTasks.map((item) => item.id), ['upcoming']);
+      assert.equal(health.tone, 'attention');
+      assert.equal(health.issueCount, 3);
+      assert.match(homeSource, /Needs attention/);
+      assert.match(homeSource, /Next 7 days/);
+      assert.match(homeSource, /QuickTaskForm/);
+      assert.match(homeSource, /Mark .* complete/);
+      assert.match(homeSource, /cx_home_weather_visible/);
+    },
+  },
+  {
     name: 'home workspace is lazy loaded, navigable, and responsive',
     async run() {
       const [appSource, styleSource, detailSource] = await Promise.all([
@@ -207,10 +264,11 @@ const tests = [
   {
     name: 'server-backed file settings and inspection actions expose visible mutation states',
     async run() {
-      const [filesSource, settingsSource, inspectionsSource, styleSource] = await Promise.all([
+      const [filesSource, settingsSource, inspectionsSource, trackerSource, styleSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
       ]);
       assert.match(filesSource, /uploading \? ' is-loading'/);
@@ -220,8 +278,33 @@ const tests = [
       assert.match(settingsSource, /Saving display settings\.\.\./);
       assert.match(inspectionsSource, /\['inspection-preview', inspection\.id, field\]/);
       assert.match(inspectionsSource, /inspection-thumbnail-button\$\{isMutating/);
+      assert.match(trackerSource, /inviteAuthUser[\s\S]*fetchAuthorizedSupabase\('\/functions\/v1\/create-auth-user'/);
+      assert.match(trackerSource, /inviteAuthUser[\s\S]*Your sign-in session is missing/);
+      assert.match(trackerSource, /inviteAuthUser[\s\S]*Unable to reach the login invite service/);
       assert.match(styleSource, /\.button\.is-loading > \.fluent-icon/);
       assert.match(styleSource, /\.inspection-thumbnail-button\.is-loading::after/);
+    },
+  },
+  {
+    name: 'settings are divided into responsive administration sections',
+    async run() {
+      const [settingsSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      for (const section of ['scheduling', 'calendar', 'inspections', 'notifications', 'users', 'audit', 'display', 'system']) {
+        assert.match(settingsSource, new RegExp(`id: '${section}'`));
+        assert.match(settingsSource, new RegExp(`settings-panel-${section}`));
+      }
+      assert.match(settingsSource, /role="tablist"\s+aria-label="Settings sections"/);
+      assert.match(settingsSource, /className="settings-section-select"/);
+      assert.match(settingsSource, /activeSettingsSection !== 'audit'/);
+      assert.match(settingsSource, /settings-system-status-grid/);
+      assert.ok(settingsSource.indexOf('className="user-project-access"') < settingsSource.indexOf('className="user-role-actions"'));
+      assert.match(styleSource, /\.settings-section-tabs/);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.settings-section-tabs[\s\S]*display: none;/);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.settings-section-select[\s\S]*display: grid;/);
+      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.user-role-actions[\s\S]*flex-wrap: nowrap;/);
     },
   },
   {
@@ -688,7 +771,23 @@ const tests = [
   },
   {
     name: 'audit history expands project dates dependencies statuses and file changes',
-    run() {
+    async run() {
+      const [trackerSource, settingsSource, homeSource, migrationSource] = await Promise.all([
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeHomeView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260719090000_compact_and_paginate_audit_events.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.match(trackerSource, /rpc\/get_audit_events/);
+      assert.match(trackerSource, /beforeId = null/);
+      assert.match(settingsSource, /AUDIT_PAGE_SIZE = 50/);
+      assert.match(settingsSource, /Load older changes/);
+      assert.match(homeSource, /since: since\.toISOString\(\)/);
+      assert.match(migrationSource, /create or replace function public\.compact_audit_json/);
+      assert.match(migrationSource, /create or replace function public\.get_audit_events/);
+      assert.match(migrationSource, /measurementCount/);
+      assert.doesNotMatch(migrationSource, /jsonb_build_object\('name', old\.name, 'snapshot'/);
+
       const [event] = buildAuditTrailEntries([{
         id: 12,
         created_at: '2026-07-13T16:00:00Z',
@@ -825,23 +924,48 @@ const tests = [
     },
   },
   {
-    name: 'project photos can select one main photo for the overview',
+    name: 'edit project selects the main image for the project overview',
     async run() {
-      const [photosSource, detailSource, styleSource] = await Promise.all([
+      const [photosSource, detailSource, modalSource, projectsSource, styleSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectPhotosManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectModal.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
       ]);
 
-      assert.match(photosSource, /mainPhotoId: photoId/);
       assert.match(photosSource, /mainPhotoId: wasMainPhoto \? '' : currentProject\.mainPhotoId/);
-      assert.match(photosSource, /Set as main project photo/);
+      assert.doesNotMatch(photosSource, /Set as main project photo|setMainProjectPhoto/);
       assert.match(photosSource, /className="main-photo-badge"/);
+      assert.match(modalSource, /Main project image/);
+      assert.match(modalSource, /onChange\('mainPhotoId', event\.target\.value\)/);
+      assert.match(modalSource, /Crop image to fill/);
+      assert.match(modalSource, /onChange\('mainPhotoCrop', event\.target\.checked\)/);
+      assert.match(modalSource, /Add photos from the project Photos tab/);
+      assert.match(projectsSource, /mainPhotoId: project\.mainPhotoId \|\| ''/);
+      assert.match(projectsSource, /mainPhotoCrop: project\.mainPhotoCrop === true/);
       assert.match(detailSource, /function ProjectOverviewMainPhoto/);
       assert.match(detailSource, /photo\.id === project\?\.mainPhotoId/);
       assert.match(detailSource, /downloadProjectFileFromStorage\(mainPhoto\)/);
+      assert.match(detailSource, /project\.mainPhotoCrop \? ' is-cropped' : ''/);
       assert.match(detailSource, /<ProjectOverviewMainPhoto project=\{project\}/);
-      assert.match(styleSource, /\.project-overview-main-photo/);
+      assert.match(detailSource, /className="home-overview-shell project-overview-shell"/);
+      assert.match(detailSource, /What&apos;s happening/);
+      assert.match(detailSource, /openOverviewTarget\(row\)/);
+      assert.match(detailSource, /Next milestone/);
+      assert.match(detailSource, /Last activity/);
+      assert.match(detailSource, /Project team/);
+      assert.match(detailSource, /ProjectOverviewRecentPhotos/);
+      assert.match(detailSource, /href=\{`tel:\$\{project\.customerPhone\}`\}/);
+      assert.match(detailSource, /Missing information/);
+      assert.match(modalSource, /Project manager/);
+      assert.match(projectsSource, /manager: project\.manager \|\| ''/);
+      assert.doesNotMatch(detailSource, /ProjectOverviewWeather|4-day weather/);
+      assert.doesNotMatch(detailSource, /project-overview-details-section/);
+      assert.match(styleSource, /\.home-overview-shell[\s\S]*grid-template-columns: minmax\(220px, 0\.72fr\)/);
+      assert.match(styleSource, /\.project-overview-hero-photo img[\s\S]*object-fit: contain/);
+      assert.match(styleSource, /\.project-overview-hero-photo\.is-cropped img[\s\S]*object-fit: cover/);
+      assert.match(styleSource, /\.project-overview-recent-photos/);
     },
   },
   {
@@ -2548,13 +2672,174 @@ const tests = [
       assert.match(takeoffServiceSource, /project_id=eq\.\$\{encodeURIComponent\(scopedProjectId\)\}/);
       assert.match(takeoffServiceSource, /plan-takeoff:autosave:\$\{scopedProjectId\}/);
       assert.doesNotMatch(takeoffServiceSource, /VITE_SUPABASE_KEY|Bearer \$\{SUPABASE_KEY\}/);
-      assert.match(takeoffEditorSource, /document\.removeEventListener\("keydown", handleDocumentKeydown\)/);
+      assert.match(takeoffEditorSource, /const unbindEvents = bindEvents\(\)/);
+      assert.match(takeoffEditorSource, /const eventController = new AbortController\(\)/);
+      assert.match(takeoffEditorSource, /target\.addEventListener\(type, listener, \{ \.\.\.options, signal \}\)/);
+      assert.match(takeoffEditorSource, /return \(\) => eventController\.abort\(\)/);
+      assert.match(takeoffEditorSource, /unbindEvents\(\)/);
       assert.match(takeoffEditorSource, /sessionStorageKey = String\(services\.sessionKey/);
       assert.match(takeoffMigrationSource, /create table if not exists public\.project_takeoffs/);
       assert.match(takeoffMigrationSource, /public\.app_user_can_view_project\(project_id\)/);
       assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(project_id\)/);
       assert.match(takeoffMigrationSource, /values \('takeoff-files', 'takeoff-files', false\)/);
       assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(\(storage\.foldername\(name\)\)\[2\]\)/);
+    },
+  },
+  {
+    name: 'daily logs and change orders are project-scoped authorized workflows',
+    async run() {
+      const [detailSource, managerSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260719180000_add_daily_logs_and_change_orders.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectWorkflowManager\.jsx'\)\)/);
+      assert.match(detailSource, /workflowType="dailyLogs"/);
+      assert.match(detailSource, /workflowType="changeOrders"/);
+      assert.match(detailSource, /subcontractors=\{data\?\.subs \|\| \[\]\}/);
+      assert.match(detailSource, /onStateChange=\{onStateChange\}/);
+      assert.match(managerSource, /Work performed/);
+      assert.doesNotMatch(managerSource, /Additional labor notes/);
+      assert.match(managerSource, /<label className="full"><span>Notes<\/span>/);
+      assert.match(managerSource, /subcontractorDisplayName/);
+      assert.match(managerSource, /`\$\{company\} \(\$\{contact\}\)`/);
+      assert.match(managerSource, /createPerson\(data, 'sub', personDraft\)/);
+      assert.match(managerSource, /New subcontractor/);
+      assert.match(managerSource, /<PersonModal/);
+      assert.match(managerSource, /subcontractorWork/);
+      assert.match(managerSource, /Select from People/);
+      assert.match(managerSource, /uploadProjectFileToStorage\(project\.id, 'daily-log-photos'/);
+      assert.match(managerSource, /accept="image\/\*"/);
+      assert.match(managerSource, /deleteProjectFileFromStorage/);
+      assert.match(managerSource, /loadCurrentWeatherConditions/);
+      assert.match(managerSource, /Loading current weather/);
+      assert.match(managerSource, /Cost impact/);
+      assert.match(serviceSource, /version=eq\.\$\{draft\.version\}/);
+      assert.match(serviceSource, /project_id=eq\.\$\{encodeURIComponent\(scopedProjectId\)\}/);
+      assert.match(migrationSource, /create table if not exists public\.project_daily_logs/);
+      assert.match(migrationSource, /create table if not exists public\.project_change_orders/);
+      assert.match(migrationSource, /public\.app_user_can_view_project\(project_id\)/);
+      assert.match(migrationSource, /public\.app_user_can_edit_project\(project_id\)/);
+      assert.match(migrationSource, /'daily_log', 'change_order'/);
+      assert.match(styleSource, /\.project-workflow-form-grid/);
+      assert.match(styleSource, /grid-auto-rows: max-content/);
+      assert.match(styleSource, /\.project-workflow-form-grid > \.full/);
+      assert.match(styleSource, /\.project-workflow-contractor-editor/);
+      assert.match(styleSource, /\.project-workflow-photo-list/);
+    },
+  },
+  {
+    name: 'RFIs and submittals are project-scoped construction workflows',
+    async run() {
+      const [detailSource, managerSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectRfiSubmittalsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720140000_add_rfis_and_submittals.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectRfiSubmittalsManager\.jsx'\)\)/);
+      assert.match(detailSource, /RFIs &amp; Submittals/);
+      assert.match(detailSource, /activeDetailTab === 'rfis-submittals'/);
+      assert.match(managerSource, /service\.list\('rfis'\)/);
+      assert.match(managerSource, /service\.list\('submittals'\)/);
+      assert.match(managerSource, /Responsible person/);
+      assert.match(managerSource, /Specification section/);
+      assert.match(managerSource, /Subcontractor/);
+      assert.match(managerSource, /approved_as_noted/);
+      assert.match(managerSource, /revise_resubmit/);
+      assert.match(serviceSource, /rfis: \{ table: 'project_rfis'/);
+      assert.match(serviceSource, /submittals: \{ table: 'project_submittals'/);
+      assert.match(serviceSource, /version=eq\.\$\{draft\.version\}/);
+      assert.match(migrationSource, /create table if not exists public\.project_rfis/);
+      assert.match(migrationSource, /create table if not exists public\.project_submittals/);
+      assert.match(migrationSource, /public\.app_user_can_view_project\(project_id\)/);
+      assert.match(migrationSource, /public\.app_user_can_edit_project\(project_id\)/);
+      assert.match(migrationSource, /'rfi', 'submittal'/);
+      assert.match(styleSource, /\.project-document-workflow-switch/);
+    },
+  },
+  {
+    name: 'budget items and commitments are project-scoped financial workflows',
+    async run() {
+      const [detailSource, managerSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720170000_add_budget_and_commitments.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectBudgetCommitmentsManager\.jsx'\)\)/);
+      assert.match(detailSource, /Budget &amp; Commitments/);
+      assert.match(detailSource, /activeDetailTab === 'budget-commitments'/);
+      assert.match(managerSource, /service\.list\('budgetItems'\)/);
+      assert.match(managerSource, /service\.list\('commitments'\)/);
+      assert.match(managerSource, /Current budget/);
+      assert.match(managerSource, /Committed amount/);
+      assert.match(managerSource, /Retainage percent/);
+      assert.match(managerSource, /peopleType === 'supplier'/);
+      assert.match(managerSource, /remaining: current - committed/);
+      assert.match(serviceSource, /budgetItems: \{ table: 'project_budget_items'.*numberColumn: 'item_code'/);
+      assert.match(serviceSource, /commitments: \{ table: 'project_commitments'.*numberColumn: 'commitment_number'/);
+      assert.match(serviceSource, /\[config\.numberColumn\]: record\.number/);
+      assert.match(migrationSource, /create table if not exists public\.project_budget_items/);
+      assert.match(migrationSource, /create table if not exists public\.project_commitments/);
+      assert.match(migrationSource, /public\.app_user_can_view_project\(project_id\)/);
+      assert.match(migrationSource, /public\.app_user_can_edit_project\(project_id\)/);
+      assert.match(migrationSource, /'budget_item', 'commitment'/);
+      assert.match(styleSource, /\.project-financial-summary/);
+    },
+  },
+  {
+    name: 'customer and subcontractor portal items use restricted response workflows',
+    async run() {
+      const [appSource, accessSource, detailSource, managerSource, serviceSource, migrationSource, hardeningSource, trackerSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/accessUi.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720190000_add_project_portal_workflows.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720200000_harden_project_portal_reads.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /normalizedRole === 'Customer' \|\| normalizedRole === 'Subcontractor'/);
+      assert.match(appSource, /showTabs: !portalRole/);
+      assert.match(appSource, /loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData/);
+      assert.match(appSource, /\? await loadPortalTrackerData/);
+      assert.match(accessSource, /'Customer', 'Subcontractor'/);
+      assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectPortalManager\.jsx'\)\)/);
+      assert.match(detailSource, /portalOnly \? 'portal' : 'overview'/);
+      assert.match(detailSource, /activeDetailTab === 'portal'/);
+      assert.match(managerSource, /service\.list\('portalItems'\)/);
+      assert.match(managerSource, /respondToPortalItem/);
+      assert.match(managerSource, /Customers only/);
+      assert.match(managerSource, /Subcontractors only/);
+      assert.match(serviceSource, /portalItems: \{ table: 'project_portal_items'/);
+      assert.match(serviceSource, /\/rest\/v1\/rpc\/respond_to_project_portal_item/);
+      assert.match(migrationSource, /create table if not exists public\.project_portal_items/);
+      assert.match(migrationSource, /audience = lower\(public\.current_app_user_role\(\)\)/);
+      assert.match(migrationSource, /create or replace function public\.respond_to_project_portal_item/);
+      assert.match(migrationSource, /actor_role not in \('Customer', 'Subcontractor'\)/);
+      assert.match(migrationSource, /grant execute on function public\.respond_to_project_portal_item/);
+      assert.match(migrationSource, /'portal_item'/);
+      assert.match(hardeningSource, /create or replace function public\.get_current_app_user_profile/);
+      assert.match(hardeningSource, /create or replace function public\.get_project_portal_bootstrap/);
+      assert.match(hardeningSource, /project_row\.data->>'name'/);
+      assert.doesNotMatch(hardeningSource, /project_row\.data(?!->>)/);
+      assert.match(hardeningSource, /as restrictive for select to authenticated/);
+      assert.match(hardeningSource, /'projects', 'tasks', 'settings'.*'audit_events'/s);
+      assert.match(hardeningSource, /Portal accounts cannot read internal storage/);
+      assert.match(trackerSource, /export async function loadCurrentAppUserProfile/);
+      assert.match(trackerSource, /export async function loadPortalTrackerData/);
+      assert.match(trackerSource, /tasks: \[\],\s+subs: \[\],\s+employees: \[\]/);
+      assert.match(trackerSource, /portalMode: true/);
+      assert.match(detailSource, /if \(portalOnly\) return/);
+      assert.match(styleSource, /\.portal-user-view > \.project-detail-tabs/);
+      assert.match(styleSource, /\.project-portal-response-form/);
     },
   },
   {

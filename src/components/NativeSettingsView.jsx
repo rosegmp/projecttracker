@@ -3,7 +3,7 @@ import { inviteAuthUser, loadAuditEvents, updateProject, updateSettings, USER_RO
 import { addDays, toIsoDate } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import { DashboardStat, PageStats } from './SharedUI.jsx';
+import { DashboardStat } from './SharedUI.jsx';
 import { getAppRedirectUrl, isNativeAndroidApp, openAndroidNotificationSettings } from '../platform/platformAdapter.js';
 import {
   getAndroidNotificationPermissionStatus,
@@ -16,6 +16,17 @@ import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
+const AUDIT_PAGE_SIZE = 50;
+const SETTINGS_SECTIONS = [
+  { id: 'scheduling', label: 'Scheduling', description: 'Work calendar and schedule display defaults.' },
+  { id: 'calendar', label: 'Calendar & holidays', description: 'Calendar visibility, holidays, and closure periods.' },
+  { id: 'inspections', label: 'Inspections', description: 'Inspection codes and editor defaults.' },
+  { id: 'notifications', label: 'Notifications', description: 'Android reminder and notification preferences.' },
+  { id: 'users', label: 'Users & access', description: 'App roles and project assignments.' },
+  { id: 'audit', label: 'Audit history', description: 'Recent project changes and responsible users.' },
+  { id: 'display', label: 'Display preferences', description: 'People columns and visual preferences.' },
+  { id: 'system', label: 'System status', description: 'Data source, record counts, and refresh controls.' },
+];
 const PEOPLE_LIST_COLUMN_DEFS = [
   { id: 'name', label: 'Name' }, { id: 'company', label: 'Company' }, { id: 'role', label: 'Role' },
   { id: 'phone', label: 'Phone' }, { id: 'email', label: 'Email' }, { id: 'tags', label: 'Tags' },
@@ -189,6 +200,7 @@ function buildNextTwelveMonthsJewishHolidays(today = new Date()) {
 
 export default function NativeSettingsView({ data, onStateChange, refresh, loading, activeUser = null }) {
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
+  const [activeSettingsSection, setActiveSettingsSection] = useState('scheduling');
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState({ tone: '', message: '' });
   const [notificationPermission, setNotificationPermission] = useState('');
@@ -197,6 +209,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [auditRows, setAuditRows] = useState([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditError, setAuditError] = useState('');
+  const [auditHasMore, setAuditHasMore] = useState(false);
   const [auditProjectFilter, setAuditProjectFilter] = useState('');
   const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
   const [schedulingDraft, setSchedulingDraft] = useState(() => ({
@@ -209,13 +222,15 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   }));
   const settingsStateRef = useRef(data);
   const settingsSaveChainRef = useRef(Promise.resolve());
+  const isAndroidApp = isNativeAndroidApp();
+  const activeSection = SETTINGS_SECTIONS.find((section) => section.id === activeSettingsSection) || SETTINGS_SECTIONS[0];
 
   useEffect(() => {
-    if (!isNativeAndroidApp()) return;
+    if (!isAndroidApp) return;
     void getAndroidNotificationPermissionStatus()
       .then(setNotificationPermission)
       .catch(() => setNotificationPermission(''));
-  }, [activeUser?.id]);
+  }, [activeUser?.id, isAndroidApp]);
 
   const settings = useMemo(
     () => {
@@ -354,7 +369,6 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     });
   }, [data.projects, settings.users]);
 
-  const nonWorkdayCount = settings.holidays.filter((holiday) => holiday.nonWorkday !== false).length;
   const auditEntries = useMemo(() => {
     const entries = buildAuditTrailEntries(auditRows);
     return auditCategoryFilter === 'all'
@@ -370,8 +384,9 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     setAuditLoading(true);
     setAuditError('');
     try {
-      const rows = await loadAuditEvents({ projectId, limit: 250 });
+      const rows = await loadAuditEvents({ projectId, limit: AUDIT_PAGE_SIZE });
       setAuditRows(rows);
+      setAuditHasMore(rows.length === AUDIT_PAGE_SIZE);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load audit history.';
       setAuditError(
@@ -384,9 +399,30 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     }
   }
 
+  async function loadMoreAuditTrail() {
+    const beforeId = auditRows.at(-1)?.id;
+    if (!beforeId || auditLoading) return;
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const rows = await loadAuditEvents({
+        projectId: auditProjectFilter,
+        limit: AUDIT_PAGE_SIZE,
+        beforeId,
+      });
+      setAuditRows((current) => [...current, ...rows]);
+      setAuditHasMore(rows.length === AUDIT_PAGE_SIZE);
+    } catch (error) {
+      setAuditError(error instanceof Error ? error.message : 'Unable to load more audit history.');
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
   useEffect(() => {
+    if (activeSettingsSection !== 'audit') return;
     void refreshAuditTrail(auditProjectFilter);
-  }, [auditProjectFilter]);
+  }, [activeSettingsSection, auditProjectFilter]);
 
   function runSettingsMutation(nextSettings, mutationKey = ['settings', ...Object.keys(nextSettings).sort()]) {
     beginMutation(mutationKey);
@@ -879,21 +915,71 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
   return (
     <section className="panel native-panel top-level-settings-page">
-      <div className="panel-header">
+      <div className="settings-page-intro">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h2>Settings</h2>
+          <p>{activeSection.description}</p>
+        </div>
         <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
+          <FluentIcon name="replace" size={16} />
           {loading ? 'Refreshing...' : 'Refresh data'}
         </button>
       </div>
 
+      <div className="settings-section-navigation">
+        <div
+          className="settings-section-tabs"
+          role="tablist"
+          aria-label="Settings sections"
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
+            const currentIndex = tabs.indexOf(event.target);
+            if (currentIndex < 0) return;
+            event.preventDefault();
+            const nextIndex = event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? tabs.length - 1
+                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+            tabs[nextIndex]?.focus();
+            tabs[nextIndex]?.click();
+          }}
+        >
+          {SETTINGS_SECTIONS.map((section) => (
+            <button
+              id={`settings-tab-${section.id}`}
+              key={section.id}
+              type="button"
+              role="tab"
+              aria-selected={activeSettingsSection === section.id ? 'true' : 'false'}
+              aria-controls={`settings-panel-${section.id}`}
+              tabIndex={activeSettingsSection === section.id ? 0 : -1}
+              onClick={() => setActiveSettingsSection(section.id)}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+        <label className="settings-section-select">
+          <span>Settings section</span>
+          <select value={activeSettingsSection} onChange={(event) => setActiveSettingsSection(event.target.value)}>
+            {SETTINGS_SECTIONS.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
+          </select>
+        </label>
+      </div>
+
       <div className="settings-sections">
-        <section className="settings-section">
+        <section className="settings-section settings-primary-section" hidden={!['scheduling', 'calendar', 'inspections'].includes(activeSettingsSection)}>
           <div className="settings-section-header">
             <div>
-              <h3>Scheduling and Calendar</h3>
+              <h3>{activeSection.label}</h3>
+              <p>{activeSection.description}</p>
             </div>
           </div>
           <div className="settings-grid">
-            <section className="settings-card">
+            <section id="settings-panel-scheduling" className="settings-card settings-card-full" role="tabpanel" aria-labelledby="settings-tab-scheduling" hidden={activeSettingsSection !== 'scheduling'}>
               <div className="settings-card-header">
                 <div>
                   <h3>Scheduling defaults</h3>
@@ -993,7 +1079,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               </label>
             </section>
 
-            <section className="settings-card">
+            <section id="settings-panel-inspections" className="settings-card settings-card-full" role="tabpanel" aria-labelledby="settings-tab-inspections" hidden={activeSettingsSection !== 'inspections'}>
               <div className="settings-card-header">
                 <div>
                   <h3>Inspection subcodes</h3>
@@ -1048,7 +1134,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               )}
             </section>
 
-            <section className="settings-card settings-card-full">
+            <section id="settings-panel-calendar" className="settings-card settings-card-full" role="tabpanel" aria-labelledby="settings-tab-calendar" hidden={activeSettingsSection !== 'calendar'}>
               <div className="settings-card-header">
                 <div>
                   <h3>Holiday calendar</h3>
@@ -1177,8 +1263,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           </div>
         </section>
 
-        {isNativeAndroidApp() ? (
-          <section className="settings-section">
+        {isAndroidApp ? (
+          <section id="settings-panel-notifications" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-notifications" hidden={activeSettingsSection !== 'notifications'}>
             <div className="settings-section-header">
               <div>
                 <h3>Android Notifications</h3>
@@ -1289,9 +1375,24 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               </section>
             </div>
           </section>
-        ) : null}
+        ) : (
+          <section id="settings-panel-notifications" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-notifications" hidden={activeSettingsSection !== 'notifications'}>
+            <div className="settings-section-header">
+              <div><h3>Notifications</h3><p>Manage reminders delivered by the Android app.</p></div>
+            </div>
+            <div className="settings-grid settings-grid-single">
+              <section className="settings-card settings-platform-notice">
+                <FluentIcon name="warning" size={22} />
+                <div>
+                  <h3>Open Settings on Android</h3>
+                  <p>Device reminder timing, permission, and delivery preferences are stored separately for each user on each Android device.</p>
+                </div>
+              </section>
+            </div>
+          </section>
+        )}
 
-        <section className="settings-section audit-trail-section">
+        <section id="settings-panel-audit" className="settings-section audit-trail-section" role="tabpanel" aria-labelledby="settings-tab-audit" hidden={activeSettingsSection !== 'audit'}>
           <div className="settings-section-header audit-trail-header">
             <div>
               <h3>Audit Trail</h3>
@@ -1336,45 +1437,62 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
             <div className="audit-trail-message error" role="alert">{auditError}</div>
           ) : auditLoading && !auditRows.length ? (
             <div className="audit-trail-message">Loading history...</div>
-          ) : auditEntries.length ? (
-            <div className="audit-trail-list">
-              {auditEntries.map((entry) => {
-                const actorEmail = String(entry.actorEmail || '').trim();
-                const actorName = auditActorNames.get(actorEmail.toLowerCase()) || actorEmail || 'Unknown user';
-                const projectName = data.projects.find((project) => project.id === entry.projectId)?.name || 'General';
-                return (
-                  <article key={entry.id} className="audit-trail-row">
-                    <div className={`audit-trail-marker ${entry.category}`} aria-hidden="true" />
-                    <div className="audit-trail-content">
-                      <div className="audit-trail-summary">
-                        <strong>{entry.label}</strong>
-                        <span>{entry.entityName}</span>
-                      </div>
-                      {entry.action === 'update' ? (
-                        <div className="audit-trail-values">
-                          <span>{formatAuditValue(entry.before)}</span>
-                          <FluentIcon name="chevronRight" />
-                          <span>{formatAuditValue(entry.after)}</span>
-                        </div>
-                      ) : null}
-                      <div className="audit-trail-meta">
-                        <span>{actorName}</span>
-                        <span>{projectName}</span>
-                        <time dateTime={entry.createdAt}>
-                          {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Unknown time'}
-                        </time>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
           ) : (
-            <div className="audit-trail-message">No matching changes have been recorded yet.</div>
+            <div>
+              {auditEntries.length ? (
+                <div className="audit-trail-list">
+                  {auditEntries.map((entry) => {
+                    const actorEmail = String(entry.actorEmail || '').trim();
+                    const actorName = auditActorNames.get(actorEmail.toLowerCase()) || actorEmail || 'Unknown user';
+                    const projectName = data.projects.find((project) => project.id === entry.projectId)?.name || 'General';
+                    return (
+                      <article key={entry.id} className="audit-trail-row">
+                        <div className={`audit-trail-marker ${entry.category}`} aria-hidden="true" />
+                        <div className="audit-trail-content">
+                          <div className="audit-trail-summary">
+                            <strong>{entry.label}</strong>
+                            <span>{entry.entityName}</span>
+                          </div>
+                          {entry.action === 'update' ? (
+                            <div className="audit-trail-values">
+                              <span>{formatAuditValue(entry.before)}</span>
+                              <FluentIcon name="chevronRight" />
+                              <span>{formatAuditValue(entry.after)}</span>
+                            </div>
+                          ) : null}
+                          <div className="audit-trail-meta">
+                            <span>{actorName}</span>
+                            <span>{projectName}</span>
+                            <time dateTime={entry.createdAt}>
+                              {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Unknown time'}
+                            </time>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="audit-trail-message">No matching changes are loaded.</div>
+              )}
+              {auditHasMore ? (
+                <div className="audit-trail-pagination">
+                  <button
+                    className={`button secondary${auditLoading ? ' is-loading' : ''}`}
+                    type="button"
+                    onClick={() => void loadMoreAuditTrail()}
+                    disabled={auditLoading}
+                    aria-busy={auditLoading}
+                  >
+                    {auditLoading ? 'Loading...' : 'Load older changes'}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           )}
         </section>
 
-        <section className="settings-section">
+        <section id="settings-panel-users" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-users" hidden={activeSettingsSection !== 'users'}>
           <div className="settings-section-header">
             <div>
               <h3>Users and Access</h3>
@@ -1394,22 +1512,19 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               </div>
 
               <div className="inspection-subcode-list">
-                {userDrafts.map((user) => (
+                {userDrafts.map((user) => {
+                  const inviteStatus = authInviteStatus[user.id];
+                  const userSaving = isUserSaving(user.id);
+                  const hasPendingChanges = hasPendingUserDraft(user);
+                  const hasEmail = !!String(user.email || '').trim();
+                  const inviteDisabled = userSaving || inviteStatus?.status === 'sending' || hasPendingChanges || !hasEmail;
+                  const inviteTitle = !hasEmail
+                    ? 'Add an email before sending an invite'
+                    : hasPendingChanges
+                      ? 'Save this user before sending an invite'
+                      : 'Send login invite';
+                  return (
                   <div key={user.id} className="user-role-card">
-                    {(() => {
-                      const inviteStatus = authInviteStatus[user.id];
-                      const userSaving = isUserSaving(user.id);
-                      const hasPendingChanges = hasPendingUserDraft(user);
-                      const hasEmail = !!String(user.email || '').trim();
-                      const inviteDisabled =
-                        userSaving || inviteStatus?.status === 'sending' || hasPendingChanges || !hasEmail;
-                      const inviteTitle = !hasEmail
-                        ? 'Add an email before sending an invite'
-                        : hasPendingChanges
-                          ? 'Save this user before sending an invite'
-                          : 'Send login invite';
-                      return (
-                        <>
                     <div className="user-role-row">
                       <input
                         type="text"
@@ -1430,54 +1545,9 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         onChange={(event) => handleUserFieldChange(user.id, 'role', event.target.value)}
                         disabled={userSaving}
                       >
-                        {USER_ROLE_OPTIONS.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
+                        {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
                       </select>
-                      <button
-                        className={`button secondary gantt-icon-button inline-save-button${userSaving ? ' is-loading' : ''}`}
-                        type="button"
-                        onClick={() => void saveUserDraft(user.id)}
-                        disabled={userSaving || !hasPendingUserDraft(user)}
-                        title="Save user"
-                        aria-label={`Save ${user.name || 'user'}`}
-                        aria-busy={userSaving}
-                      >
-                        <FluentIcon name="check" />
-                      </button>
-                      <button
-                        className={`button secondary gantt-icon-button${inviteStatus?.status === 'sending' ? ' is-loading' : ''}`}
-                        type="button"
-                        onClick={() => void handleSendAuthInvite(user)}
-                        disabled={inviteDisabled}
-                        title={inviteTitle}
-                        aria-label={`Send login invite to ${user.name || 'user'}`}
-                        aria-busy={inviteStatus?.status === 'sending'}
-                      >
-                        <FluentIcon name="mail" />
-                      </button>
-                      <button
-                        className={`button secondary danger gantt-icon-button${userSaving ? ' is-loading' : ''}`}
-                        type="button"
-                        onClick={() => handleRemoveUser(user.id)}
-                        disabled={userSaving || settings.users.length <= 1}
-                        title="Remove user"
-                        aria-label={`Remove ${user.name || 'user'}`}
-                        aria-busy={userSaving}
-                      >
-                        <FluentIcon name="delete" />
-                      </button>
                     </div>
-                    {inviteStatus?.message ? (
-                      <div className={`auth-invite-message ${inviteStatus.status}`}>
-                        {inviteStatus.message}
-                      </div>
-                    ) : null}
-                        </>
-                      );
-                    })()}
                     <div className="user-project-access">
                       <div className="user-project-access-header">
                         <span>Project access</span>
@@ -1516,14 +1586,51 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         <small>No projects available.</small>
                       )}
                     </div>
+                    <div className="user-role-actions" aria-label={`Actions for ${user.name || 'user'}`}>
+                      <button
+                        className={`button secondary gantt-icon-button inline-save-button${userSaving ? ' is-loading' : ''}`}
+                        type="button"
+                        onClick={() => void saveUserDraft(user.id)}
+                        disabled={userSaving || !hasPendingChanges}
+                        title="Save user"
+                        aria-label={`Save ${user.name || 'user'}`}
+                        aria-busy={userSaving}
+                      >
+                        <FluentIcon name="check" />
+                      </button>
+                      <button
+                        className={`button secondary gantt-icon-button${inviteStatus?.status === 'sending' ? ' is-loading' : ''}`}
+                        type="button"
+                        onClick={() => void handleSendAuthInvite(user)}
+                        disabled={inviteDisabled}
+                        title={inviteTitle}
+                        aria-label={`Send login invite to ${user.name || 'user'}`}
+                        aria-busy={inviteStatus?.status === 'sending'}
+                      >
+                        <FluentIcon name="mail" />
+                      </button>
+                      <button
+                        className={`button secondary danger gantt-icon-button${userSaving ? ' is-loading' : ''}`}
+                        type="button"
+                        onClick={() => handleRemoveUser(user.id)}
+                        disabled={userSaving || settings.users.length <= 1}
+                        title="Remove user"
+                        aria-label={`Remove ${user.name || 'user'}`}
+                        aria-busy={userSaving}
+                      >
+                        <FluentIcon name="delete" />
+                      </button>
+                    </div>
+                    {inviteStatus?.message ? <div className={`auth-invite-message ${inviteStatus.status}`}>{inviteStatus.message}</div> : null}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           </div>
         </section>
 
-        <section className="settings-section">
+        <section id="settings-panel-display" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-display" hidden={activeSettingsSection !== 'display'}>
           <div className="settings-section-header">
             <div>
               <h3>People List Display</h3>
@@ -1605,24 +1712,37 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
             </section>
           </div>
         </section>
-      </div>
 
-      <PageStats settings={settings}>
-        <DashboardStat label="Holidays" value={settings.holidays.length} tone="brand" />
-        <DashboardStat label="Non-workdays" value={nonWorkdayCount} />
-        <DashboardStat label="Weekdays only" value={settings.weekdaysOnly ? 'On' : 'Off'} />
-        <DashboardStat label="Gantt task dates" value={settings.showGanttTaskDueDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Calendar task dates" value={settings.showCalendarTaskDueDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Calendar phases" value={settings.showCalendarPhases ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Lunar dates" value={settings.showCalendarHebrewDates ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Page stats" value={settings.showPageStats ? 'Shown' : 'Hidden'} />
-        <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
-        <DashboardStat label="People columns" value={settings.peopleListColumns.length} />
-      </PageStats>
-      <div className="page-refresh-footer">
-        <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
-          {loading ? 'Refreshing...' : 'Refresh data'}
-        </button>
+        <section id="settings-panel-system" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-system" hidden={activeSettingsSection !== 'system'}>
+          <div className="settings-section-header">
+            <div>
+              <h3>System Status</h3>
+              <p>Confirm the active data source and the records currently loaded on this device.</p>
+            </div>
+            <button className={`button secondary${loading ? ' is-loading' : ''}`} type="button" onClick={refresh} disabled={loading} aria-busy={loading}>
+              <FluentIcon name="replace" size={16} />
+              {loading ? 'Refreshing...' : 'Refresh data'}
+            </button>
+          </div>
+          <div className="settings-system-status-grid">
+            <DashboardStat label="Data source" value={data.storageMode === 'supabase' ? 'Supabase' : 'Local'} tone="brand" />
+            <DashboardStat label="Platform" value={isAndroidApp ? 'Android' : 'Web'} />
+            <DashboardStat label="Projects" value={(data.projects || []).length} />
+            <DashboardStat label="Tasks" value={(data.tasks || []).length} />
+            <DashboardStat label="People" value={(data.subs || []).length + (data.employees || []).length} />
+            <DashboardStat label="App users" value={settings.users.length} />
+            <DashboardStat label="Holidays" value={settings.holidays.length} />
+            <DashboardStat label="Inspection subcodes" value={settings.inspectionSubcodes.length} />
+          </div>
+          <section className="settings-card settings-system-summary">
+            <h3>Current user</h3>
+            <dl>
+              <div><dt>Name</dt><dd>{activeUser?.name || 'Not available'}</dd></div>
+              <div><dt>Email</dt><dd>{activeUser?.email || 'Not available'}</dd></div>
+              <div><dt>Role</dt><dd>{activeUser?.role || 'Not available'}</dd></div>
+            </dl>
+          </section>
+        </section>
       </div>
     </section>
   );

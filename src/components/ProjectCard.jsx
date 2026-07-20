@@ -1,5 +1,5 @@
 import React from 'react';
-import { getProjectHealth } from '../services/trackerData.js';
+import { getProjectOperationalHealth } from '../utils/homeView.js';
 import { diffInDays, formatShortDate } from '../utils/calendarUi.js';
 import FluentIcon from './FluentIcon.jsx';
 
@@ -58,8 +58,8 @@ function getProjectDashboardNextAction(project, taskCount) {
   return 'Project is in a good spot. Review progress and upcoming milestones.';
 }
 
-export default function ProjectCard({ project, taskCount, onEdit, onOpen, expanded = false, onToggle }) {
-  const health = getProjectHealth(project);
+export default function ProjectCard({ project, tasks = [], taskCount, onEdit, onOpen, expanded = false, onToggle }) {
+  const health = getProjectOperationalHealth(project, tasks);
   const remaining = getDaysRemaining(project.end);
   const completion = getProjectTimelineCompletion(project);
   const metaParts = [project.customerName, project.address].filter(Boolean);

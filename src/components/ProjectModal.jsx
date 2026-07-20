@@ -10,6 +10,7 @@ function normalizeProjectAccessUserIds(userIds) {
 export default function ProjectModal({ draft, users, onChange, onClose, onSave, onDelete, saving, isEditing }) {
   const selectedUserIds = normalizeProjectAccessUserIds(draft.accessUserIds);
   const assignableUsers = (users || []).filter((user) => user?.id);
+  const projectPhotos = Array.isArray(draft.photos) ? draft.photos : [];
 
   function toggleProjectUserAccess(userId, checked) {
     const nextUserIds = checked
@@ -41,11 +42,42 @@ export default function ProjectModal({ draft, users, onChange, onClose, onSave, 
           </label>
           <label><span>Start date</span><input type="date" value={draft.start} onChange={(event) => onChange('start', event.target.value)} /></label>
           <label><span>End date</span><input type="date" value={draft.end} onChange={(event) => onChange('end', event.target.value)} /></label>
+          <label><span>Project manager</span><input value={draft.manager || ''} onChange={(event) => onChange('manager', event.target.value)} /></label>
           <label><span>Address</span><input value={draft.address} onChange={(event) => onChange('address', event.target.value)} /></label>
           <label><span>Permit #</span><input value={draft.permitNumber} onChange={(event) => onChange('permitNumber', event.target.value)} /></label>
           <label><span>DR #</span><input value={draft.drNumber} onChange={(event) => onChange('drNumber', event.target.value)} /></label>
           <label><span>Block</span><input value={draft.block} onChange={(event) => onChange('block', event.target.value)} /></label>
           <label><span>Lot</span><input value={draft.lot} onChange={(event) => onChange('lot', event.target.value)} /></label>
+          <div className="project-form-section full">Project overview</div>
+          <label className="full project-main-photo-field">
+            <span>Main project image</span>
+            <select
+              value={draft.mainPhotoId || ''}
+              onChange={(event) => {
+                onChange('mainPhotoId', event.target.value);
+                if (!event.target.value) onChange('mainPhotoCrop', false);
+              }}
+              disabled={!isEditing || !projectPhotos.length}
+            >
+              <option value="">No main image</option>
+              {projectPhotos.map((photo) => (
+                <option key={photo.id} value={photo.id}>{photo.name || photo.originalName || 'Untitled photo'}</option>
+              ))}
+            </select>
+            <small>{projectPhotos.length ? 'Choose an uploaded photo for the project overview.' : 'Add photos from the project Photos tab, then return here to choose the main image.'}</small>
+          </label>
+          <label className="full project-main-photo-crop-option">
+            <input
+              type="checkbox"
+              checked={draft.mainPhotoCrop === true}
+              onChange={(event) => onChange('mainPhotoCrop', event.target.checked)}
+              disabled={!draft.mainPhotoId}
+            />
+            <span>
+              <strong>Crop image to fill</strong>
+              <small>Off shows the entire photo. On crops the edges to fill the overview frame.</small>
+            </span>
+          </label>
           <div className="project-form-section full">Customer info</div>
           <label><span>Customer name</span><input value={draft.customerName} onChange={(event) => onChange('customerName', event.target.value)} /></label>
           <label><span>Customer phone</span><input value={draft.customerPhone} onChange={(event) => onChange('customerPhone', event.target.value)} /></label>
