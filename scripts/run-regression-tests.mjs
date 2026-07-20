@@ -14,7 +14,7 @@ import {
   wouldCreateCycleFromPreds,
 } from '../src/utils/schedule.js';
 import { buildCalendarItems, buildCalendarWeeks, buildScheduleRows, filterScheduleRows, filterScheduleRowsForToday, getDefaultPhaseExpansion, isPhaseEntirelyPast } from '../src/utils/scheduleView.js';
-import { getCalendarWeekLayout } from '../src/utils/calendarUi.js';
+import { formatShortDate, getCalendarWeekLayout } from '../src/utils/calendarUi.js';
 import { getContrastRatio, getReadableTextColor } from '../src/utils/colorContrast.js';
 import {
   buildTaskAssigneeDirectory,
@@ -69,6 +69,14 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'short date formatting accepts calendar dates and portal response timestamps',
+    run() {
+      assert.equal(formatShortDate('2026-07-20'), 'Jul 20, 2026');
+      assert.match(formatShortDate('2026-07-20T19:27:57.773Z'), /^Jul (20|21), 2026$/);
+      assert.equal(formatShortDate('not-a-date'), 'Invalid date');
+    },
+  },
   {
     name: 'home weather normalizes exactly four forecast days and WMO conditions',
     run() {
