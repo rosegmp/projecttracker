@@ -4,6 +4,24 @@ export function normalizeProjectAccessUserIds(userIds) {
     : [];
 }
 
+export function buildProjectAccessUpdates(projects, userId, selectedProjectIds) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return [];
+  const selectedIds = new Set(normalizeProjectAccessUserIds(selectedProjectIds));
+  return (projects || []).flatMap((project) => {
+    const currentAccess = normalizeProjectAccessUserIds(project?.accessUserIds);
+    const shouldHaveAccess = selectedIds.has(String(project?.id || ''));
+    const hasAccess = currentAccess.includes(normalizedUserId);
+    if (shouldHaveAccess === hasAccess) return [];
+    return [{
+      ...project,
+      accessUserIds: shouldHaveAccess
+        ? [...currentAccess, normalizedUserId]
+        : currentAccess.filter((value) => value !== normalizedUserId),
+    }];
+  });
+}
+
 export function canUserViewProject(project, activeUser) {
   const role = ['Admin', 'Edit', 'View Only', 'Customer', 'Subcontractor'].includes(activeUser?.role)
     ? activeUser.role

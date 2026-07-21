@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { inviteAuthUser, loadAuditEvents, updateProject, updateSettings, USER_ROLE_OPTIONS } from '../services/trackerData.js';
+import { inviteAuthUser, loadAuditEvents, updateProjects, updateSettings, USER_ROLE_OPTIONS } from '../services/trackerData.js';
 import { addDays, toIsoDate } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -13,6 +13,7 @@ import {
 } from '../utils/androidNotifications.js';
 import { syncAndroidPushRegistration } from '../utils/androidPushNotifications.js';
 import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js';
+import { buildProjectAccessUpdates } from '../utils/accessUi.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
@@ -743,19 +744,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       );
     let nextState = await runSettingsMutation({ users }, ['settings', 'user', userId]);
     const selectedProjectIds = normalizeProjectAccessUserIds(targetUser.projectIds);
-    for (const project of nextState.projects || []) {
-      const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
-      const shouldHaveAccess = selectedProjectIds.includes(project.id);
-      const hasAccess = currentAccess.includes(userId);
-      if (shouldHaveAccess === hasAccess) continue;
-      const nextAccess = shouldHaveAccess
-        ? [...currentAccess, userId]
-        : currentAccess.filter((value) => value !== userId);
-      nextState = await updateProject(nextState, project.id, {
-        ...project,
-        accessUserIds: nextAccess,
-      });
-    }
+    const projectUpdates = buildProjectAccessUpdates(nextState.projects, userId, selectedProjectIds);
+    if (projectUpdates.length) nextState = await updateProjects(nextState, projectUpdates);
     onStateChange(nextState);
     settingsStateRef.current = nextState;
     setUserDrafts((current) =>
@@ -854,14 +844,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     const currentUserId = settings.currentUserId === userId ? users[0]?.id || '' : settings.currentUserId;
     void (async () => {
       let nextState = await runSettingsMutation({ users, currentUserId }, ['settings', 'user', userId]);
-      for (const project of nextState.projects || []) {
-        const currentAccess = normalizeProjectAccessUserIds(project.accessUserIds);
-        if (!currentAccess.includes(userId)) continue;
-        nextState = await updateProject(nextState, project.id, {
-          ...project,
-          accessUserIds: currentAccess.filter((value) => value !== userId),
-        });
-      }
+      const projectUpdates = buildProjectAccessUpdates(nextState.projects, userId, []);
+      if (projectUpdates.length) nextState = await updateProjects(nextState, projectUpdates);
       onStateChange(nextState);
       settingsStateRef.current = nextState;
     })();

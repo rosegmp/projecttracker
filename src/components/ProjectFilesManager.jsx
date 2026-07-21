@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_PROJECT_FILE_FOLDERS, deleteProjectFileFromStorage,
-  isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage,
+  isSupabaseStorageConfigured, updateProject, updateProjectFolderVisibility, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { formatFileSize } from '../utils/fileUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
@@ -104,6 +104,8 @@ export default function ProjectFilesManager({
             {
               id: `folder-${Date.now()}`,
               name: trimmed,
+              customerVisible: false,
+              subcontractorVisible: false,
               files: [],
             },
           ],
@@ -652,6 +654,50 @@ export default function ProjectFilesManager({
     );
   }
 
+  async function updateFolderVisibility(folderId, field, enabled) {
+    try {
+      await runMutation(['folder', folderId, 'visibility'], async () => {
+        const nextState = await updateProjectFolderVisibility(
+          dataRef.current,
+          project.id,
+          folderId,
+          { [field]: enabled },
+        );
+        dataRef.current = nextState;
+        onStateChange(nextState);
+      });
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to update folder visibility.', 'Save failed');
+    }
+  }
+
+  function renderFolderVisibility(folder) {
+    const saving = isMutating(['folder', folder.id, 'visibility']);
+    return (
+      <div className="folder-visibility-controls" aria-label={`External visibility for ${folder.name}`}>
+        <span>Visible to</span>
+        <label>
+          <input
+            type="checkbox"
+            checked={folder.customerVisible !== false}
+            onChange={(event) => void updateFolderVisibility(folder.id, 'customerVisible', event.target.checked)}
+            disabled={saving}
+          />
+          Customer
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={folder.subcontractorVisible === true}
+            onChange={(event) => void updateFolderVisibility(folder.id, 'subcontractorVisible', event.target.checked)}
+            disabled={saving}
+          />
+          Subcontractors
+        </label>
+      </div>
+    );
+  }
+
   function renderFileActions(file, folderId, includeDragHandle = true) {
     const fileSaving = isMutating(['file', file.id]);
     return (
@@ -765,6 +811,8 @@ export default function ProjectFilesManager({
                     )}
                   </div>
 
+                  {readOnly ? null : renderFolderVisibility(folder)}
+
                   {folder.files?.length ? (
                     <div className="files-list">
                       {folder.files.map((file) => (
@@ -859,6 +907,8 @@ export default function ProjectFilesManager({
                 </div>
                 {readOnly ? null : renderFolderActions(folder, true)}
               </div>
+
+              {readOnly ? null : renderFolderVisibility(folder)}
 
               {isExpanded ? folder.files?.length ? (
                 <div className="files-hierarchy-children" role="group">

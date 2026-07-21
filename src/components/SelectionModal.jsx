@@ -89,6 +89,15 @@ export default function SelectionModal({
             <span>Notes</span>
             <textarea rows={4} value={draft.notes} onChange={(event) => onChange('notes', event.target.value)} />
           </label>
+          <label className="settings-toggle compact settings-inline-checkbox full">
+            <input
+              type="checkbox"
+              checked={draft.subcontractorVisible === true}
+              onChange={(event) => onChange('subcontractorVisible', event.target.checked)}
+              disabled={saving}
+            />
+            <span>Visible to subcontractors assigned to this project</span>
+          </label>
           <label className="full">
             <span>Attachments</span>
             <input type="file" multiple onChange={(event) => onChange('pendingAttachments', Array.from(event.target.files || []))} />
@@ -202,5 +211,4 @@ export default function SelectionModal({
     </div>,
   );
 }
-
 

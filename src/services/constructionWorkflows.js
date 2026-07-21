@@ -8,6 +8,8 @@ const CONFIG = {
   budgetItems: { table: 'project_budget_items', order: 'item_code.asc,updated_at.desc', numberColumn: 'item_code' },
   commitments: { table: 'project_commitments', order: 'updated_at.desc', numberColumn: 'commitment_number' },
   portalItems: { table: 'project_portal_items', order: 'updated_at.desc', numberColumn: 'item_number' },
+  warrantyItems: { table: 'project_warranty_items', order: 'updated_at.desc', numberColumn: 'item_number' },
+  closeoutItems: { table: 'project_closeout_items', order: 'updated_at.desc', numberColumn: 'item_number' },
 };
 
 function createId(prefix) {
@@ -48,7 +50,7 @@ async function responseJson(response, fallback) {
 }
 
 function missingTable(error) {
-  return /project_daily_logs|project_change_orders|project_rfis|project_submittals|project_budget_items|project_commitments|project_portal_items|respond_to_project_portal_item|PGRST205|42P01|schema cache|does not exist|404/i.test(String(error?.message || error || ''));
+  return /project_daily_logs|project_change_orders|project_rfis|project_submittals|project_budget_items|project_commitments|project_portal_items|project_warranty_items|project_closeout_items|respond_to_project_portal_item|list_customer_warranty_requests|submit_customer_warranty_request|PGRST205|42P01|schema cache|does not exist|404/i.test(String(error?.message || error || ''));
 }
 
 function remoteBody(type, projectId, record) {
@@ -101,7 +103,7 @@ export function createConstructionWorkflowService({ projectId, canEdit = true })
     async save(type, draft) {
       assertEdit();
       const config = CONFIG[type];
-      const idPrefix = { dailyLogs: 'log', changeOrders: 'co', rfis: 'rfi', submittals: 'submittal', budgetItems: 'budget', commitments: 'commitment', portalItems: 'portal' }[type] || 'workflow';
+      const idPrefix = { dailyLogs: 'log', changeOrders: 'co', rfis: 'rfi', submittals: 'submittal', budgetItems: 'budget', commitments: 'commitment', portalItems: 'portal', warrantyItems: 'warranty', closeoutItems: 'closeout' }[type] || 'workflow';
       const record = { ...draft, id: draft.id || createId(idPrefix) };
       if (!configured) return { record: saveLocal(type, record), local: true };
       try {
@@ -165,6 +167,53 @@ export function createConstructionWorkflowService({ projectId, canEdit = true })
         return { record: normalize('portalItems', payload[0]), local: false };
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal('portalItems', updated), local: true, setupRequired: true };
+        throw error;
+      }
+    },
+
+    async listCustomerWarrantyRequests() {
+      if (!configured) return { records: readLocal('warrantyItems', scopedProjectId), local: true };
+      try {
+        const response = await fetchAuthorizedSupabase('/rest/v1/rpc/list_customer_warranty_requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ p_project_id: scopedProjectId }),
+        }, 'Customer warranty request load');
+        const payload = await responseJson(response, 'Unable to load warranty requests.');
+        return { records: (Array.isArray(payload) ? payload : []).map((row) => normalize('warrantyItems', row)), local: false };
+      } catch (error) {
+        if (missingTable(error)) return { records: readLocal('warrantyItems', scopedProjectId), local: true, setupRequired: true };
+        throw error;
+      }
+    },
+
+    async submitCustomerWarrantyRequest(draft) {
+      const localRecord = {
+        ...draft,
+        id: draft.id || createId('warranty'),
+        number: draft.number || 'Pending',
+        title: String(draft.title || '').trim(),
+        status: 'open',
+        reportedDate: new Date().toISOString().slice(0, 10),
+      };
+      if (!configured) return { record: saveLocal('warrantyItems', localRecord), local: true };
+      try {
+        const response = await fetchAuthorizedSupabase('/rest/v1/rpc/submit_customer_warranty_request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            p_project_id: scopedProjectId,
+            p_title: localRecord.title,
+            p_category: localRecord.category || 'General',
+            p_priority: localRecord.priority || 'normal',
+            p_description: String(localRecord.description || '').trim(),
+          }),
+        }, 'Customer warranty request submission');
+        const payload = await responseJson(response, 'Unable to submit warranty request.');
+        if (!Array.isArray(payload) || !payload[0]) throw new Error('Warranty request submission returned no record.');
+        return { record: normalize('warrantyItems', payload[0]), local: false };
+      } catch (error) {
+        if (missingTable(error)) return { record: saveLocal('warrantyItems', localRecord), local: true, setupRequired: true };
         throw error;
       }
     },

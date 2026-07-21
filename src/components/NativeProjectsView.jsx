@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { getVisibleProjectsForUser, getVisibleTasksForUser, normalizeProjectAccessUserIds } from '../utils/accessUi.js';
+import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, normalizeProjectAccessUserIds } from '../utils/accessUi.js';
 import { createProject, deleteProject, updateProject, updateProjectAndTasks, updateProjectsAndTasks } from '../services/trackerData.js';
 import {
   cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds, normalizeStartDate,
@@ -56,7 +56,7 @@ export default function NativeProjectsView({
   const dataRef = useRef(data);
   const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
   const nextProjectHistoryModeRef = useRef('none');
-  const initializedHomeSignalRef = useRef(false);
+  const previousHomeSignalRef = useRef(homeSignal);
 
   useEffect(() => {
     dataRef.current = data;
@@ -69,6 +69,10 @@ export default function NativeProjectsView({
   const visibleTasks = useMemo(
     () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
     [data.tasks, data.settings, visibleProjects],
+  );
+  const scheduleAssigneeOptions = useMemo(
+    () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
+    [data.employees, data.subs],
   );
 
   const overviewProjects = useMemo(() => {
@@ -155,10 +159,13 @@ export default function NativeProjectsView({
   }, [selectedProjectId, visibleProjects]);
 
   useEffect(() => {
-    if (!initializedHomeSignalRef.current) {
-      initializedHomeSignalRef.current = true;
-      return;
-    }
+    if (activeUser?.role !== 'Customer' || selectedProjectId || visibleProjects.length !== 1) return;
+    setSelectedProject(visibleProjects[0].id, 'replace');
+  }, [activeUser?.role, selectedProjectId, visibleProjects]);
+
+  useEffect(() => {
+    if (previousHomeSignalRef.current === homeSignal) return;
+    previousHomeSignalRef.current = homeSignal;
     setSelectedProject('', 'none');
   }, [homeSignal]);
 
@@ -934,6 +941,7 @@ export default function NativeProjectsView({
           draft={stepDraft}
           type="step"
           projects={visibleProjects}
+          assigneeOptions={scheduleAssigneeOptions}
           saving={stepSaving}
           onChange={updateProjectStepDraft}
           onOpenPreds={openProjectStepPredecessors}

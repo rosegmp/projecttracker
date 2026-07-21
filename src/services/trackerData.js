@@ -128,7 +128,13 @@ async function refreshAuthSession(session) {
     }),
     body: JSON.stringify({ refresh_token: session.refreshToken }),
   }, 'Session refresh');
-  if (!response.ok) return null;
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    if (/refresh token not found|invalid refresh token|refresh token.*(?:expired|revoked|already used)/i.test(errorText)) {
+      writeAuthSession(null);
+    }
+    return null;
+  }
   const nextSession = normalizeAuthSession(await response.json());
   writeAuthSession(nextSession);
   return nextSession;
@@ -256,6 +262,9 @@ export async function inviteAuthUser(email, name = '', redirectTo = '') {
       }),
     }, 'Login invite', 20000);
   } catch (error) {
+    if (/session expired|sign in again/i.test(String(error?.message || error || ''))) {
+      throw new Error('Your login session expired. Sign out, then sign in again before sending the invite.');
+    }
     if (/failed to fetch|network|connection|load failed/i.test(String(error?.message || error || ''))) {
       throw new Error('Unable to reach the login invite service. Check your connection, then sign out and back in before trying again.');
     }
@@ -279,6 +288,15 @@ export function consumeAuthSessionFromUrl() {
   if (!currentUrl) return null;
   const hashParams = new URLSearchParams(currentUrl.hash.replace(/^#/, ''));
   const queryParams = currentUrl.searchParams;
+  const callbackError = hashParams.get('error_description') || queryParams.get('error_description')
+    || hashParams.get('error') || queryParams.get('error');
+  if (callbackError) {
+    updateCurrentUrl((url) => {
+      ['error', 'error_code', 'error_description', 'type'].forEach((key) => url.searchParams.delete(key));
+      url.hash = '';
+    }, 'Authentication callback error');
+    throw new Error(String(callbackError).replaceAll('+', ' '));
+  }
   const session = normalizeAuthSessionFromUrlParams(hashParams) || normalizeAuthSessionFromUrlParams(queryParams);
   if (!session) return null;
   writeAuthSession(session);
@@ -522,6 +540,8 @@ function normalizeProjectFolders(filesState) {
     folderMap.set(name.toLowerCase(), {
       id: folderIdFromName(name),
       name,
+      customerVisible: true,
+      subcontractorVisible: false,
       files: [],
     });
   });
@@ -534,6 +554,8 @@ function normalizeProjectFolders(filesState) {
     folderMap.set(key, {
       id: folder?.id || existing?.id || `folder-${folderIndex}-${Date.now()}`,
       name,
+      customerVisible: folder?.customerVisible !== false,
+      subcontractorVisible: folder?.subcontractorVisible === true,
       files: Array.isArray(folder?.files)
         ? folder.files.map((file, fileIndex) => normalizeProjectFile(file, fileIndex))
         : existing?.files || [],
@@ -861,6 +883,7 @@ function normalizeProjectSelection(selection, index = 0) {
     actualCost: Number(selection?.actualCost) || 0,
     selectionDate: String(selection?.selectionDate || '').trim(),
     notes: String(selection?.notes || '').trim(),
+    subcontractorVisible: selection?.subcontractorVisible === true,
     attachments: Array.isArray(selection?.attachments)
       ? selection.attachments.map((file, fileIndex) => normalizeProjectFile(file, index + fileIndex))
       : [],
@@ -1371,7 +1394,7 @@ function buildProjectStoragePath(projectId, folderId, fileId, originalName) {
   return ['projects', projectId, folderId, `${fileId}-${cleanName}`].join('/');
 }
 
-export async function uploadProjectFileToStorage(projectId, folderId, fileId, file) {
+export async function uploadProjectFileToStorage(projectId, folderId, fileId, file, options = {}) {
   if (!isSupabaseStorageConfigured()) {
     throw new Error('Supabase Storage is not configured.');
   }
@@ -1383,7 +1406,7 @@ export async function uploadProjectFileToStorage(projectId, folderId, fileId, fi
       method: 'POST',
       headers: storageAuthHeaders({
         'Content-Type': file.type || 'application/octet-stream',
-        'x-upsert': 'true',
+        'x-upsert': options.upsert === false ? 'false' : 'true',
       }),
       body: file,
     },
@@ -1602,7 +1625,7 @@ async function persistNormalizedProjectSections(previousProject, nextProject) {
       method: 'POST',
       headers: buildHeaders(),
       body: JSON.stringify(body),
-    }, 'Normalized project save');
+    }, 'Normalized project save', 30000);
     const text = await response.text();
     if (!response.ok) {
       if (/NORMALIZED_VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
@@ -1765,6 +1788,25 @@ async function persistVersionedCollection({
     items: applyReturnedVersions(table, nextItems, results),
     storageMode: 'supabase',
   };
+}
+
+export async function addCustomerProjectPhotos(projectId, photos) {
+  if (!isSupabaseConfigured()) throw new Error('Supabase is not configured.');
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/add_customer_project_photos`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ p_project_id: projectId, p_photos: photos }),
+  }, 'Customer photo save');
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || `Customer photo save failed with status ${response.status}.`);
+  }
+  try {
+    const payload = text ? JSON.parse(text) : [];
+    return Array.isArray(payload) ? payload : [];
+  } catch {
+    throw new Error('Customer photo save returned invalid JSON.');
+  }
 }
 
 async function persistVersionedProjectAndTasks(currentState, projects, tasks) {
@@ -2458,7 +2500,18 @@ export async function loadPortalTrackerData({ profile, force = false } = {}) {
         throw new Error('The portal workspace returned an invalid account profile.');
       }
       const projects = Array.isArray(payload?.projects)
-        ? payload.projects.map((project) => normalizeProject({ ...project, _version: Number(project.version) || 0 }))
+        ? payload.projects.map((project) => {
+            const normalized = normalizeProject({ ...project, _version: Number(project.version) || 0 });
+            const sharedFolderIds = new Set(
+              (project?.files?.folders || []).map((folder) => String(folder?.id || '').trim()).filter(Boolean),
+            );
+            return {
+              ...normalized,
+              files: {
+                folders: (normalized.files?.folders || []).filter((folder) => sharedFolderIds.has(folder.id)),
+              },
+            };
+          })
         : [];
       return {
         projects,
@@ -2467,6 +2520,7 @@ export async function loadPortalTrackerData({ profile, force = false } = {}) {
         employees: [],
         settings: normalizeSettings({
           ...EMPTY_SETTINGS,
+          ...(payload?.calendarSettings || {}),
           users: [normalizeAppUser(currentUser, 0)],
           currentUserId: currentUser.id,
         }),
@@ -2746,6 +2800,107 @@ export async function updateProject(currentState, projectId, updates) {
   });
   notifyInspectionChange();
   return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
+}
+
+async function callPortalVisibilityRpc(functionName, body, label) {
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${functionName}`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify(body),
+  }, label, 20000);
+  const text = await response.text();
+  if (!response.ok) {
+    if (/NORMALIZED_VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+    throw new Error(`${label} failed: ${text || response.statusText}`);
+  }
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${label} returned invalid JSON.`);
+  }
+}
+
+export async function updateProjectFolderVisibility(currentState, projectId, folderId, updates) {
+  const project = currentState.projects.find((item) => item.id === projectId);
+  const folder = project?.files?.folders?.find((item) => item.id === folderId);
+  const expectedVersion = Number(project?._normalizedVersions?.folders?.[folderId]) || 0;
+  if (!project || !folder) throw new Error('Project folder was not found.');
+
+  if (currentState.storageMode !== 'supabase' || !currentState.concurrencyEnabled || !expectedVersion) {
+    return updateProject(currentState, projectId, {
+      ...project,
+      files: {
+        folders: (project.files?.folders || []).map((item) =>
+          item.id === folderId ? { ...item, ...updates } : item,
+        ),
+      },
+    });
+  }
+
+  const result = await callPortalVisibilityRpc('update_project_folder_visibility', {
+    p_project_id: projectId,
+    p_folder_id: folderId,
+    p_customer_visible: updates.customerVisible ?? (folder.customerVisible !== false),
+    p_subcontractor_visible: updates.subcontractorVisible ?? (folder.subcontractorVisible === true),
+    p_expected_version: expectedVersion,
+  }, 'Folder visibility update');
+  const nextVersion = Number(result?.version) || expectedVersion + 1;
+  const nextProject = {
+    ...project,
+    files: {
+      folders: (project.files?.folders || []).map((item) =>
+        item.id === folderId ? { ...item, ...updates } : item,
+      ),
+    },
+    _normalizedVersions: {
+      ...project._normalizedVersions,
+      folders: { ...project._normalizedVersions.folders, [folderId]: nextVersion },
+    },
+  };
+  invalidateTrackerQueries();
+  return {
+    ...currentState,
+    projects: currentState.projects.map((item) => (item.id === projectId ? nextProject : item)),
+  };
+}
+
+export async function updateProjectSelectionVisibility(currentState, projectId, selectionId, enabled) {
+  const project = currentState.projects.find((item) => item.id === projectId);
+  const selection = project?.selections?.find((item) => item.id === selectionId);
+  const expectedVersion = Number(project?._normalizedVersions?.selections?.[selectionId]) || 0;
+  if (!project || !selection) throw new Error('Project selection was not found.');
+
+  if (currentState.storageMode !== 'supabase' || !currentState.concurrencyEnabled || !expectedVersion) {
+    return updateProject(currentState, projectId, {
+      ...project,
+      selections: (project.selections || []).map((item) =>
+        item.id === selectionId ? { ...item, subcontractorVisible: enabled === true } : item,
+      ),
+    });
+  }
+
+  const result = await callPortalVisibilityRpc('update_project_selection_visibility', {
+    p_project_id: projectId,
+    p_selection_id: selectionId,
+    p_subcontractor_visible: enabled === true,
+    p_expected_version: expectedVersion,
+  }, 'Selection visibility update');
+  const nextVersion = Number(result?.version) || expectedVersion + 1;
+  const nextProject = {
+    ...project,
+    selections: (project.selections || []).map((item) =>
+      item.id === selectionId ? { ...item, subcontractorVisible: enabled === true } : item,
+    ),
+    _normalizedVersions: {
+      ...project._normalizedVersions,
+      selections: { ...project._normalizedVersions.selections, [selectionId]: nextVersion },
+    },
+  };
+  invalidateTrackerQueries();
+  return {
+    ...currentState,
+    projects: currentState.projects.map((item) => (item.id === projectId ? nextProject : item)),
+  };
 }
 
 export async function updateProjects(currentState, projectUpdates) {

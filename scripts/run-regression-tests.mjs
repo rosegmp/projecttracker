@@ -19,6 +19,7 @@ import { getContrastRatio, getReadableTextColor } from '../src/utils/colorContra
 import {
   buildTaskAssigneeDirectory,
   buildTaskAssigneeOptions,
+  buildProjectAccessUpdates,
   getVisibleProjectsForUser,
   getVisibleTasksForUser,
   normalizeProjectAccessUserIds,
@@ -62,6 +63,7 @@ import {
   listProjectPdfFiles,
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
+import { buildProjectPhotoGallery } from '../src/utils/projectPhotoGallery.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -69,6 +71,56 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'project photo gallery includes images from every photo-bearing project area',
+    run() {
+      const image = (id) => ({ id, name: `${id}.jpg`, type: 'image/jpeg' });
+      const project = {
+        id: 'project-1',
+        photos: [image('project-photo')],
+        files: { folders: [{ id: 'folder-1', name: 'Plans', files: [image('file-photo'), { id: 'pdf', name: 'plan.pdf', type: 'application/pdf' }] }] },
+        selections: [{ id: 'selection-1', itemName: 'Tile', photos: [image('selection-photo')], attachments: [image('selection-attachment')] }],
+        inspections: [{ id: 'inspection-1', inspectionType: 'Rough', stickerFile: image('sticker'), reportFile: image('report') }],
+      };
+      const tasks = [
+        { id: 'task-1', projectId: 'project-1', label: 'Framing', attachments: [image('task-photo')] },
+        { id: 'task-2', projectId: 'other-project', label: 'Other', attachments: [image('other-photo')] },
+      ];
+      const workflowRecords = [
+        { type: 'dailyLogs', records: [{ id: 'log-1', date: '2026-07-21', subcontractorWork: [{ id: 'work-1', subcontractorCompany: 'Test Sub', photos: [image('daily-photo')] }] }] },
+        { type: 'changeOrders', records: [{ id: 'co-1', number: 'CO-1', attachments: [image('change-photo')] }] },
+        { type: 'rfis', records: [{ id: 'rfi-1', number: 'RFI-1', attachments: [image('rfi-photo')] }] },
+        { type: 'submittals', records: [{ id: 'submittal-1', number: 'SUB-1', attachments: [image('submittal-photo')] }] },
+        { type: 'commitments', records: [{ id: 'commitment-1', number: 'COM-1', attachments: [image('commitment-photo')], invoices: [image('invoice-photo')] }] },
+        { type: 'warrantyItems', records: [{ id: 'warranty-1', number: 'W-1', attachments: [image('warranty-photo')] }] },
+        { type: 'closeoutItems', records: [{ id: 'closeout-1', number: 'C-1', attachments: [image('closeout-photo')] }] },
+      ];
+
+      const gallery = buildProjectPhotoGallery({ project, tasks, workflowRecords });
+      assert.equal(gallery.length, 15);
+      assert.equal(gallery.some((photo) => photo.id === 'pdf'), false);
+      assert.equal(gallery.some((photo) => photo.id === 'other-photo'), false);
+      assert.deepEqual(
+        new Set(gallery.map((photo) => photo.gallerySourceType)),
+        new Set(['project', 'files', 'selections', 'inspections', 'tasks', 'dailyLogs', 'changeOrders', 'rfis', 'submittals', 'commitments', 'warrantyItems', 'closeoutItems']),
+      );
+    },
+  },
+  {
+    name: 'user access updates preserve every selected project in one batch',
+    run() {
+      const projects = [
+        { id: 'p1', name: 'First', accessUserIds: [] },
+        { id: 'p2', name: 'Second', accessUserIds: ['other-user'] },
+        { id: 'p3', name: 'Third', accessUserIds: ['customer-user'] },
+      ];
+      const updates = buildProjectAccessUpdates(projects, 'customer-user', ['p1', 'p2']);
+      assert.deepEqual(updates.map((project) => project.id), ['p1', 'p2', 'p3']);
+      assert.deepEqual(updates[0].accessUserIds, ['customer-user']);
+      assert.deepEqual(updates[1].accessUserIds, ['other-user', 'customer-user']);
+      assert.deepEqual(updates[2].accessUserIds, []);
+    },
+  },
   {
     name: 'short date formatting accepts calendar dates and portal response timestamps',
     run() {
@@ -272,7 +324,8 @@ const tests = [
   {
     name: 'server-backed file settings and inspection actions expose visible mutation states',
     async run() {
-      const [filesSource, settingsSource, inspectionsSource, trackerSource, styleSource] = await Promise.all([
+      const [appSource, filesSource, settingsSource, inspectionsSource, trackerSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8'),
@@ -289,6 +342,12 @@ const tests = [
       assert.match(trackerSource, /inviteAuthUser[\s\S]*fetchAuthorizedSupabase\('\/functions\/v1\/create-auth-user'/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Your sign-in session is missing/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Unable to reach the login invite service/);
+      assert.match(trackerSource, /refresh token not found\|invalid refresh token/);
+      assert.match(trackerSource, /writeAuthSession\(null\)/);
+      assert.match(trackerSource, /Your login session expired\. Sign out, then sign in again before sending the invite\./);
+      assert.match(appSource, /\['recovery', 'invite'\]\.includes\(recoverySession\?\.type\)/);
+      assert.match(trackerSource, /error_description/);
+      assert.match(trackerSource, /Authentication callback error/);
       assert.match(styleSource, /\.button\.is-loading > \.fluent-icon/);
       assert.match(styleSource, /\.inspection-thumbnail-button\.is-loading::after/);
     },
@@ -2724,6 +2783,8 @@ const tests = [
       assert.match(managerSource, /loadCurrentWeatherConditions/);
       assert.match(managerSource, /Loading current weather/);
       assert.match(managerSource, /Cost impact/);
+      assert.match(managerSource, /change-order-attachments/);
+      assert.match(managerSource, /<WorkflowAttachments/);
       assert.match(serviceSource, /version=eq\.\$\{draft\.version\}/);
       assert.match(serviceSource, /project_id=eq\.\$\{encodeURIComponent\(scopedProjectId\)\}/);
       assert.match(migrationSource, /create table if not exists public\.project_daily_logs/);
@@ -2758,6 +2819,9 @@ const tests = [
       assert.match(managerSource, /Subcontractor/);
       assert.match(managerSource, /approved_as_noted/);
       assert.match(managerSource, /revise_resubmit/);
+      assert.match(managerSource, /rfi-attachments/);
+      assert.match(managerSource, /submittal-attachments/);
+      assert.match(managerSource, /<WorkflowAttachments/);
       assert.match(serviceSource, /rfis: \{ table: 'project_rfis'/);
       assert.match(serviceSource, /submittals: \{ table: 'project_submittals'/);
       assert.match(serviceSource, /version=eq\.\$\{draft\.version\}/);
@@ -2789,6 +2853,8 @@ const tests = [
       assert.match(managerSource, /Retainage percent/);
       assert.match(managerSource, /peopleType === 'supplier'/);
       assert.match(managerSource, /remaining: current - committed/);
+      assert.match(managerSource, /commitment-invoices/);
+      assert.match(managerSource, /label="Invoices"/);
       assert.match(serviceSource, /budgetItems: \{ table: 'project_budget_items'.*numberColumn: 'item_code'/);
       assert.match(serviceSource, /commitments: \{ table: 'project_commitments'.*numberColumn: 'commitment_number'/);
       assert.match(serviceSource, /\[config\.numberColumn\]: record\.number/);
@@ -2801,16 +2867,80 @@ const tests = [
     },
   },
   {
+    name: 'warranty and closeout are project-scoped completion workflows',
+    async run() {
+      const [detailSource, managerSource, serviceSource, migrationSource, customerMigrationSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWarrantyCloseoutManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260721000000_add_warranty_and_closeout.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260721120000_allow_customer_warranty_requests.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectWarrantyCloseoutManager\.jsx'\)\)/);
+      assert.match(detailSource, /Warranty &amp; Closeout/);
+      assert.match(detailSource, /activeDetailTab === 'warranty-closeout'/);
+      assert.match(managerSource, /service\.list\('warrantyItems'\)/);
+      assert.match(managerSource, /service\.list\('closeoutItems'\)/);
+      assert.match(managerSource, /Responsible subcontractor/);
+      assert.match(managerSource, /Required for project closeout/);
+      assert.match(managerSource, /Closeout progress/);
+      assert.match(managerSource, /warranty-attachments/);
+      assert.match(managerSource, /closeout-attachments/);
+      assert.match(managerSource, /<WorkflowAttachments/);
+      assert.match(managerSource, /CustomerWarrantyRequests/);
+      assert.match(managerSource, /Submit warranty request/);
+      assert.match(serviceSource, /listCustomerWarrantyRequests/);
+      assert.match(serviceSource, /submitCustomerWarrantyRequest/);
+      assert.match(serviceSource, /warrantyItems: \{ table: 'project_warranty_items'/);
+      assert.match(serviceSource, /closeoutItems: \{ table: 'project_closeout_items'/);
+      assert.match(migrationSource, /create table if not exists public\.project_warranty_items/);
+      assert.match(migrationSource, /create table if not exists public\.project_closeout_items/);
+      assert.match(migrationSource, /as restrictive for select to authenticated/);
+      assert.match(migrationSource, /public\.app_user_can_edit_project\(project_id\)/);
+      assert.match(migrationSource, /'warranty_item', 'closeout_item'/);
+      assert.match(customerMigrationSource, /create or replace function public\.list_customer_warranty_requests/);
+      assert.match(customerMigrationSource, /create or replace function public\.submit_customer_warranty_request/);
+      assert.match(customerMigrationSource, /item\.created_by = auth\.uid\(\)/);
+      assert.match(customerMigrationSource, /public\.app_user_can_view_project\(p_project_id\)/);
+      assert.match(customerMigrationSource, /coalesce\(item\.data->>'submissionSource', ''\) = 'customer'/);
+      assert.match(customerMigrationSource, /item\.data - array\['notes', 'responsibleId', 'responsibleName', 'attachments', 'warrantyEndDate'\]/);
+    },
+  },
+  {
+    name: 'workflow attachments use project storage and clean up removed files',
+    async run() {
+      const [attachmentSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/WorkflowAttachments.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(attachmentSource, /uploadProjectFileToStorage\(projectId, folderId, attachmentId/);
+      assert.match(attachmentSource, /downloadProjectFileFromStorage\(attachment\)/);
+      assert.match(attachmentSource, /deleteProjectFileFromStorage\(item\)/);
+      assert.match(attachmentSource, /deletedAttachments/);
+      assert.match(styleSource, /\.workflow-attachments/);
+      assert.match(styleSource, /\.workflow-attachment-row/);
+    },
+  },
+  {
     name: 'customer and subcontractor portal items use restricted response workflows',
     async run() {
-      const [appSource, accessSource, detailSource, managerSource, serviceSource, migrationSource, hardeningSource, trackerSource, styleSource] = await Promise.all([
+      const [appSource, accessSource, projectsSource, detailSource, managerSource, filesSource, selectionsSource, selectionModalSource, photosSource, serviceSource, migrationSource, hardeningSource, customerReadsSource, customerPhotoWritesSource, sharedContentSource, visibilityUpdatesSource, trackerSource, styleSource] = await Promise.all([
         readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/utils/accessUi.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectSelectionsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/SelectionModal.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPhotosManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260720190000_add_project_portal_workflows.sql', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260720200000_harden_project_portal_reads.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720220000_expand_customer_project_reads.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260720230000_allow_customer_photo_uploads.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260721150000_add_portal_file_and_selection_visibility.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260721183000_add_portal_visibility_update_rpcs.sql', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
       ]);
@@ -2821,8 +2951,14 @@ const tests = [
       assert.match(appSource, /loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData/);
       assert.match(appSource, /\? await loadPortalTrackerData/);
       assert.match(accessSource, /'Customer', 'Subcontractor'/);
+      assert.match(projectsSource, /activeUser\?\.role !== 'Customer' \|\| selectedProjectId \|\| visibleProjects\.length !== 1/);
+      assert.match(projectsSource, /setSelectedProject\(visibleProjects\[0\]\.id, 'replace'\)/);
+      assert.match(projectsSource, /const previousHomeSignalRef = useRef\(homeSignal\)/);
+      assert.match(projectsSource, /if \(previousHomeSignalRef\.current === homeSignal\) return/);
+      assert.match(projectsSource, /buildTaskAssigneeOptions\(data\.subs \|\| \[\], data\.employees \|\| \[\]\)/);
+      assert.match(projectsSource, /assigneeOptions=\{scheduleAssigneeOptions\}/);
       assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectPortalManager\.jsx'\)\)/);
-      assert.match(detailSource, /portalOnly \? 'portal' : 'overview'/);
+      assert.match(detailSource, /subcontractorReadOnly \? 'portal' : 'overview'/);
       assert.match(detailSource, /activeDetailTab === 'portal'/);
       assert.match(managerSource, /service\.list\('portalItems'\)/);
       assert.match(managerSource, /respondToPortalItem/);
@@ -2846,9 +2982,61 @@ const tests = [
       assert.match(trackerSource, /export async function loadCurrentAppUserProfile/);
       assert.match(trackerSource, /export async function loadPortalTrackerData/);
       assert.match(trackerSource, /tasks: \[\],\s+subs: \[\],\s+employees: \[\]/);
+      assert.match(trackerSource, /payload\?\.calendarSettings/);
+      assert.match(trackerSource, /const sharedFolderIds = new Set/);
+      assert.match(trackerSource, /filter\(\(folder\) => sharedFolderIds\.has\(folder\.id\)\)/);
       assert.match(trackerSource, /portalMode: true/);
-      assert.match(detailSource, /if \(portalOnly\) return/);
+      assert.match(detailSource, /CUSTOMER_READ_ONLY_TABS = new Set\(\['overview', 'portal', 'calendar', 'selections', 'warranty-closeout', 'files', 'photos'\]\)/);
+      assert.match(detailSource, /SUBCONTRACTOR_READ_ONLY_TABS = new Set\(\['portal', 'selections', 'files'\]\)/);
+      assert.match(detailSource, /const subcontractorReadOnly = activeUser\?\.role === 'Subcontractor'/);
+      assert.match(detailSource, /subcontractorReadOnly && !SUBCONTRACTOR_READ_ONLY_TABS\.has\(requestedTab\)/);
+      assert.match(detailSource, /if \(externalPortalUser\) return/);
+      assert.match(detailSource, /customerReadOnly && !CUSTOMER_READ_ONLY_TABS\.has\(requestedTab\)/);
+      assert.match(detailSource, /readOnly=\{!canEdit\}/);
+      assert.match(detailSource, /canAddPhotos=\{canEdit \|\| customerReadOnly\}/);
+      assert.match(photosSource, /canAddPhotos = !readOnly/);
+      assert.match(photosSource, /addCustomerProjectPhotos\(project\.id, uploads\)/);
+      assert.match(photosSource, /if \(!canAddPhotos\) return;[\s\S]*uploadInputRef\.current\?\.click\(\)/);
+      assert.match(trackerSource, /export async function addCustomerProjectPhotos/);
+      assert.match(customerPhotoWritesSource, /create policy "Customers can upload assigned project photos"/);
+      assert.match(customerPhotoWritesSource, /create or replace function public\.add_customer_project_photos/);
+      assert.match(customerPhotoWritesSource, /actor_role <> 'Customer'/);
+      assert.match(customerPhotoWritesSource, /public\.app_user_can_view_project\(p_project_id\)/);
+      assert.match(customerReadsSource, /case when actor_role = 'Customer'/);
+      assert.match(customerReadsSource, /from public\.project_phases phase_row/);
+      assert.match(customerReadsSource, /from public\.project_file_folders folder_row/);
+      assert.match(customerReadsSource, /from public\.project_photos photo_row/);
+      assert.match(customerReadsSource, /from public\.project_selections selection_row/);
+      assert.match(customerReadsSource, /'calendarSettings', calendar_settings/);
+      assert.match(customerReadsSource, /public\.current_app_user_role\(\) = 'Customer'[\s\S]*bucket_id = 'project-files'[\s\S]*public\.app_user_can_view_project/s);
+      assert.match(customerReadsSource, /actor_role = 'Subcontractor'|else[\s\S]*'accessUserIds'/s);
+      assert.match(filesSource, /customerVisible: false/);
+      assert.match(filesSource, /subcontractorVisible: false/);
+      assert.match(filesSource, /updateFolderVisibility/);
+      assert.match(filesSource, /updateProjectFolderVisibility/);
+      assert.match(filesSource, /Visible to/);
+      assert.match(selectionsSource, /subcontractorVisible: selectionDraft\.subcontractorVisible === true/);
+      assert.match(selectionsSource, /updateProjectSelectionVisibility/);
+      assert.match(selectionsSource, /Visible to subcontractors/);
+      assert.match(selectionModalSource, /Visible to subcontractors assigned to this project/);
+      assert.match(sharedContentSource, /rename to get_project_portal_bootstrap_unfiltered_20260721/);
+      assert.match(sharedContentSource, /actor_role = 'Customer'.*customerVisible[\s\S]*actor_role = 'Subcontractor'.*subcontractorVisible/s);
+      assert.match(sharedContentSource, /coalesce\(selection_row\.data->>'subcontractorVisible', 'false'\) = 'true'/);
+      assert.match(sharedContentSource, /create or replace function public\.portal_storage_object_is_visible/);
+      assert.match(sharedContentSource, /project_selection_attachments[\s\S]*storagePath/s);
+      assert.match(sharedContentSource, /create policy "Portal users can read shared project files"/);
+      assert.match(visibilityUpdatesSource, /create or replace function public\.update_project_folder_visibility/);
+      assert.match(visibilityUpdatesSource, /create or replace function public\.update_project_selection_visibility/);
+      assert.match(visibilityUpdatesSource, /NORMALIZED_VERSION_CONFLICT:folders/);
+      assert.match(visibilityUpdatesSource, /NORMALIZED_VERSION_CONFLICT:selections/);
+      assert.match(visibilityUpdatesSource, /grant execute on function public\.update_project_folder_visibility/);
+      assert.match(visibilityUpdatesSource, /grant execute on function public\.update_project_selection_visibility/);
+      assert.match(trackerSource, /export async function updateProjectFolderVisibility/);
+      assert.match(trackerSource, /export async function updateProjectSelectionVisibility/);
       assert.match(styleSource, /\.portal-user-view > \.project-detail-tabs/);
+      assert.match(styleSource, /#project-tab-portal\):not\(#project-tab-selections\):not\(#project-tab-files\)/);
+      assert.match(styleSource, /\.folder-visibility-controls/);
+      assert.match(styleSource, /\.customer-project-view > \.project-detail-tabs[\s\S]*#project-tab-overview[\s\S]*#project-tab-photos/);
       assert.match(styleSource, /\.portal-account-bar/);
       assert.match(styleSource, /\.project-portal-response-form/);
     },

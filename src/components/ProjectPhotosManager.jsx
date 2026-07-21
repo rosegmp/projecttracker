@@ -1,29 +1,58 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { addCustomerProjectPhotos, deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
 import { formatFileSize, isImageFile } from '../utils/fileUi.js';
 import { openPreview } from '../platform/platformAdapter.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { buildProjectPhotoGallery, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
 
-export default function ProjectPhotosManager({ data, project, onStateChange, readOnly = false }) {
+export default function ProjectPhotosManager({ data, project, onStateChange, readOnly = false, canAddPhotos = !readOnly }) {
   const { beginMutation, endMutation, runMutation, isMutating } = useEntityMutations();
   const [photoNameDrafts, setPhotoNameDrafts] = useState({});
   const [editingPhotoNames, setEditingPhotoNames] = useState({});
   const [storageNotice, setStorageNotice] = useState('');
   const [previewUrls, setPreviewUrls] = useState({});
+  const [workflowRecords, setWorkflowRecords] = useState([]);
+  const [workflowPhotosLoading, setWorkflowPhotosLoading] = useState(false);
   const previewUrlsRef = useRef({});
   const dataRef = useRef(data);
   const uploadInputRef = useRef(null);
   const replacePhotoInputRefs = useRef({});
 
-  const photos = project?.photos || [];
+  const photos = useMemo(
+    () => buildProjectPhotoGallery({
+      project,
+      tasks: data?.tasks || [],
+      workflowRecords,
+    }),
+    [data?.tasks, project, workflowRecords],
+  );
   const mainPhotoId = String(project?.mainPhotoId || '');
 
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWorkflowRecords([]);
+    setWorkflowPhotosLoading(false);
+    if (!project?.id || data?.portalMode) return () => { cancelled = true; };
+    setWorkflowPhotosLoading(true);
+    const service = createConstructionWorkflowService({ projectId: project.id, canEdit: false });
+    void Promise.allSettled(PROJECT_PHOTO_WORKFLOW_TYPES.map(async (type) => ({
+      type,
+      records: (await service.list(type)).records || [],
+    }))).then((results) => {
+      if (cancelled) return;
+      setWorkflowRecords(results.filter((result) => result.status === 'fulfilled').map((result) => result.value));
+      setWorkflowPhotosLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [data?.portalMode, project?.id]);
 
   useEffect(() => {
     previewUrlsRef.current = previewUrls;
@@ -39,7 +68,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
     const keepIds = new Set();
     photos.forEach((photo) => {
       if (photo?.storagePath && isImageFile(photo)) {
-        keepIds.add(photo.id);
+        keepIds.add(photo.galleryKey);
       }
     });
     setPreviewUrls((current) => {
@@ -60,7 +89,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
 
     async function loadPreviews() {
       for (const photo of photos) {
-        if (!photo?.storagePath || !isImageFile(photo) || previewUrls[photo.id]) continue;
+        if (!photo?.storagePath || !isImageFile(photo) || previewUrls[photo.galleryKey]) continue;
         try {
           const blob = await downloadProjectFileFromStorage(photo);
           const url = URL.createObjectURL(blob);
@@ -69,11 +98,11 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
             return;
           }
           setPreviewUrls((current) => {
-            if (current[photo.id]) {
+            if (current[photo.galleryKey]) {
               URL.revokeObjectURL(url);
               return current;
             }
-            return { ...current, [photo.id]: url };
+            return { ...current, [photo.galleryKey]: url };
           });
         } catch {
           // Leave the gallery usable even if one preview cannot be loaded.
@@ -120,6 +149,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
   }
 
   function triggerPhotoUpload() {
+    if (!canAddPhotos) return;
     uploadInputRef.current?.click();
   }
 
@@ -128,18 +158,45 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
   }
 
   async function handleUploadPhotos(fileList) {
+    if (!canAddPhotos) return;
     const files = Array.from(fileList || []).filter((file) => String(file.type || '').startsWith('image/'));
     if (!files.length || !project?.id) return;
 
     const mutationKey = ['project', project.id, 'photos-upload'];
     beginMutation(mutationKey);
     try {
-      const uploadResults = await Promise.all(files.map((file) => createProjectPhotoRecord(file)));
+      const uploadResults = await Promise.all(files.map(async (file) => {
+        if (!readOnly) return createProjectPhotoRecord(file);
+        const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        return {
+          photoRecord: {
+            id: photoId,
+            name: file.name,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            uploadedAt: new Date().toISOString(),
+            ...(await uploadProjectFileToStorage(project.id, 'photos', photoId, file, { upsert: false })),
+            dataUrl: '',
+          },
+        };
+      }));
       const uploads = uploadResults.map((result) => result.photoRecord);
       setStorageNotice('');
 
       const currentProject = data.projects.find((item) => item.id === project.id);
       if (!currentProject) return;
+      if (readOnly) {
+        const savedPhotos = await addCustomerProjectPhotos(project.id, uploads);
+        const nextState = {
+          ...data,
+          projects: data.projects.map((item) => item.id === project.id
+            ? { ...item, photos: [...(item.photos || []), ...savedPhotos] }
+            : item),
+        };
+        onStateChange(nextState);
+        return;
+      }
       const nextProject = {
         ...currentProject,
         photos: [...(currentProject.photos || []), ...uploads],
@@ -198,7 +255,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
 
   function getPhotoPreview(photo) {
     if (!photo) return '';
-    return photo.dataUrl || previewUrls[photo.id] || '';
+    return photo.dataUrl || previewUrls[photo.galleryKey] || '';
   }
 
   function updatePhotoNameDraft(photoId, value) {
@@ -361,9 +418,9 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
 
       <div className="files-toolbar project-files-toolbar">
         <div className="files-toolbar-actions">
-          <span className="project-photos-count">{photos.length} photo(s)</span>
+          <span className="project-photos-count">{photos.length} photo(s) from all project tabs{workflowPhotosLoading ? ' · Loading more…' : ''}</span>
         </div>
-        <div className="panel-actions">
+        {canAddPhotos ? <div className="panel-actions">
           <input
             ref={uploadInputRef}
             className="visually-hidden"
@@ -372,18 +429,19 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
             multiple
             onChange={(event) => handleUploadPhotos(event.target.files)}
           />
-          <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={isMutating(['project', project.id, 'photos-upload']) || readOnly}>
+          <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={isMutating(['project', project.id, 'photos-upload'])}>
             {isMutating(['project', project.id, 'photos-upload']) ? 'Uploading...' : 'Add photos'}
           </button>
-        </div>
+        </div> : null}
       </div>
 
       {photos.length ? (
         <div className="photos-grid">
           {photos.map((photo) => {
-            const isMainPhoto = photo.id === mainPhotoId;
+            const isProjectPhoto = photo.gallerySourceType === 'project';
+            const isMainPhoto = isProjectPhoto && photo.id === mainPhotoId;
             return (
-            <article key={photo.id} className={`photo-card${isMainPhoto ? ' is-main-photo' : ''}`}>
+            <article key={photo.galleryKey} className={`photo-card${isMainPhoto ? ' is-main-photo' : ''}`}>
               <button className="photo-thumb-button" type="button" onClick={() => void openPhoto(photo)}>
                 {isMainPhoto ? (
                   <span className="main-photo-badge">
@@ -427,11 +485,12 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                 ) : (
                   <strong>{getDisplayPhotoName(photo)}</strong>
                 )}
+                <small className="photo-source-label">{photo.gallerySource}</small>
                 <small className="photo-meta">
                   {photo.size ? `${formatFileSize(photo.size)}` : ''}
                   {photo.uploadedAt ? ` • ${new Date(photo.uploadedAt).toLocaleDateString('en-US')}` : ''}
                 </small>
-                {!readOnly ? <div className="files-list-actions photo-actions">
+                {isProjectPhoto && !readOnly ? <div className="files-list-actions photo-actions">
                   <input
                     ref={(node) => {
                       if (node) replacePhotoInputRefs.current[photo.id] = node;
@@ -489,6 +548,9 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
                   >
                     <FluentIcon name="delete" />
                   </button>
+                </div> : !isProjectPhoto ? <div className="files-list-actions photo-actions">
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => void openPhoto(photo)} title="Open photo" aria-label={`Open ${getDisplayPhotoName(photo)}`}><FluentIcon name="eye" /></button>
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => downloadPhoto(photo)} title="Download photo" aria-label={`Download ${getDisplayPhotoName(photo)}`}><FluentIcon name="download" /></button>
                 </div> : null}
               </div>
             </article>
@@ -498,7 +560,7 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
       ) : (
         <div className="empty-state compact">
           <h3>No photos yet</h3>
-          <p>Add progress photos, site photos, and finish photos for this project.</p>
+          <p>{canAddPhotos ? 'Add progress photos, site photos, and finish photos for this project.' : 'Photos uploaded by the project team will appear here.'}</p>
         </div>
       )}
     </div>

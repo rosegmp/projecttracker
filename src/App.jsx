@@ -252,7 +252,7 @@ export default function App() {
     loadTrackerDataModule()
       .then(async ({ consumeAuthSessionFromUrl, initializeAuthSession }) => {
         const recoverySession = consumeAuthSessionFromUrl();
-        if (recoverySession?.type === 'recovery') setRecoveryMode(true);
+        if (['recovery', 'invite'].includes(recoverySession?.type)) setRecoveryMode(true);
         return recoverySession || initializeAuthSession();
       })
       .then((session) => {

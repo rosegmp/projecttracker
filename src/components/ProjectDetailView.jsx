@@ -13,8 +13,12 @@ const ProjectPhotosManager = lazy(() => import('./ProjectPhotosManager.jsx'));
 const ProjectPortalManager = lazy(() => import('./ProjectPortalManager.jsx'));
 const ProjectRfiSubmittalsManager = lazy(() => import('./ProjectRfiSubmittalsManager.jsx'));
 const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.jsx'));
+const ProjectWarrantyCloseoutManager = lazy(() => import('./ProjectWarrantyCloseoutManager.jsx'));
 const ProjectWorkflowManager = lazy(() => import('./ProjectWorkflowManager.jsx'));
 const TakeoffWorkspace = lazy(() => import('../features/takeoff/TakeoffWorkspace.jsx'));
+
+const CUSTOMER_READ_ONLY_TABS = new Set(['overview', 'portal', 'calendar', 'selections', 'warranty-closeout', 'files', 'photos']);
+const SUBCONTRACTOR_READ_ONLY_TABS = new Set(['portal', 'selections', 'files']);
 
 function ProjectOverviewMainPhoto({ project }) {
   const mainPhoto = (project?.photos || []).find((photo) => photo.id === project?.mainPhotoId) || null;
@@ -122,8 +126,10 @@ export default function ProjectDetailView({
   onCalendarItemClick,
   onStateChange,
 }) {
-  const portalOnly = ['Customer', 'Subcontractor'].includes(activeUser?.role);
-  const [activeDetailTab, setActiveDetailTab] = useState(() => (portalOnly ? 'portal' : 'overview'));
+  const externalPortalUser = ['Customer', 'Subcontractor'].includes(activeUser?.role);
+  const customerReadOnly = activeUser?.role === 'Customer';
+  const subcontractorReadOnly = activeUser?.role === 'Subcontractor';
+  const [activeDetailTab, setActiveDetailTab] = useState(() => (subcontractorReadOnly ? 'portal' : 'overview'));
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
   const [lastActivity, setLastActivity] = useState(null);
@@ -134,14 +140,14 @@ export default function ProjectDetailView({
       : 'Not set';
 
   useEffect(() => {
-    setActiveDetailTab(portalOnly ? 'portal' : 'overview');
-  }, [portalOnly, project.id]);
+    setActiveDetailTab(subcontractorReadOnly ? 'portal' : 'overview');
+  }, [subcontractorReadOnly, project.id]);
 
   useEffect(() => {
     let cancelled = false;
     setLastActivity(null);
     setActivityUnavailable(false);
-    if (portalOnly) return () => { cancelled = true; };
+    if (externalPortalUser) return () => { cancelled = true; };
     void loadAuditEvents({ projectId: project.id, limit: 1 })
       .then((rows) => {
         if (!cancelled) setLastActivity(buildAuditTrailEntries(rows)[0] || null);
@@ -150,18 +156,19 @@ export default function ProjectDetailView({
         if (!cancelled) setActivityUnavailable(true);
       });
     return () => { cancelled = true; };
-  }, [portalOnly, project.id]);
+  }, [externalPortalUser, project.id]);
 
   useEffect(() => {
     const requestedTab = selectionNavigationRequest?.detailTab;
     if (selectionNavigationRequest?.projectId !== project.id) return;
-    if (portalOnly && requestedTab !== 'portal') return;
-    if (!['overview', 'portal', 'tasks', 'calendar', 'inspections', 'selections', 'daily-logs', 'change-orders', 'rfis-submittals', 'budget-commitments', 'takeoff', 'files', 'photos'].includes(requestedTab)) return;
+    if (subcontractorReadOnly && !SUBCONTRACTOR_READ_ONLY_TABS.has(requestedTab)) return;
+    if (customerReadOnly && !CUSTOMER_READ_ONLY_TABS.has(requestedTab)) return;
+    if (!['overview', 'portal', 'tasks', 'calendar', 'inspections', 'selections', 'daily-logs', 'change-orders', 'rfis-submittals', 'budget-commitments', 'warranty-closeout', 'takeoff', 'files', 'photos'].includes(requestedTab)) return;
     setActiveDetailTab(requestedTab);
     if (requestedTab === 'selections' && selectionNavigationRequest?.selectionId) {
       setSelectionHighlightRequest(selectionNavigationRequest);
     }
-  }, [portalOnly, project.id, selectionNavigationRequest]);
+  }, [customerReadOnly, subcontractorReadOnly, project.id, selectionNavigationRequest]);
 
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -186,7 +193,11 @@ export default function ProjectDetailView({
     return leftDate.localeCompare(rightDate);
   })[0] || null;
   const delayedScheduleItem = unfinishedScheduleItems.find((step) => String(step.status || '').toLowerCase() === 'delayed') || null;
-  const criticalItem = overdueProjectTasks[0]
+  const criticalItem = customerReadOnly
+    ? delayedScheduleItem
+      ? { label: delayedScheduleItem.name || 'Delayed schedule item', date: delayedScheduleItem.end || delayedScheduleItem.start, tab: 'calendar' }
+      : null
+    : overdueProjectTasks[0]
     ? { label: overdueProjectTasks[0].label || 'Overdue task', date: overdueProjectTasks[0].due, tab: 'tasks', taskId: overdueProjectTasks[0].id }
     : overdueInspections[0]
       ? { label: overdueInspections[0].inspectionType || overdueInspections[0].name || 'Overdue inspection', date: overdueInspections[0].date, tab: 'inspections' }
@@ -201,7 +212,7 @@ export default function ProjectDetailView({
     { label: 'Files', count: projectFileCount, tab: 'files' },
     { label: 'Photos', count: (project.photos || []).length, tab: 'photos' },
     { label: 'Schedule remaining', count: Math.max(0, totalSteps - completedSteps), tab: 'calendar' },
-  ];
+  ].filter((row) => !customerReadOnly || CUSTOMER_READ_ONLY_TABS.has(row.tab));
   const missingInformation = [
     !project.customerPhone && 'customer phone',
     !project.customerEmail && 'customer email',
@@ -217,14 +228,15 @@ export default function ProjectDetailView({
   }
 
   return (
-    <div className={`project-detail-page${portalOnly ? ' portal-user-view' : ''}`}>
+    <div className={`project-detail-page${subcontractorReadOnly ? ' portal-user-view' : ''}${customerReadOnly ? ' customer-project-view' : ''}`}>
       <div
         className="project-detail-tabs"
         role="tablist"
         aria-label={`${project.name} sections`}
         onKeyDown={(event) => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
+          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'))
+            .filter((tab) => !tab.hidden && tab.offsetParent !== null);
           const currentIndex = tabs.indexOf(event.target);
           if (currentIndex < 0) return;
           event.preventDefault();
@@ -359,6 +371,18 @@ export default function ProjectDetailView({
           Budget &amp; Commitments
         </button>
         <button
+          id="project-tab-warranty-closeout"
+          className={`react-tab${activeDetailTab === 'warranty-closeout' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeDetailTab === 'warranty-closeout' ? 'true' : 'false'}
+          aria-controls="project-panel-warranty-closeout"
+          tabIndex={activeDetailTab === 'warranty-closeout' ? 0 : -1}
+          onClick={() => setActiveDetailTab('warranty-closeout')}
+        >
+          {customerReadOnly ? 'Warranty' : <>Warranty &amp; Closeout</>}
+        </button>
+        <button
           id="project-tab-takeoff"
           className={`react-tab${activeDetailTab === 'takeoff' ? ' active' : ''}`}
           type="button"
@@ -471,7 +495,7 @@ export default function ProjectDetailView({
                   </button>
                 ) : <p className="project-overview-empty-copy">No overdue or delayed items.</p>}
               </section>
-              <section className="project-overview-rail-section">
+              {!customerReadOnly ? <section className="project-overview-rail-section">
                 <h3>Last activity</h3>
                 {lastActivity ? (
                   <div className="project-overview-activity">
@@ -479,7 +503,7 @@ export default function ProjectDetailView({
                     <span>{lastActivity.actorEmail || 'Project user'}{lastActivity.createdAt ? ` · ${formatActivityTime(lastActivity.createdAt)}` : ''}</span>
                   </div>
                 ) : <p className="project-overview-empty-copy">{activityUnavailable ? 'Activity is unavailable.' : 'No recorded activity yet.'}</p>}
-              </section>
+              </section> : null}
               <section className="project-overview-rail-section">
                 <h3>Project team</h3>
                 {project.manager ? <div className="project-overview-team-member"><strong>{project.manager}</strong><span>Project manager</span></div> : null}
@@ -611,6 +635,12 @@ export default function ProjectDetailView({
         </section>
       ) : null}
 
+      {activeDetailTab === 'warranty-closeout' ? (
+        <section id="project-panel-warranty-closeout" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-warranty-closeout">
+          <ProjectWarrantyCloseoutManager project={project} data={data} canEdit={canEdit} customerMode={customerReadOnly} activeUser={activeUser} />
+        </section>
+      ) : null}
+
       {activeDetailTab === 'takeoff' ? (
         <section id="project-panel-takeoff" className="project-detail-section project-detail-subtab-panel project-takeoff-panel" role="tabpanel" aria-labelledby="project-tab-takeoff">
           <TakeoffWorkspace project={project} projectId={project.id} canEdit={canEdit} />
@@ -619,7 +649,7 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'photos' ? (
         <section id="project-panel-photos" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-photos">
-          <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} />
+          <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} canAddPhotos={canEdit || customerReadOnly} />
         </section>
       ) : null}
       </Suspense>

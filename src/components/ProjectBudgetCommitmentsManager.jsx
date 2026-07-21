@@ -3,6 +3,7 @@ import { createConstructionWorkflowService } from '../services/constructionWorkf
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import WorkflowAttachments, { addPendingWorkflowAttachments, deleteWorkflowAttachments, prepareWorkflowAttachments, removeWorkflowAttachment } from './WorkflowAttachments.jsx';
 
 const TYPES = {
   budgetItems: { singular: 'budget item', plural: 'Budget', prefix: '01', description: 'Plan costs and compare current budget, forecast, and actual spending.' },
@@ -46,6 +47,7 @@ function emptyDraft(type, records) {
   return {
     id: '', version: 0, number: nextNumber(type, records), title: '', status: 'draft', vendorId: '', vendorName: '',
     budgetCode: '', scope: '', committedAmount: '', paidAmount: '', retainagePercent: '', startDate: '', endDate: '', notes: '',
+    invoices: [], deletedAttachments: [],
   };
 }
 
@@ -105,6 +107,14 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
     setDraft((current) => ({ ...current, vendorId: id, vendorName: selected?.label || '' }));
   }
 
+  function addInvoices(fileList) {
+    setDraft((current) => addPendingWorkflowAttachments(current, fileList, 'invoices'));
+  }
+
+  function removeInvoice(attachmentId) {
+    setDraft((current) => removeWorkflowAttachment(current, attachmentId, 'invoices'));
+  }
+
   function switchType(type) {
     setActiveType(type);
     setDraft(null);
@@ -115,12 +125,19 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
     if (!draft || saving || !draft.number.trim() || !draft.title.trim()) return;
     setSaving(true);
     setMessage('');
+    let uploaded = [];
     try {
-      const result = await service.save(activeType, draft);
+      const preparedResult = activeType === 'commitments'
+        ? await prepareWorkflowAttachments(project.id, 'commitment-invoices', draft, 'invoices')
+        : { prepared: draft, uploaded: [] };
+      uploaded = preparedResult.uploaded;
+      const result = await service.save(activeType, preparedResult.prepared);
+      if (activeType === 'commitments') await deleteWorkflowAttachments(draft.deletedAttachments);
       setSetupRequired(result.setupRequired === true);
       setDraft(null);
       await loadRecords();
     } catch (error) {
+      await deleteWorkflowAttachments(uploaded);
       setMessage(error instanceof Error ? error.message : `Unable to save ${meta.singular}.`);
     } finally {
       setSaving(false);
@@ -134,6 +151,7 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
     setMessage('');
     try {
       await service.remove(activeType, record);
+      if (activeType === 'commitments') await deleteWorkflowAttachments(record.invoices);
       setDraft(null);
       await loadRecords();
     } catch (error) {
@@ -191,6 +209,7 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
                 <label><span>Start date</span><input type="date" value={draft.startDate} onChange={(event) => change('startDate', event.target.value)} /></label>
                 <label><span>End date</span><input type="date" value={draft.endDate} onChange={(event) => change('endDate', event.target.value)} /></label>
                 <label className="full"><span>Notes</span><textarea value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
+                <WorkflowAttachments attachments={draft.invoices || []} onAdd={addInvoices} onRemove={removeInvoice} label="Invoices" addLabel="Add invoices" disabled={saving} />
               </>
             )}
           </div>
@@ -207,7 +226,7 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
             const currentBudget = numeric(record.originalBudget) + numeric(record.approvedChanges);
             return (
               <article className="project-workflow-card" key={record.id}>
-                <div className="project-workflow-card-heading"><div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>{canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}</div>
+                <div className="project-workflow-card-heading"><div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>{canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}</div>
                 {activeType === 'budgetItems' ? (
                   <dl className="project-workflow-summary"><div><dt>Current budget</dt><dd>{money(currentBudget)}</dd></div><div><dt>Forecast</dt><dd>{money(record.forecastCost)}</dd></div><div><dt>Variance</dt><dd>{money(currentBudget - numeric(record.forecastCost))}</dd></div></dl>
                 ) : (

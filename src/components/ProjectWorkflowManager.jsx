@@ -7,6 +7,7 @@ import { openPreview } from '../platform/platformAdapter.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import PersonModal from './PersonModal.jsx';
+import WorkflowAttachments, { addPendingWorkflowAttachments, deleteWorkflowAttachments, prepareWorkflowAttachments, removeWorkflowAttachment } from './WorkflowAttachments.jsx';
 
 const TODAY = () => {
   const date = new Date();
@@ -25,6 +26,7 @@ function emptyDraft(type, records) {
   return {
     id: '', version: 0, number: `CO-${String(maxNumber + 1).padStart(3, '0')}`, title: '', status: 'proposed',
     description: '', reason: '', costImpact: '', scheduleDays: '', dueDate: '', approvalDate: '', notes: '',
+    attachments: [], deletedAttachments: [],
   };
 }
 
@@ -134,6 +136,14 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
   useEffect(() => { void loadRecords(); }, [service, workflowType]);
 
   function change(field, value) { setDraft((current) => ({ ...current, [field]: value })); }
+
+  function addAttachments(fileList) {
+    setDraft((current) => addPendingWorkflowAttachments(current, fileList));
+  }
+
+  function removeAttachment(attachmentId) {
+    setDraft((current) => removeWorkflowAttachment(current, attachmentId));
+  }
 
   async function startNewRecord() {
     setDraft(emptyDraft(workflowType, records));
@@ -285,15 +295,24 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     setSaving(true);
     setMessage('');
     const uploadedPhotos = [];
+    let uploadedAttachments = [];
     try {
-      const preparedDraft = daily ? await prepareDailyLogForSave(draft, uploadedPhotos) : draft;
+      let preparedDraft;
+      if (daily) preparedDraft = await prepareDailyLogForSave(draft, uploadedPhotos);
+      else {
+        const preparedResult = await prepareWorkflowAttachments(project.id, 'change-order-attachments', draft);
+        preparedDraft = preparedResult.prepared;
+        uploadedAttachments = preparedResult.uploaded;
+      }
       const result = await service.save(workflowType, preparedDraft);
       if (daily) await Promise.allSettled((draft.deletedPhotos || []).map((photo) => deleteProjectFileFromStorage(photo)));
+      else await deleteWorkflowAttachments(draft.deletedAttachments);
       setSetupRequired(result.setupRequired === true);
       setDraft(null);
       await loadRecords();
     } catch (error) {
       await Promise.allSettled(uploadedPhotos.map((photo) => deleteProjectFileFromStorage(photo)));
+      await deleteWorkflowAttachments(uploadedAttachments);
       setMessage(error instanceof Error ? error.message : 'Unable to save record.');
     }
     finally { setSaving(false); }
@@ -306,6 +325,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     try {
       await service.remove(workflowType, record);
       if (daily) await Promise.allSettled(contractorPhotos(record).map((photo) => deleteProjectFileFromStorage(photo)));
+      else await deleteWorkflowAttachments(record.attachments);
       setDraft(null);
       await loadRecords();
     }
@@ -372,6 +392,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
                 <label><span>Schedule impact (days)</span><input type="number" value={draft.scheduleDays} onChange={(event) => change('scheduleDays', event.target.value)} /></label>
                 <label><span>Response due</span><input type="date" value={draft.dueDate} onChange={(event) => change('dueDate', event.target.value)} /></label>
                 <label><span>Approval date</span><input type="date" value={draft.approvalDate} onChange={(event) => change('approvalDate', event.target.value)} /></label>
+                <WorkflowAttachments attachments={draft.attachments || []} onAdd={addAttachments} onRemove={removeAttachment} disabled={saving} />
               </>
             )}
           </div>
@@ -388,7 +409,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
             <article className="project-workflow-card" key={record.id}>
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span><h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
-                {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
+                {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
               </div>
               {daily ? (
                 <>

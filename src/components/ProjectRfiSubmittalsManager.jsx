@@ -4,6 +4,7 @@ import { personAssignmentLabel } from '../utils/accessUi.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import WorkflowAttachments, { addPendingWorkflowAttachments, deleteWorkflowAttachments, prepareWorkflowAttachments, removeWorkflowAttachment } from './WorkflowAttachments.jsx';
 
 const TYPES = {
   rfis: {
@@ -43,12 +44,12 @@ function nextNumber(type, records) {
 function emptyDraft(type, records) {
   if (type === 'rfis') return {
     id: '', version: 0, number: nextNumber(type, records), title: '', status: 'open', question: '', response: '',
-    responsibleId: '', responsibleName: '', dueDate: '', responseDate: '', costImpact: '', scheduleDays: '', notes: '',
+    responsibleId: '', responsibleName: '', dueDate: '', responseDate: '', costImpact: '', scheduleDays: '', notes: '', attachments: [], deletedAttachments: [],
   };
   return {
     id: '', version: 0, number: nextNumber(type, records), title: '', status: 'draft', specSection: '',
     subcontractorId: '', subcontractorName: '', reviewer: '', description: '', dueDate: '', submittedDate: '',
-    decisionDate: '', reviewerNotes: '', notes: '',
+    decisionDate: '', reviewerNotes: '', notes: '', attachments: [], deletedAttachments: [],
   };
 }
 
@@ -101,6 +102,9 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function addAttachments(fileList) { setDraft((current) => addPendingWorkflowAttachments(current, fileList)); }
+  function removeAttachment(attachmentId) { setDraft((current) => removeWorkflowAttachment(current, attachmentId)); }
+
   function selectPerson(field, nameField, id, options) {
     change(field, id);
     change(nameField, options.find((person) => person.id === id)?.label || '');
@@ -116,12 +120,17 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
     if (!draft || saving || !draft.number.trim() || !draft.title.trim()) return;
     setSaving(true);
     setMessage('');
+    let uploaded = [];
     try {
-      const result = await service.save(activeType, draft);
+      const preparedResult = await prepareWorkflowAttachments(project.id, activeType === 'rfis' ? 'rfi-attachments' : 'submittal-attachments', draft);
+      uploaded = preparedResult.uploaded;
+      const result = await service.save(activeType, preparedResult.prepared);
+      await deleteWorkflowAttachments(draft.deletedAttachments);
       setSetupRequired(result.setupRequired === true);
       setDraft(null);
       await loadRecords();
     } catch (error) {
+      await deleteWorkflowAttachments(uploaded);
       setMessage(error instanceof Error ? error.message : `Unable to save ${meta.singular}.`);
     } finally {
       setSaving(false);
@@ -139,6 +148,7 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
     setMessage('');
     try {
       await service.remove(activeType, record);
+      await deleteWorkflowAttachments(record.attachments);
       setDraft(null);
       await loadRecords();
     } catch (error) {
@@ -193,6 +203,7 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
                 <label className="full"><span>Notes</span><textarea value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
               </>
             )}
+            <WorkflowAttachments attachments={draft.attachments || []} onAdd={addAttachments} onRemove={removeAttachment} disabled={saving} />
           </div>
           <div className="project-workflow-editor-actions">
             {draft.id ? <button className="button secondary danger" type="button" onClick={() => void remove(draft)} disabled={saving}>Delete</button> : null}
@@ -207,7 +218,7 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
             <article className="project-workflow-card" key={record.id}>
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>
-                {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}
+                {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}
               </div>
               {activeType === 'rfis' ? (
                 <dl className="project-workflow-summary"><div><dt>Responsible</dt><dd>{record.responsibleName || 'Unassigned'}</dd></div><div><dt>Response due</dt><dd>{record.dueDate ? formatShortDate(record.dueDate) : 'Not set'}</dd></div><div><dt>Potential impact</dt><dd>{record.costImpact !== '' ? money(record.costImpact) : record.scheduleDays ? `${record.scheduleDays} days` : 'None recorded'}</dd></div></dl>

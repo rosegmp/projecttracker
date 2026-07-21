@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { buildTaskAssigneeOptions, personAssignmentLabel } from '../utils/accessUi.js';
 import {
   createPerson, createTask, deleteProjectFileFromStorage, downloadProjectFileFromStorage,
-  isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage,
+  isSupabaseStorageConfigured, updateProject, updateProjectSelectionVisibility, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
@@ -211,6 +211,7 @@ export default function ProjectSelectionsManager({
       actualCost: '',
       selectionDate: '',
       notes: '',
+      subcontractorVisible: false,
       attachments: [],
       photos: [],
       taskIds: [],
@@ -232,6 +233,7 @@ export default function ProjectSelectionsManager({
       actualCost: selection.actualCost ?? '',
       selectionDate: selection.selectionDate || '',
       notes: selection.notes || '',
+      subcontractorVisible: selection.subcontractorVisible === true,
       attachments: Array.isArray(selection.attachments) ? selection.attachments : [],
       photos: Array.isArray(selection.photos) ? selection.photos : [],
       taskIds: Array.isArray(selection.taskIds) ? selection.taskIds : [],
@@ -316,6 +318,7 @@ export default function ProjectSelectionsManager({
         vendor: selectionDraft.vendor.trim(),
         selectionDate: selectionDraft.selectionDate,
         notes: selectionDraft.notes.trim(),
+        subcontractorVisible: selectionDraft.subcontractorVisible === true,
         attachments: [...(selectionDraft.attachments || []), ...attachmentUploads.map((result) => result.fileRecord)],
         photos: [...(selectionDraft.photos || []), ...photoUploads.map((result) => result.fileRecord)],
         taskIds: selectionDraft.taskIds || [],
@@ -379,6 +382,23 @@ export default function ProjectSelectionsManager({
           .map((file) => deleteProjectFileFromStorage(file)),
       );
       setSelectionDraft(null);
+    } finally {
+      endMutation(mutationKey);
+    }
+  }
+
+  async function setSelectionSubcontractorVisibility(selectionId, enabled) {
+    if (!project?.id) return;
+    const mutationKey = ['selection', selectionId, 'visibility'];
+    beginMutation(mutationKey);
+    try {
+      const nextState = await updateProjectSelectionVisibility(data, project.id, selectionId, enabled);
+      onStateChange(nextState);
+    } catch (error) {
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to update selection visibility.',
+        'Save failed',
+      );
     } finally {
       endMutation(mutationKey);
     }
@@ -533,6 +553,17 @@ export default function ProjectSelectionsManager({
                   <p className="project-status">{selection.category || 'Selection'}</p>
                   <h3>{selection.itemName || 'Untitled selection'}</h3>
                   <p className="inspection-type">{selection.chosenOption || 'Option not chosen yet'}</p>
+                  {!readOnly ? (
+                    <label className="selection-visibility-control">
+                      <input
+                        type="checkbox"
+                        checked={selection.subcontractorVisible === true}
+                        onChange={(event) => void setSelectionSubcontractorVisibility(selection.id, event.target.checked)}
+                        disabled={isMutating(['selection', selection.id, 'visibility'])}
+                      />
+                      Visible to subcontractors
+                    </label>
+                  ) : null}
                 </div>
                 <span className={`status-pill status-${String(selection.status || 'needs decision').replace(/\s+/g, '-')}`}>
                   {selection.status || 'needs decision'}
