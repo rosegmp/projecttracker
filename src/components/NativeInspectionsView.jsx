@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
+  saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
@@ -425,13 +425,15 @@ export default function NativeInspectionsView({
                 )
               : [...(project.inspections || []), nextInspection],
         };
-        nextState = await updateProject(nextState, project.id, nextProject);
+        nextState = await saveProjectInspection(nextState, project.id, nextInspection);
       }
       onStateChange(nextState);
       await Promise.allSettled(
         filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
       );
       setInspectionDraft(null);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save inspection.', 'Save failed');
     } finally {
       endMutation(mutationKey);
     }

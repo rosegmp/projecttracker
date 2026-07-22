@@ -1112,11 +1112,13 @@ const tests = [
   {
     name: 'project inspections and their files use normalized version-checked storage',
     async run() {
-      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
-      const migrationSource = await readFile(
-        new URL('../supabase/migrations/20260716100000_normalize_project_inspections.sql', import.meta.url),
-        'utf8',
-      );
+      const [trackerSource, migrationSource, focusedSaveSource, inspectionsViewSource, scheduleSource] = await Promise.all([
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260716100000_normalize_project_inspections.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260722090000_add_focused_inspection_save.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+      ]);
       assert.match(migrationSource, /create table if not exists public\.project_inspections/);
       assert.match(migrationSource, /create table if not exists public\.project_inspection_files/);
       assert.match(migrationSource, /create or replace function public\.sync_normalized_project_inspections/);
@@ -1130,6 +1132,17 @@ const tests = [
       assert.match(trackerSource, /\/rest\/v1\/project_inspection_files\?select=/);
       assert.match(trackerSource, /rpcName = inspectionsOnly \? 'save_normalized_project_inspections'/);
       assert.match(trackerSource, /using project JSON inspection data/);
+      assert.match(trackerSource, /export async function saveProjectInspection/);
+      assert.match(trackerSource, /'save_project_inspection'/);
+      assert.match(trackerSource, /p_expected_file_versions: expectedFileVersions/);
+      assert.match(focusedSaveSource, /create or replace function public\.save_project_inspection/);
+      assert.match(focusedSaveSource, /public\.app_user_can_edit_project\(p_project_id\)/);
+      assert.match(focusedSaveSource, /NORMALIZED_VERSION_CONFLICT:inspections/);
+      assert.match(focusedSaveSource, /grant execute on function public\.save_project_inspection/);
+      assert.match(inspectionsViewSource, /saveProjectInspection\(nextState, project\.id, nextInspection\)/);
+      assert.match(scheduleSource, /saveProjectInspection\(nextState, project\.id, nextInspection\)/);
+      assert.match(inspectionsViewSource, /Failed to save inspection\./);
+      assert.match(scheduleSource, /Failed to save inspection\./);
 
       const [project] = hydrateProjectsWithNormalizedInspections(
         [{ id: 'project-1', name: 'Lake House', inspections: [], _normalizedVersions: { phases: { p1: 2 } } }],
@@ -1392,13 +1405,41 @@ const tests = [
     },
   },
   {
+    name: 'staff startup renders a compact overview before deferred workspace hydration',
+    async run() {
+      const [appSource, trackerSource, projectSource, detailSource, migrationSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260722120000_add_progressive_staff_bootstrap.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.match(migrationSource, /create or replace function public\.get_app_startup_bootstrap/);
+      assert.match(migrationSource, /public\.get_project_portal_bootstrap\(\)/);
+      assert.match(migrationSource, /public\.project_core_records/);
+      assert.match(migrationSource, /public\.task_core_records/);
+      assert.match(migrationSource, /startupProjectId/);
+      assert.match(migrationSource, /grant execute on function public\.get_app_startup_bootstrap/);
+      assert.match(trackerSource, /export async function loadTrackerStartupData/);
+      assert.match(trackerSource, /'get_app_startup_bootstrap'/);
+      assert.match(trackerSource, /deferredDataStatus: 'loading'/);
+      assert.match(appSource, /loadTrackerStartupData/);
+      assert.match(appSource, /loadTrackerData\(\{ force: true \}\)/);
+      assert.match(appSource, /deferredDataStatus: 'ready'/);
+      assert.match(appSource, /The project overview is ready/);
+      assert.match(projectSource, /deferredDataLoading=\{deferredDataLoading\}/);
+      assert.match(detailSource, /activeDetailTab !== 'overview' && deferredDataLoading/);
+    },
+  },
+  {
     name: 'application users use normalized rows linked to project access',
     async run() {
-      const trackerSource = await readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8');
-      const migrationSource = await readFile(
-        new URL('../supabase/migrations/20260716210000_normalize_app_users.sql', import.meta.url),
-        'utf8',
-      );
+      const [trackerSource, settingsSource, migrationSource, customerLinkMigration] = await Promise.all([
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260716210000_normalize_app_users.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260722140000_link_portal_users_to_people.sql', import.meta.url), 'utf8'),
+      ]);
       assert.match(migrationSource, /create table if not exists public\.app_users/);
       assert.match(migrationSource, /create or replace function public\.sync_normalized_app_users/);
       assert.match(migrationSource, /settings_normalized_app_users_trigger/);
@@ -1407,17 +1448,32 @@ const tests = [
       assert.match(trackerSource, /export function hydrateSettingsWithNormalizedUsers/);
       assert.match(trackerSource, /\/rest\/v1\/app_users\?select=/);
       assert.match(trackerSource, /using settings JSON users/);
+      assert.match(trackerSource, /\['Customer', 'Subcontractor'\]\.includes\(role\)/);
+      assert.match(settingsSource, /Select a \{linkedRoleLabel\} from People/);
+      assert.match(settingsSource, /\['Customer', 'Subcontractor'\]\.includes\(targetUser\.role\)/);
+      assert.match(settingsSource, /savedPersonId/);
+      assert.match(settingsSource, /role === 'Subcontractor'\) return contactName \|\| companyName/);
+      assert.match(settingsSource, /subcontractorPeople/);
+      assert.match(customerLinkMigration, /app_users_linked_person_unique/);
+      assert.match(customerLinkMigration, /validate_app_user_person_link/);
+      assert.match(customerLinkMigration, /when 'Subcontractor' then 'sub'/);
+      assert.match(customerLinkMigration, /people_protect_linked_portal_person/);
+      assert.match(customerLinkMigration, /'personId', coalesce\(app_user\.data->>'personId'/);
 
       const settings = hydrateSettingsWithNormalizedUsers(
         { currentUserId: 'user-2', users: [{ id: 'legacy', name: 'Legacy', role: 'Admin' }] },
         [
-          { id: 'user-2', position: 1, data: { name: 'Viewer', email: 'viewer@example.com', role: 'View Only' } },
+          { id: 'user-2', position: 1, data: { name: 'Customer', email: 'viewer@example.com', role: 'Customer', personId: 'employee:customer-1' } },
           { id: 'user-1', position: 0, data: { name: 'Admin', email: 'admin@example.com', role: 'Admin' } },
+          { id: 'user-3', position: 2, data: { name: 'Sub User', email: 'sub@example.com', role: 'Subcontractor', personId: 'sub:sub-1' } },
         ],
       );
-      assert.deepEqual(settings.users.map((user) => user.id), ['user-1', 'user-2']);
+      assert.deepEqual(settings.users.map((user) => user.id), ['user-1', 'user-2', 'user-3']);
       assert.equal(settings.currentUserId, 'user-2');
       assert.equal(settings.users[1].email, 'viewer@example.com');
+      assert.equal(settings.users[1].personId, 'employee:customer-1');
+      assert.equal(settings.users[2].name, 'Sub User');
+      assert.equal(settings.users[2].personId, 'sub:sub-1');
     },
   },
   {
@@ -2948,7 +3004,8 @@ const tests = [
       assert.match(appSource, /showTabs: !portalRole/);
       assert.match(appSource, /className="portal-account-bar"/);
       assert.match(appSource, /portal-account-bar[\s\S]*handleSignOut/);
-      assert.match(appSource, /loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData/);
+      assert.match(appSource, /loadCurrentAppUserProfile,[\s\S]*loadPortalTrackerData,[\s\S]*loadTrackerData/);
+      assert.match(appSource, /loadTrackerStartupData/);
       assert.match(appSource, /\? await loadPortalTrackerData/);
       assert.match(accessSource, /'Customer', 'Subcontractor'/);
       assert.match(projectsSource, /activeUser\?\.role !== 'Customer' \|\| selectedProjectId \|\| visibleProjects\.length !== 1/);
@@ -3039,6 +3096,44 @@ const tests = [
       assert.match(styleSource, /\.customer-project-view > \.project-detail-tabs[\s\S]*#project-tab-overview[\s\S]*#project-tab-photos/);
       assert.match(styleSource, /\.portal-account-bar/);
       assert.match(styleSource, /\.project-portal-response-form/);
+    },
+  },
+  {
+    name: 'selections support customer approval requests and synchronized decisions',
+    async run() {
+      const [selectionSource, detailSource, appSource, pushSource, functionSource, migrationSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectSelectionsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/androidPushNotifications.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260722160000_add_selection_customer_approvals.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(selectionSource, /sendSelectionForApproval/);
+      assert.match(selectionSource, /Assign at least one Customer user to this project/);
+      assert.match(selectionSource, /itemType: 'approval'/);
+      assert.match(selectionSource, /audience: 'customer'/);
+      assert.match(selectionSource, /status: 'response_requested'/);
+      assert.match(selectionSource, /selectionId: selection\.id/);
+      assert.match(selectionSource, /respondToSelectionApproval/);
+      assert.match(selectionSource, />Approve<\/button>/);
+      assert.match(selectionSource, />Decline<\/button>/);
+      assert.match(detailSource, /activeUser=\{activeUser\}/);
+      assert.match(pushSource, /detailTab: String\(event\.detailTab \|\| ''\)/);
+      assert.match(functionSource, /selection-approval-requested/);
+      assert.match(functionSource, /normalizeRole\(user\.data\?\.role\) === 'Customer' && accessIds\.has\(user\.id\)/);
+      assert.match(functionSource, /selectionId: kind === 'selection-approval-requested'/);
+      assert.match(appSource, /detailTab: extra\.detailTab \|\| ''/);
+      assert.match(appSource, /extra\.detailTab === 'selections' \? extra\.entityId/);
+      assert.match(migrationSource, /project_portal_items_selection_approval_idx/);
+      assert.match(migrationSource, /portal_row\.item_type <> 'approval'/);
+      assert.match(migrationSource, /actor_role <> 'Customer'/);
+      assert.match(migrationSource, /update public\.project_selections/);
+      assert.match(migrationSource, /'status', case when decision = 'approved' then 'selected' else 'needs decision' end/);
+      assert.match(migrationSource, /'approvalStatus', decision/);
+      assert.match(styleSource, /\.selection-approval-panel/);
+      assert.match(styleSource, /\.selection-approval-response/);
     },
   },
   {

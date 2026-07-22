@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
   createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
-  updateProject, updateProjectAndTasks, updateProjects, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
+  saveProjectInspection, updateProject, updateProjectAndTasks, updateProjects, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import {
   applyDelayToStep, cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds,
@@ -1269,18 +1269,15 @@ export default function NativeScheduleView({
         };
         nextState = await updateProjects(nextState, [nextSourceProject, nextTargetProject]);
       } else {
-        nextState = await updateProject(nextState, project.id, {
-          ...project,
-          inspections: (project.inspections || []).map((inspection) =>
-            inspection.id === inspectionDraft.id ? nextInspection : inspection,
-          ),
-        });
+        nextState = await saveProjectInspection(nextState, project.id, nextInspection);
       }
       onStateChange(nextState);
       await Promise.allSettled(
         filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
       );
       setInspectionDraft(null);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save inspection.', 'Save failed');
     } finally {
       endMutation(mutationKey);
     }

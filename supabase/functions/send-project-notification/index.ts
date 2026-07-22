@@ -5,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const allowedKinds = new Set(['task-created', 'task-updated', 'task-assigned', 'inspection-updated', 'comment-mentioned']);
+const allowedKinds = new Set(['task-created', 'task-updated', 'task-assigned', 'inspection-updated', 'comment-mentioned', 'selection-approval-requested']);
 let cachedGoogleToken: { value: string; expiresAt: number } | null = null;
 
 function jsonResponse(body: unknown, status = 200) {
@@ -116,10 +116,13 @@ Deno.serve(async (request) => {
     const requestedRecipients = new Set(
       Array.isArray(payload.recipientAppUserIds) ? payload.recipientAppUserIds.map(String) : [],
     );
+    const selectionApprovalRequest = kind === 'selection-approval-requested';
     const recipientIds = (appUsers || [])
       .filter((user) => user.id !== callerAppUser.id)
-      .filter((user) => normalizeRole(user.data?.role) === 'Admin'
-        || (accessIds.size ? accessIds.has(user.id) : normalizeRole(user.data?.role) === 'Edit'))
+      .filter((user) => selectionApprovalRequest
+        ? normalizeRole(user.data?.role) === 'Customer' && accessIds.has(user.id)
+        : normalizeRole(user.data?.role) === 'Admin'
+          || (accessIds.size ? accessIds.has(user.id) : normalizeRole(user.data?.role) === 'Edit'))
       .filter((user) => !requestedRecipients.size || requestedRecipients.has(user.id))
       .map((user) => user.id);
 
@@ -153,8 +156,10 @@ Deno.serve(async (request) => {
     const data = {
       kind,
       tab: String(payload.tab || 'projects'),
+      detailTab: String(payload.detailTab || ''),
       projectId,
       entityId: String(payload.entityId || ''),
+      selectionId: kind === 'selection-approval-requested' ? String(payload.entityId || '') : '',
       taskId: kind.startsWith('task-') ? String(payload.entityId || '') : '',
     };
 

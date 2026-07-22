@@ -177,6 +177,7 @@ export async function sendProjectPushNotification(event) {
         title: String(event.title || '').slice(0, 120),
         body: String(event.body || '').slice(0, 300),
         tab: String(event.tab || 'projects'),
+        detailTab: String(event.detailTab || ''),
         recipientAppUserIds: Array.isArray(event.recipientAppUserIds) ? event.recipientAppUserIds : [],
       }),
     },

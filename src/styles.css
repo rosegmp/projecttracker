@@ -3168,6 +3168,36 @@ button.calendar-chip {
   width: 100%;
 }
 
+.user-people-link {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.user-people-link > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.user-people-link select {
+  min-width: 0;
+  width: 100%;
+}
+
+.user-people-link small {
+  grid-column: 2;
+  color: var(--muted);
+}
+
 .user-role-actions {
   display: flex;
   align-items: flex-start;
@@ -3329,6 +3359,7 @@ button.calendar-chip {
   }
 
   .user-role-row,
+  .user-people-link,
   .user-project-access,
   .user-role-actions,
   .auth-invite-message {
@@ -3340,6 +3371,14 @@ button.calendar-chip {
     justify-content: flex-start;
     flex-wrap: nowrap;
     overflow-x: auto;
+  }
+
+  .user-people-link {
+    grid-template-columns: 1fr;
+  }
+
+  .user-people-link small {
+    grid-column: 1;
   }
 }
 
@@ -6284,6 +6323,63 @@ button.calendar-chip {
 
 .selection-card-footer small {
   color: var(--muted);
+}
+
+.selection-approval-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent) 12%);
+}
+
+.selection-approval-approved {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+}
+
+.selection-approval-declined {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.selection-approval-heading,
+.selection-approval-heading > div,
+.selection-approval-response {
+  display: flex;
+  gap: 8px;
+}
+
+.selection-approval-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.selection-approval-heading > div,
+.selection-approval-response {
+  flex-direction: column;
+}
+
+.selection-approval-heading span,
+.selection-approval-panel p,
+.selection-approval-response label > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.selection-approval-panel p {
+  margin: 0;
+}
+
+.selection-approval-response textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+}
+
+.selection-approval-response > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* Keep every project subpage visually consistent with the flat overview. */

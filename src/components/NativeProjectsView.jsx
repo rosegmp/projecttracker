@@ -43,6 +43,7 @@ export default function NativeProjectsView({
   users = [],
   homeSignal = 0,
   navigationTarget = null,
+  deferredDataLoading = false,
 }) {
   const [projectDraft, setProjectDraft] = useState(null);
   const [selectedProjectId, setSelectedProjectId] = useState(getProjectIdFromLocation);
@@ -806,8 +807,9 @@ export default function NativeProjectsView({
           project={selectedProject}
           tasks={selectedProjectTasks}
           settings={data.settings}
-          canEdit={!readOnly}
+          canEdit={!readOnly && !deferredDataLoading}
           activeUser={activeUser}
+          deferredDataLoading={deferredDataLoading}
           selectionNavigationRequest={navigationTarget}
           onEdit={startEdit}
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
@@ -817,6 +819,11 @@ export default function NativeProjectsView({
         </Suspense>
       ) : (
         <>
+          {deferredDataLoading ? (
+            <div className="empty-state compact" role="status" aria-live="polite">
+              <p>Project summaries are ready. Loading portfolio schedules, inspections, and files...</p>
+            </div>
+          ) : null}
           {visibleProjects.length ? (
             <section className="workspace-section projects-overview-section">
               <div className="projects-overview-main">

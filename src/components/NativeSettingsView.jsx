@@ -34,6 +34,13 @@ const PEOPLE_LIST_COLUMN_DEFS = [
 ];
 function normalizeAppUserRole(role) { return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only'; }
 function normalizeProjectAccessUserIds(userIds) { return Array.isArray(userIds) ? Array.from(new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean))) : []; }
+function getLinkedPersonId(person, source = 'employee') { return String(person?._personKey || (person?.id ? `${source}:${person.id}` : '')).trim(); }
+function getLinkedPersonName(person, role) {
+  const contactName = `${person?.first || ''} ${person?.last || ''}`.trim();
+  const companyName = String(person?.company || '').trim();
+  if (role === 'Subcontractor') return contactName || companyName || 'Unnamed subcontractor';
+  return contactName || companyName || 'Unnamed customer';
+}
 
 function getNthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
   const firstDay = new Date(year, monthIndex, 1);
@@ -258,6 +265,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               name: String(user?.name || '').trim() || 'Unnamed user',
               email: String(user?.email || '').trim(),
               role: normalizeAppUserRole(String(user?.role || 'View Only')),
+              personId: String(user?.personId || '').trim(),
             }))
           : [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
         currentUserId:
@@ -286,6 +294,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       name: String(user?.name || '').trim() || 'Unnamed user',
       email: String(user?.email || '').trim(),
       role: normalizeAppUserRole(String(user?.role || 'View Only')),
+      personId: String(user?.personId || '').trim(),
       projectIds: data.projects
         .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
         .map((project) => project.id),
@@ -295,8 +304,33 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       savedName: String(user?.name || '').trim() || 'Unnamed user',
       savedEmail: String(user?.email || '').trim(),
       savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
+      savedPersonId: String(user?.personId || '').trim(),
       persisted: true,
     })),
+  );
+
+  const customerPeople = useMemo(
+    () => (data.employees || [])
+      .filter((person) => (person.peopleType || 'emp') === 'customer')
+      .map((person) => ({
+        ...person,
+        personId: getLinkedPersonId(person),
+        displayName: getLinkedPersonName(person, 'Customer'),
+      }))
+      .filter((person) => person.personId)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+    [data.employees],
+  );
+  const subcontractorPeople = useMemo(
+    () => (data.subs || [])
+      .map((person) => ({
+        ...person,
+        personId: getLinkedPersonId(person, 'sub'),
+        displayName: getLinkedPersonName(person, 'Subcontractor'),
+      }))
+      .filter((person) => person.personId)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+    [data.subs],
   );
 
   useEffect(() => {
@@ -354,6 +388,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           name: String(user?.name || '').trim() || 'Unnamed user',
           email: String(user?.email || '').trim(),
           role: normalizeAppUserRole(String(user?.role || 'View Only')),
+          personId: String(user?.personId || '').trim(),
           projectIds: data.projects
             .filter((project) => normalizeProjectAccessUserIds(project.accessUserIds).includes(user?.id))
             .map((project) => project.id),
@@ -363,6 +398,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           savedName: String(user?.name || '').trim() || 'Unnamed user',
           savedEmail: String(user?.email || '').trim(),
           savedRole: normalizeAppUserRole(String(user?.role || 'View Only')),
+          savedPersonId: String(user?.personId || '').trim(),
           persisted: true,
         })),
         ...unsaved,
@@ -672,7 +708,33 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     setUserDrafts((current) =>
       current.map((user) =>
         user.id === userId
-          ? { ...user, [field]: field === 'role' ? normalizeAppUserRole(value) : value }
+          ? field === 'role'
+            ? (() => {
+                const nextRole = normalizeAppUserRole(value);
+                return {
+                  ...user,
+                  role: nextRole,
+                  personId: nextRole === user.role && ['Customer', 'Subcontractor'].includes(nextRole) ? user.personId : '',
+                };
+              })()
+            : { ...user, [field]: value }
+          : user,
+      ),
+    );
+  }
+
+  function handleLinkedPersonChange(userId, personId, role) {
+    const people = role === 'Subcontractor' ? subcontractorPeople : customerPeople;
+    const linkedPerson = people.find((person) => person.personId === personId);
+    setUserDrafts((current) =>
+      current.map((user) =>
+        user.id === userId
+          ? {
+              ...user,
+              personId,
+              name: linkedPerson ? linkedPerson.displayName : user.name,
+              email: linkedPerson?.email ? String(linkedPerson.email).trim() : user.email,
+            }
           : user,
       ),
     );
@@ -686,6 +748,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       user.name !== user.savedName ||
       user.email !== user.savedEmail ||
       user.role !== user.savedRole ||
+      String(user.personId || '') !== String(user.savedPersonId || '') ||
       projectIds.length !== savedProjectIds.length ||
       projectIds.some((projectId) => !savedProjectIds.includes(projectId))
     );
@@ -725,6 +788,22 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   async function saveUserDraft(userId) {
     const targetUser = userDrafts.find((user) => user.id === userId);
     if (!targetUser) return;
+    if (['Customer', 'Subcontractor'].includes(targetUser.role) && !String(targetUser.personId || '').trim()) {
+      const label = targetUser.role === 'Subcontractor' ? 'subcontractor' : 'customer';
+      await showAppAlert(`Select the matching ${label} from the People list before saving this ${targetUser.role} user.`, `${targetUser.role} link required`);
+      return;
+    }
+    if (
+      targetUser.personId &&
+      userDrafts.some((user) => user.id !== targetUser.id && user.personId === targetUser.personId)
+    ) {
+      const label = targetUser.role === 'Subcontractor' ? 'subcontractor' : 'customer';
+      await showAppAlert(
+        `That ${label} is already linked to another application user.`,
+        `${targetUser.role} already linked`,
+      );
+      return;
+    }
     const users = userDrafts
       .filter((user) => user.persisted || user.id === userId)
       .map((user) =>
@@ -734,12 +813,14 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               name: String(user.name || '').trim() || 'Unnamed user',
               email: String(user.email || '').trim(),
               role: normalizeAppUserRole(user.role),
+              personId: ['Customer', 'Subcontractor'].includes(normalizeAppUserRole(user.role)) ? String(user.personId || '').trim() : '',
             }
           : {
               id: user.id,
               name: String(user.savedName || '').trim() || 'Unnamed user',
               email: String(user.savedEmail || '').trim(),
               role: normalizeAppUserRole(user.savedRole),
+              personId: ['Customer', 'Subcontractor'].includes(normalizeAppUserRole(user.savedRole)) ? String(user.savedPersonId || '').trim() : '',
             },
       );
     let nextState = await runSettingsMutation({ users }, ['settings', 'user', userId]);
@@ -756,11 +837,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               name: String(user.name || '').trim() || 'Unnamed user',
               email: String(user.email || '').trim(),
               role: normalizeAppUserRole(user.role),
+              personId: ['Customer', 'Subcontractor'].includes(normalizeAppUserRole(user.role)) ? String(user.personId || '').trim() : '',
               projectIds: normalizeProjectAccessUserIds(user.projectIds),
               savedProjectIds: normalizeProjectAccessUserIds(user.projectIds),
               savedName: String(user.name || '').trim() || 'Unnamed user',
               savedEmail: String(user.email || '').trim(),
               savedRole: normalizeAppUserRole(user.role),
+              savedPersonId: ['Customer', 'Subcontractor'].includes(normalizeAppUserRole(user.role)) ? String(user.personId || '').trim() : '',
               persisted: true,
             }
           : user,
@@ -813,11 +896,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         name: '',
         email: '',
         role: 'View Only',
+        personId: '',
         projectIds: [],
         savedProjectIds: [],
         savedName: '',
         savedEmail: '',
         savedRole: 'View Only',
+        savedPersonId: '',
         persisted: false,
       },
     ]);
@@ -1507,6 +1592,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                     : hasPendingChanges
                       ? 'Save this user before sending an invite'
                       : 'Send login invite';
+                  const linkedPeople = user.role === 'Subcontractor' ? subcontractorPeople : customerPeople;
+                  const linkedRoleLabel = user.role === 'Subcontractor' ? 'subcontractor' : 'customer';
                   return (
                   <div key={user.id} className="user-role-card">
                     <div className="user-role-row">
@@ -1532,6 +1619,35 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
                       </select>
                     </div>
+                    {['Customer', 'Subcontractor'].includes(user.role) ? (
+                      <label className="user-people-link">
+                        <span>Linked {linkedRoleLabel}</span>
+                        <select
+                          value={user.personId || ''}
+                          onChange={(event) => handleLinkedPersonChange(user.id, event.target.value, user.role)}
+                          disabled={userSaving}
+                          aria-label={`Linked ${linkedRoleLabel} for ${user.name || 'user'}`}
+                        >
+                          <option value="">Select a {linkedRoleLabel} from People</option>
+                          {linkedPeople.map((person) => (
+                            <option
+                              key={person.personId}
+                              value={person.personId}
+                              disabled={userDrafts.some((otherUser) =>
+                                otherUser.id !== user.id && otherUser.personId === person.personId,
+                              )}
+                            >
+                              {person.displayName}{person.email ? ` · ${person.email}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <small>
+                          {linkedPeople.length
+                            ? `Selecting a ${linkedRoleLabel} fills the User name and email while keeping a durable People link.`
+                            : `Add a ${user.role} in People before saving this user.`}
+                        </small>
+                      </label>
+                    ) : null}
                     <div className="user-project-access">
                       <div className="user-project-access-header">
                         <span>Project access</span>
@@ -1574,7 +1690,9 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                       <button
                         className={`button secondary gantt-icon-button inline-save-button${userSaving ? ' is-loading' : ''}`}
                         type="button"
-                        onClick={() => void saveUserDraft(user.id)}
+                        onClick={() => void saveUserDraft(user.id).catch((error) =>
+                          showAppAlert(error instanceof Error ? error.message : 'Unable to save this user.', 'Save failed')
+                        )}
                         disabled={userSaving || !hasPendingChanges}
                         title="Save user"
                         aria-label={`Save ${user.name || 'user'}`}

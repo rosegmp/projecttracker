@@ -4,6 +4,8 @@ import {
   createPerson, createTask, deleteProjectFileFromStorage, downloadProjectFileFromStorage,
   isSupabaseStorageConfigured, updateProject, updateProjectSelectionVisibility, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
+import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { sendProjectPushNotification } from '../utils/androidPushNotifications.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
@@ -19,11 +21,29 @@ const SelectionModal = lazy(() => import('./SelectionModal.jsx'));
 const SELECTION_STATUS_OPTIONS = ['needs decision', 'selected', 'ordered', 'installed'];
 const SELECTION_CATEGORY_OPTIONS = ['Exterior', 'Interior', 'Flooring', 'Cabinets', 'Countertops', 'Plumbing', 'Electrical', 'Paint', 'Appliances', 'Misc'];
 
+function nextPortalItemNumber(records) {
+  const highest = (records || []).reduce(
+    (max, record) => Math.max(max, Number(String(record.number || '').match(/\d+/)?.[0]) || 0),
+    0,
+  );
+  return `POR-${String(highest + 1).padStart(3, '0')}`;
+}
+
+function selectionApprovalMessage(selection) {
+  const details = [
+    selection.chosenOption ? `Proposed selection: ${selection.chosenOption}.` : '',
+    selection.vendor ? `Vendor: ${selection.vendor}.` : '',
+    selection.notes ? `Notes: ${selection.notes}` : '',
+  ].filter(Boolean);
+  return [`Please review and approve or decline ${selection.itemName || 'this selection'}.`, ...details].join('\n\n');
+}
+
 export default function ProjectSelectionsManager({
   data,
   project,
   onStateChange,
   readOnly = false,
+  activeUser = null,
   highlightSelectionId = '',
   highlightToken = '',
   onOpenTask = () => {},
@@ -37,10 +57,28 @@ export default function ProjectSelectionsManager({
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchFilter, setSearchFilter] = useState('');
   const [activeHighlightSelectionId, setActiveHighlightSelectionId] = useState('');
+  const [portalItems, setPortalItems] = useState([]);
+  const [approvalLoading, setApprovalLoading] = useState(true);
+  const [approvalNotice, setApprovalNotice] = useState('');
+  const [approvalResponseDrafts, setApprovalResponseDrafts] = useState({});
   const previewUrlsRef = useRef({});
   const selectionCardRefs = useRef({});
 
   const selections = project?.selections || [];
+  const customerMode = activeUser?.role === 'Customer';
+  const portalService = useMemo(
+    () => createConstructionWorkflowService({ projectId: project.id, canEdit: !readOnly }),
+    [project.id, readOnly],
+  );
+  const selectionApprovalById = useMemo(() => {
+    const approvals = new Map();
+    portalItems.forEach((record) => {
+      const selectionId = String(record?.selectionId || '').trim();
+      if (!selectionId || record.itemType !== 'approval' || approvals.has(selectionId)) return;
+      approvals.set(selectionId, record);
+    });
+    return approvals;
+  }, [portalItems]);
   const taskMap = useMemo(
     () => new Map((data.tasks || []).map((task) => [task.id, task])),
     [data.tasks],
@@ -58,6 +96,25 @@ export default function ProjectSelectionsManager({
   useEffect(() => {
     previewUrlsRef.current = previewUrls;
   }, [previewUrls]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setApprovalLoading(true);
+    setApprovalNotice('');
+    void portalService.list('portalItems')
+      .then((result) => {
+        if (cancelled) return;
+        setPortalItems(result.records || []);
+        if (result.local) setApprovalNotice('Customer approval delivery is unavailable while portal storage is device-only.');
+      })
+      .catch((error) => {
+        if (!cancelled) setApprovalNotice(error instanceof Error ? error.message : 'Unable to load selection approvals.');
+      })
+      .finally(() => {
+        if (!cancelled) setApprovalLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [portalService]);
 
   useEffect(() => {
     return () => {
@@ -404,6 +461,90 @@ export default function ProjectSelectionsManager({
     }
   }
 
+  async function sendSelectionForApproval(selection) {
+    if (!project?.id || !selection?.id) return;
+    const projectAccessIds = new Set((project.accessUserIds || []).map(String));
+    const recipientAppUserIds = (data.settings?.users || [])
+      .filter((user) => user.role === 'Customer' && projectAccessIds.has(String(user.id)))
+      .map((user) => user.id);
+    if (!recipientAppUserIds.length) {
+      await showAppAlert(
+        'Assign at least one Customer user to this project before sending a selection for approval.',
+        'Customer access required',
+      );
+      return;
+    }
+    const confirmed = await showAppConfirm(
+      `Send ${selection.itemName || 'this selection'} to the assigned customer user(s) for approval?`,
+      { title: 'Request customer approval', confirmLabel: 'Send request' },
+    );
+    if (!confirmed) return;
+    const mutationKey = ['selection', selection.id, 'approval'];
+    beginMutation(mutationKey);
+    setApprovalNotice('');
+    try {
+      const result = await portalService.save('portalItems', {
+        id: '',
+        number: nextPortalItemNumber(portalItems),
+        title: `Selection approval: ${selection.itemName || 'Selection'}`,
+        itemType: 'approval',
+        audience: 'customer',
+        status: 'response_requested',
+        dueDate: '',
+        message: selectionApprovalMessage(selection),
+        response: '',
+        selectionId: selection.id,
+        selectionSnapshot: {
+          itemName: selection.itemName || '',
+          chosenOption: selection.chosenOption || '',
+          vendor: selection.vendor || '',
+        },
+        version: 0,
+      });
+      setPortalItems((current) => [result.record, ...current]);
+      if (result.local) {
+        setApprovalNotice('The request was saved only on this device and was not delivered to the customer.');
+        return;
+      }
+      try {
+        await sendProjectPushNotification({
+          projectId: project.id,
+          kind: 'selection-approval-requested',
+          entityId: selection.id,
+          title: `Selection approval · ${project.name || 'Project'}`,
+          body: `${selection.itemName || 'A selection'} is ready for your review.`,
+          tab: 'projects',
+          detailTab: 'selections',
+          recipientAppUserIds,
+        });
+        setApprovalNotice('Approval request sent to the assigned customer user(s).');
+      } catch {
+        setApprovalNotice('The approval request was saved. Live notification delivery was unavailable.');
+      }
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to send this selection for approval.', 'Send failed');
+    } finally {
+      endMutation(mutationKey);
+    }
+  }
+
+  async function respondToSelectionApproval(selection, approval, decision) {
+    const mutationKey = ['selection', selection.id, 'approval-response'];
+    beginMutation(mutationKey);
+    setApprovalNotice('');
+    try {
+      const response = String(approvalResponseDrafts[approval.id] || '').trim();
+      const result = await portalService.respondToPortalItem(approval, response, decision);
+      setPortalItems((current) => current.map((item) => (item.id === approval.id ? result.record : item)));
+      setApprovalResponseDrafts((current) => ({ ...current, [approval.id]: '' }));
+      setApprovalNotice(decision === 'approved' ? 'Selection approved.' : 'Selection declined.');
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to save your approval response.', 'Response failed');
+    } finally {
+      endMutation(mutationKey);
+    }
+  }
+
   function downloadSelectionFile(file) {
     void downloadFileWithUi(file, { failureMessage: 'Unable to download selection file.' });
   }
@@ -483,6 +624,8 @@ export default function ProjectSelectionsManager({
         </section>
       ) : null}
 
+      {approvalNotice ? <div className="project-workflow-notice" role="status">{approvalNotice}</div> : null}
+
       <div className="files-toolbar project-files-toolbar">
         <div className="files-toolbar-actions">
           <span className="project-photos-count">
@@ -536,7 +679,12 @@ export default function ProjectSelectionsManager({
 
       {filteredSelections.length ? (
         <div className="selection-grid">
-          {filteredSelections.map((selection) => (
+          {filteredSelections.map((selection) => {
+            const approval = selectionApprovalById.get(selection.id) || null;
+            const awaitingApproval = approval?.status === 'response_requested';
+            const approvalSaving = isMutating(['selection', selection.id, 'approval']);
+            const responseSaving = isMutating(['selection', selection.id, 'approval-response']);
+            return (
             <article
               key={selection.id}
               ref={(node) => {
@@ -601,6 +749,40 @@ export default function ProjectSelectionsManager({
                 </div>
               ) : null}
               {selection.notes ? <p className="inspection-notes">{selection.notes}</p> : null}
+              {approval ? (
+                <section className={`selection-approval-panel selection-approval-${approval.status || 'response_requested'}`}>
+                  <div className="selection-approval-heading">
+                    <div>
+                      <strong>Customer approval</strong>
+                      <span>{approval.status === 'approved' ? 'Approved' : approval.status === 'declined' ? 'Declined' : 'Response requested'}</span>
+                    </div>
+                    <span className={`status-pill status-${approval.status || 'response_requested'}`}>
+                      {approval.status === 'response_requested' ? 'awaiting customer' : approval.status}
+                    </span>
+                  </div>
+                  {approval.response ? <p><strong>Customer response:</strong> {approval.response}</p> : null}
+                  {customerMode && awaitingApproval ? (
+                    <div className="selection-approval-response">
+                      <label>
+                        <span>Response (optional)</span>
+                        <textarea
+                          value={approvalResponseDrafts[approval.id] || ''}
+                          onChange={(event) => setApprovalResponseDrafts((current) => ({
+                            ...current,
+                            [approval.id]: event.target.value,
+                          }))}
+                          disabled={responseSaving}
+                          placeholder="Add a comment for the project team"
+                        />
+                      </label>
+                      <div>
+                        <button className="button primary" type="button" disabled={responseSaving} onClick={() => void respondToSelectionApproval(selection, approval, 'approved')}>Approve</button>
+                        <button className="button danger" type="button" disabled={responseSaving} onClick={() => void respondToSelectionApproval(selection, approval, 'declined')}>Decline</button>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
               {(selection.attachments?.length || selection.photos?.length) ? (
                 <div className="selection-file-list">
                   {(selection.attachments || []).map((file) => (
@@ -640,6 +822,16 @@ export default function ProjectSelectionsManager({
                 </div>
                 <div className="task-row-actions">
                   {!readOnly ? (
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => void sendSelectionForApproval(selection)}
+                      disabled={approvalLoading || approvalSaving || awaitingApproval || approval?.status === 'approved'}
+                    >
+                      {approvalSaving ? 'Sending...' : awaitingApproval ? 'Awaiting customer' : approval?.status === 'approved' ? 'Approved' : approval?.status === 'declined' ? 'Send again' : 'Send for approval'}
+                    </button>
+                  ) : null}
+                  {!readOnly ? (
                     <button className="button secondary" type="button" onClick={() => void createTaskFromSelection(selection)} disabled={isMutating(['selection', selection.id, 'create-task'])}>
                       {isMutating(['selection', selection.id, 'create-task']) ? 'Creating...' : 'Create task'}
                     </button>
@@ -652,7 +844,8 @@ export default function ProjectSelectionsManager({
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="empty-state compact">

@@ -205,6 +205,7 @@ export default function App() {
     concurrencyEnabled: false,
     storageMode: 'loading',
     storageIssue: '',
+    deferredDataStatus: 'idle',
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -221,6 +222,8 @@ export default function App() {
   });
   const trackerStateRef = useRef(trackerState);
   const previousActiveTabRef = useRef(activeTab);
+  const initialWorkspaceLoadedRef = useRef(false);
+  const refreshRequestIdRef = useRef(0);
 
   useEffect(() => {
     trackerStateRef.current = trackerState;
@@ -231,19 +234,57 @@ export default function App() {
       setLoading(false);
       return;
     }
+    const requestId = refreshRequestIdRef.current + 1;
+    refreshRequestIdRef.current = requestId;
+    const initialLoad = !initialWorkspaceLoadedRef.current;
     setLoading(true);
     setError('');
     try {
-      const { loadCurrentAppUserProfile, loadPortalTrackerData, loadTrackerData } = await loadTrackerDataModule();
+      const {
+        loadCurrentAppUserProfile,
+        loadPortalTrackerData,
+        loadTrackerData,
+        loadTrackerStartupData,
+      } = await loadTrackerDataModule();
+      if (initialLoad) {
+        const startup = await loadTrackerStartupData({
+          projectId: getProjectIdFromLocation(),
+          force: options?.force !== false,
+        });
+        if (requestId !== refreshRequestIdRef.current) return;
+        initialWorkspaceLoadedRef.current = true;
+        setTrackerState(startup.data);
+        if (!startup.complete) {
+          setLoading(false);
+          void loadTrackerData({ force: true })
+            .then((completeState) => {
+              if (requestId !== refreshRequestIdRef.current) return;
+              setTrackerState({ ...completeState, deferredDataStatus: 'ready' });
+            })
+            .catch((deferredError) => {
+              if (requestId !== refreshRequestIdRef.current) return;
+              setError(
+                deferredError instanceof Error
+                  ? `The overview loaded, but remaining workspace data did not: ${deferredError.message}`
+                  : 'The overview loaded, but remaining workspace data did not finish loading.',
+              );
+            });
+        }
+        return;
+      }
       const profile = await loadCurrentAppUserProfile();
       const next = ['Customer', 'Subcontractor'].includes(profile?.role)
         ? await loadPortalTrackerData({ profile, force: options?.force !== false })
         : await loadTrackerData({ force: options?.force !== false });
-      setTrackerState(next);
+      if (requestId === refreshRequestIdRef.current) {
+        setTrackerState({ ...next, deferredDataStatus: 'ready' });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
+      if (requestId === refreshRequestIdRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
+      }
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestIdRef.current) setLoading(false);
     }
   }
 
@@ -370,7 +411,12 @@ export default function App() {
           setTaskHighlightRequest({ taskId: extra.taskId, token: `${Date.now()}` });
         }
         if (targetTab === 'projects' && extra.projectId && extra.projectId !== 'all') {
-          setProjectNavigationTarget({ projectId: extra.projectId, token: `${Date.now()}` });
+          setProjectNavigationTarget({
+            projectId: extra.projectId,
+            detailTab: extra.detailTab || '',
+            selectionId: extra.selectionId || (extra.detailTab === 'selections' ? extra.entityId : ''),
+            token: `${Date.now()}`,
+          });
         }
         setActiveTab(targetTab);
     }
@@ -442,6 +488,7 @@ export default function App() {
     !trackerState.tasks.length &&
     !trackerState.subs.length &&
     !trackerState.employees.length;
+  const deferredDataLoading = trackerState.deferredDataStatus === 'loading';
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -618,6 +665,8 @@ export default function App() {
   async function handleSignOut() {
     const { signOutAuthSession } = await loadTrackerDataModule();
     await signOutAuthSession();
+    refreshRequestIdRef.current += 1;
+    initialWorkspaceLoadedRef.current = false;
     setAuthSession(null);
     setRecoveryMode(false);
     setRecoveryMessage(null);
@@ -630,6 +679,7 @@ export default function App() {
       employees: [],
       storageMode: 'loading',
       storageIssue: '',
+      deferredDataStatus: 'idle',
     }));
     setActiveTab('home');
   }
@@ -686,6 +736,16 @@ export default function App() {
     return <WorkspaceSplash message="Loading workspace" />;
   }
   const activeView = (() => {
+    if (deferredDataLoading && activeTab !== 'projects') {
+      return (
+        <section className="panel native-panel workspace-page">
+          <div className="empty-state compact" role="status" aria-live="polite">
+            <h2>Loading workspace details</h2>
+            <p>The project overview is ready. Schedule, tasks, people, and other detailed records are loading in the background.</p>
+          </div>
+        </section>
+      );
+    }
     if (activeTab === 'home') {
       return (
         <NativeHomeView
@@ -713,6 +773,7 @@ export default function App() {
           users={users}
           homeSignal={projectsHomeSignal}
           navigationTarget={projectNavigationTarget}
+          deferredDataLoading={deferredDataLoading}
         />
       );
     }

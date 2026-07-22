@@ -408,6 +408,7 @@ function normalizeAppUser(user, index = 0) {
     name: String(user?.name || '').trim() || 'Unnamed user',
     email: String(user?.email || '').trim(),
     role,
+    personId: ['Customer', 'Subcontractor'].includes(role) ? String(user?.personId || '').trim() : '',
   };
 }
 
@@ -2449,11 +2450,11 @@ export async function loadTrackerData({ force = false } = {}) {
   });
 }
 
-async function callPortalBootstrapRpc(functionName, label) {
+async function callPortalBootstrapRpc(functionName, label, body = {}) {
   const response = await fetchAuthorizedSupabase(`/rest/v1/rpc/${functionName}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(body),
   }, label);
   const text = await response.text();
   if (!response.ok) {
@@ -2466,6 +2467,130 @@ async function callPortalBootstrapRpc(functionName, label) {
   } catch {
     throw new Error(`${label} returned invalid JSON.`);
   }
+}
+
+function normalizePortalTrackerPayload(payload) {
+  const currentUser = payload?.currentUser;
+  if (!currentUser?.id || !['Customer', 'Subcontractor'].includes(currentUser.role)) {
+    throw new Error('The portal workspace returned an invalid account profile.');
+  }
+  const projects = Array.isArray(payload?.projects)
+    ? payload.projects.map((project) => {
+        const normalized = normalizeProject({ ...project, _version: Number(project.version) || 0 });
+        const sharedFolderIds = new Set(
+          (project?.files?.folders || []).map((folder) => String(folder?.id || '').trim()).filter(Boolean),
+        );
+        return {
+          ...normalized,
+          files: {
+            folders: (normalized.files?.folders || []).filter((folder) => sharedFolderIds.has(folder.id)),
+          },
+        };
+      })
+    : [];
+  return {
+    projects,
+    tasks: [],
+    subs: [],
+    employees: [],
+    settings: normalizeSettings({
+      ...EMPTY_SETTINGS,
+      ...(payload?.calendarSettings || {}),
+      users: [normalizeAppUser(currentUser, 0)],
+      currentUserId: currentUser.id,
+    }),
+    settingsLoadedFromSupabase: true,
+    settingsVersion: 0,
+    concurrencyEnabled: true,
+    storageMode: 'supabase',
+    storageIssue: '',
+    portalMode: true,
+    deferredDataStatus: 'ready',
+  };
+}
+
+function normalizeStaffStartupPayload(payload) {
+  const projectRows = Array.isArray(payload?.projects) ? payload.projects : [];
+  const taskRows = Array.isArray(payload?.tasks) ? payload.tasks : [];
+  const appUserRows = Array.isArray(payload?.appUsers) ? payload.appUsers : [];
+  const accessRows = Array.isArray(payload?.projectAccess) ? payload.projectAccess : [];
+  const settingsRow = payload?.settings && typeof payload.settings === 'object' ? payload.settings : null;
+  const startupProjectId = String(payload?.startupProjectId || '').trim();
+  const projectRecords = projectRows.map((row) => normalizeProject({
+    ...(row.data || row),
+    _version: Number(row.version) || 0,
+  }));
+  const projectsWithAccess = hydrateProjectsWithNormalizedAccess(projectRecords, accessRows);
+  const projectsWithSchedule = hydrateProjectsWithNormalizedSchedule(
+    projectsWithAccess,
+    Array.isArray(payload?.phases) ? payload.phases : [],
+    Array.isArray(payload?.steps) ? payload.steps : [],
+  );
+  const projectsWithAssets = hydrateProjectsWithNormalizedAssets(
+    projectsWithSchedule,
+    Array.isArray(payload?.folders) ? payload.folders : [],
+    Array.isArray(payload?.files) ? payload.files : [],
+    Array.isArray(payload?.photos) ? payload.photos : [],
+  );
+  const projectsWithSelections = hydrateProjectsWithNormalizedSelections(
+    projectsWithAssets,
+    Array.isArray(payload?.selections) ? payload.selections : [],
+    [],
+    [],
+  );
+  const projects = hydrateProjectsWithNormalizedInspections(
+    projectsWithSelections,
+    Array.isArray(payload?.inspections) ? payload.inspections : [],
+    [],
+  );
+  const tasks = taskRows.map((row) => normalizeTask({ ...(row.data || row), _version: Number(row.version) || 0 }));
+  const baseSettings = settingsRow
+    ? normalizeSettings(settingsRow.data || EMPTY_SETTINGS)
+    : normalizeSettings(fromStorage('cx_settings', EMPTY_SETTINGS));
+  const settings = appUserRows.length
+    ? hydrateSettingsWithNormalizedUsers(baseSettings, appUserRows)
+    : baseSettings;
+  if (settingsRow) writeStorage('cx_settings', settings);
+  return stripLegacySampleData({
+    projects,
+    tasks,
+    subs: [],
+    employees: [],
+    settings,
+    settingsVersion: Number(settingsRow?.version) || 0,
+    concurrencyEnabled: [...projectRows, ...taskRows, ...appUserRows, ...(settingsRow ? [settingsRow] : [])]
+      .some((row) => Number(row?.version) > 0),
+    settingsLoadedFromSupabase: !!settingsRow,
+    storageMode: 'supabase',
+    storageIssue: '',
+    portalMode: false,
+    startupProjectId,
+    deferredDataStatus: 'loading',
+  });
+}
+
+export async function loadTrackerStartupData({ projectId = '', force = false } = {}) {
+  if (force) trackerQueryClient.invalidateQueries(['startup']);
+  return trackerQueryClient.query({
+    key: ['startup', 'workspace', projectId || 'portfolio'],
+    staleTime: 15000,
+    retry: 1,
+    force,
+    queryFn: async () => {
+      const payload = await callPortalBootstrapRpc(
+        'get_app_startup_bootstrap',
+        'Workspace startup',
+        { p_project_id: projectId || null },
+      );
+      const profile = payload?.profile;
+      if (!profile?.id) throw new Error('The workspace startup response did not include an account profile.');
+      if (payload?.mode === 'portal') {
+        return { profile, data: normalizePortalTrackerPayload(payload?.portal), complete: true };
+      }
+      if (payload?.mode !== 'staff') throw new Error('The workspace startup response used an unknown account mode.');
+      return { profile, data: normalizeStaffStartupPayload(payload), complete: false };
+    },
+  });
 }
 
 export async function loadCurrentAppUserProfile() {
@@ -2495,42 +2620,7 @@ export async function loadPortalTrackerData({ profile, force = false } = {}) {
     force,
     queryFn: async () => {
       const payload = await callPortalBootstrapRpc('get_project_portal_bootstrap', 'Portal workspace');
-      const currentUser = payload?.currentUser;
-      if (!currentUser?.id || !['Customer', 'Subcontractor'].includes(currentUser.role)) {
-        throw new Error('The portal workspace returned an invalid account profile.');
-      }
-      const projects = Array.isArray(payload?.projects)
-        ? payload.projects.map((project) => {
-            const normalized = normalizeProject({ ...project, _version: Number(project.version) || 0 });
-            const sharedFolderIds = new Set(
-              (project?.files?.folders || []).map((folder) => String(folder?.id || '').trim()).filter(Boolean),
-            );
-            return {
-              ...normalized,
-              files: {
-                folders: (normalized.files?.folders || []).filter((folder) => sharedFolderIds.has(folder.id)),
-              },
-            };
-          })
-        : [];
-      return {
-        projects,
-        tasks: [],
-        subs: [],
-        employees: [],
-        settings: normalizeSettings({
-          ...EMPTY_SETTINGS,
-          ...(payload?.calendarSettings || {}),
-          users: [normalizeAppUser(currentUser, 0)],
-          currentUserId: currentUser.id,
-        }),
-        settingsLoadedFromSupabase: true,
-        settingsVersion: 0,
-        concurrencyEnabled: true,
-        storageMode: 'supabase',
-        storageIssue: '',
-        portalMode: true,
-      };
+      return normalizePortalTrackerPayload(payload);
     },
   });
 }
@@ -2894,6 +2984,59 @@ export async function updateProjectSelectionVisibility(currentState, projectId, 
     _normalizedVersions: {
       ...project._normalizedVersions,
       selections: { ...project._normalizedVersions.selections, [selectionId]: nextVersion },
+    },
+  };
+  invalidateTrackerQueries();
+  return {
+    ...currentState,
+    projects: currentState.projects.map((item) => (item.id === projectId ? nextProject : item)),
+  };
+}
+
+export async function saveProjectInspection(currentState, projectId, inspection) {
+  const project = currentState.projects.find((item) => item.id === projectId);
+  if (!project || !inspection?.id) throw new Error('Project inspection was not found.');
+  const expectedVersion = Number(project._normalizedVersions?.inspections?.[inspection.id]) || 0;
+  const expectedFileVersions = {
+    sticker: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:sticker`]) || 0,
+    report: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:report`]) || 0,
+  };
+
+  if (currentState.storageMode !== 'supabase' || !currentState.concurrencyEnabled || !project._normalizedVersions) {
+    return updateProject(currentState, projectId, {
+      ...project,
+      inspections: (project.inspections || []).some((item) => item.id === inspection.id)
+        ? (project.inspections || []).map((item) => (item.id === inspection.id ? inspection : item))
+        : [...(project.inspections || []), inspection],
+    });
+  }
+
+  const result = await callPortalVisibilityRpc('save_project_inspection', {
+    p_project_id: projectId,
+    p_inspection: stripRecordMetadata(inspection),
+    p_expected_version: expectedVersion,
+    p_expected_file_versions: expectedFileVersions,
+  }, 'Inspection save');
+  const nextInspectionVersion = Number(result?.inspectionVersion) || expectedVersion + 1;
+  const nextFileVersions = { ...project._normalizedVersions.inspectionFiles };
+  for (const kind of ['sticker', 'report']) {
+    const key = `${inspection.id}:${kind}`;
+    const version = Number(result?.fileVersions?.[kind]) || 0;
+    if (version) nextFileVersions[key] = version;
+    else delete nextFileVersions[key];
+  }
+  const nextProject = {
+    ...project,
+    inspections: (project.inspections || []).some((item) => item.id === inspection.id)
+      ? (project.inspections || []).map((item) => (item.id === inspection.id ? inspection : item))
+      : [...(project.inspections || []), inspection],
+    _normalizedVersions: {
+      ...project._normalizedVersions,
+      inspections: {
+        ...project._normalizedVersions.inspections,
+        [inspection.id]: nextInspectionVersion,
+      },
+      inspectionFiles: nextFileVersions,
     },
   };
   invalidateTrackerQueries();

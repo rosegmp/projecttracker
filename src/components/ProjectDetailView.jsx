@@ -120,6 +120,7 @@ export default function ProjectDetailView({
   settings,
   canEdit = true,
   activeUser = null,
+  deferredDataLoading = false,
   selectionNavigationRequest = null,
   onEdit,
   onDateClick,
@@ -519,6 +520,19 @@ export default function ProjectDetailView({
         </section>
       ) : null}
 
+      {activeDetailTab !== 'overview' && deferredDataLoading ? (
+        <section
+          id={`project-panel-${activeDetailTab}`}
+          className="project-detail-section project-detail-subtab-panel"
+          role="tabpanel"
+          aria-labelledby={`project-tab-${activeDetailTab}`}
+        >
+          <div className="empty-state compact" role="status" aria-live="polite">
+            <h3>Loading project details</h3>
+            <p>The overview is ready. This section will appear as soon as the remaining project records finish loading.</p>
+          </div>
+        </section>
+      ) : (
       <Suspense fallback={<div className="empty-state compact"><p>Loading project workspace...</p></div>}>
       {activeDetailTab === 'portal' ? (
         <section id="project-panel-portal" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-portal">
@@ -585,6 +599,7 @@ export default function ProjectDetailView({
             project={project}
             onStateChange={onStateChange}
             readOnly={!canEdit}
+            activeUser={activeUser}
             highlightSelectionId={selectionHighlightRequest?.selectionId || ''}
             highlightToken={selectionHighlightRequest?.token || ''}
             onOpenTask={(taskId) => {
@@ -653,6 +668,7 @@ export default function ProjectDetailView({
         </section>
       ) : null}
       </Suspense>
+      )}
 
     </div>
   );
