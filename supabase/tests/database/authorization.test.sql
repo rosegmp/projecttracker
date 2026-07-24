@@ -12,6 +12,12 @@ insert into public.projects (id, data) values
   ('auth-project-a', '{"name":"Authorized project","accessUserIds":["test-editor","test-viewer","test-customer"]}'),
   ('auth-project-b', '{"name":"Restricted project","accessUserIds":["test-admin"]}');
 
+insert into public.project_user_access (project_id, user_id, position) values
+  ('auth-project-a', 'test-editor', 0),
+  ('auth-project-a', 'test-viewer', 1),
+  ('auth-project-a', 'test-customer', 2),
+  ('auth-project-b', 'test-admin', 0);
+
 insert into public.tasks (id, data) values
   ('auth-task-a', '{"name":"Authorized task","projectId":"auth-project-a"}'),
   ('auth-task-b', '{"name":"Restricted task","projectId":"auth-project-b"}');
