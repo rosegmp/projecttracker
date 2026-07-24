@@ -151,7 +151,7 @@ test('successful internal sign-in starts at Home instead of a remembered or deep
   await page.getByLabel('Password').fill('correct-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
-  await expect(page).toHaveURL(/\?tab=home$/);
+  await expect(page).toHaveURL(/\?tab=home$/, { timeout: 20_000 });
   await expect(page.getByRole('button', { name: /^Home:/ })).toHaveAttribute('aria-current', 'page');
 });
 

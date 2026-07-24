@@ -8,6 +8,7 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `2f26a6c` Add staff mutation browser journeys
   - `5b0f2ea` Fix authorization test access fixtures
   - `6f7a51c` Start successful sign-ins on Home
   - `c311e47` Add administrator project tab visibility
@@ -36,8 +37,7 @@ Updated: 2026-07-24
 
 ### Next testing steps
 
-1. Add Customer selection approval and warranty submission journeys, then Subcontractor audience/file boundaries.
-2. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
+1. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
 
 ### Implemented milestone: Administrator-controlled project tabs
 
@@ -62,7 +62,16 @@ Updated: 2026-07-24
 - The Edit journey also receives a real mocked `VERSION_CONFLICT` response while saving an existing task and verifies that the UI preserves the edit and presents the actionable refresh/review/retry message.
 - Browser tests now serve a production Vite build through Preview with two workers. This avoids Windows development-server connection resets while lazy-loading the large Fluent UI module and matches the existing CI concurrency.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 6 Playwright journeys, the 306-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check`.
-- This milestone changes only tests, test-server configuration, and documentation. The Android APK was not rebuilt; the July 24 12:00 PM artifact from the immediately preceding runtime checkpoint remains current. This staff-testing milestone is committed locally but not yet pushed or deployed.
+- This milestone changes only tests, test-server configuration, and documentation. The Android APK was not rebuilt locally; the July 24 12:00 PM artifact from the immediately preceding runtime checkpoint remains current. Commit `2f26a6c` is pushed to `origin/main`, and GitHub Actions run `30115878420` passed the six browser journeys, regression/build/audit job, all 10 pgTAP authorization assertions, and Android debug build.
+
+### Implemented milestone: Customer and Subcontractor workflow journeys
+
+- Customer browser coverage now approves a selection linked to a customer-only portal request through `respond_to_project_portal_item`, verifying the item id/version, response text, approved decision, and updated response UI.
+- A separate Customer journey submits a warranty concern through `submit_customer_warranty_request`, verifies the allowlisted server payload, reloads through `list_customer_warranty_requests`, and displays the assigned `WAR-001` record.
+- Subcontractor coverage verifies the role remains limited to Portal, Selections, and Files; sees a subcontractor-audience request plus only the shared selection/folder/file supplied by the restricted bootstrap; and cannot navigate to Tasks or Warranty.
+- Playwright now uses a suite-wide 90-second test budget and 20-second assertion budget for Windows cold starts while retaining the production-preview server and two-worker concurrency.
+- Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 9 Playwright journeys, the 306-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check`.
+- This milestone changes only browser tests, their timing configuration, and documentation. No local APK rebuild is required. The portal-testing milestone is committed locally but not yet pushed.
 
 ## Current priority: Takeoff integration
 
