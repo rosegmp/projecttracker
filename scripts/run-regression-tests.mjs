@@ -3213,6 +3213,9 @@ const tests = [
       assert.match(workflowSource, /workflow_dispatch:/);
       assert.match(workflowSource, /environment: staging/);
       assert.match(workflowSource, /STAGING_SUPABASE_SERVICE_ROLE_KEY/);
+      assert.match(workflowSource, /STAGING_SUPABASE_DB_URL/);
+      assert.match(workflowSource, /Refusing to migrate the production Supabase project/);
+      assert.match(workflowSource, /supabase db push --db-url "\$STAGING_SUPABASE_DB_URL" --include-all/);
       assert.doesNotMatch(workflowSource, /push:|pull_request:/);
       assert.match(packageSource, /"test:staging": "node scripts\/run-staging-application-tests\.mjs"/);
     },

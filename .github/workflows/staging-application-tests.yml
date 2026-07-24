@@ -20,6 +20,7 @@ jobs:
       STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
       STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
       STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
 
     steps:
       - name: Check out repository
@@ -33,6 +34,24 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.1
+
+      - name: Apply tracked migrations to staging
+        shell: bash
+        run: |
+          if [ -z "$STAGING_SUPABASE_DB_URL" ]; then
+            echo "::error::STAGING_SUPABASE_DB_URL is not configured"
+            exit 1
+          fi
+          if [[ "$STAGING_SUPABASE_DB_URL" == *"oxojlwhmarafxuqvqgqg"* ]]; then
+            echo "::error::Refusing to migrate the production Supabase project"
+            exit 1
+          fi
+          supabase db push --db-url "$STAGING_SUPABASE_DB_URL" --include-all
 
       - name: Run disposable staging suite
         run: npm run test:staging

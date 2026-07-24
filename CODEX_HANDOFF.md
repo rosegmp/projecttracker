@@ -38,7 +38,7 @@ Updated: 2026-07-24
 
 ### Next testing steps
 
-1. Create a separate non-production Supabase project, apply the tracked migrations, and add its URL, anon key, and service-role key to the GitHub `staging` environment as `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, and `STAGING_SUPABASE_SERVICE_ROLE_KEY`.
+1. Create a separate non-production Supabase project and add its URL, anon key, service-role key, and database connection URL to the GitHub `staging` environment as `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, and `STAGING_SUPABASE_DB_URL`.
 2. Manually dispatch **Staging application authorization tests**, confirm the real Auth/REST/RPC assertions pass, and verify the disposable project, records, and four Auth/application users were removed.
 
 ### Implemented milestone: Administrator-controlled project tabs
@@ -77,7 +77,7 @@ Updated: 2026-07-24
 
 ### Implemented milestone: Isolated staging-suite foundation
 
-- A manual-only GitHub workflow now targets the separately scoped `staging` environment and requires exactly three non-production secrets: URL, anon key, and service-role key. It never runs on pushes or pull requests.
+- A manual-only GitHub workflow now targets the separately scoped `staging` environment and requires four non-production secrets: URL, anon key, service-role key, and database URL. It never runs on pushes or pull requests. Before testing, it applies all tracked migrations to the staging database; that step independently rejects a database URL containing the production project ref.
 - The application-level runner creates unique disposable Admin, Edit, Customer, and Subcontractor Auth/application users, one assigned project, one Admin-only project, a task, and audience-specific portal requests. It signs in through real Supabase Auth and verifies project RLS, filtered portal bootstraps, an Edit task mutation, Customer/Subcontractor audience filtering, and Customer warranty submission.
 - Cleanup runs in `finally` and removes workflow records, tasks, normalized access rows, projects, application users, and Auth users. Automated cleanup is the primary owner; Project Tracker repository maintainers own manual cleanup if a run reports a deletion failure.
 - The production project ref `oxojlwhmarafxuqvqgqg` is hard-blocked before any network write. A local negative check confirmed the runner refuses that URL.
