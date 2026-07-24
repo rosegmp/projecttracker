@@ -8,6 +8,9 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `3e2a99c` Apply migrations in staging test workflow
+  - `9f42380` Add isolated staging authorization suite
+  - `94a2aba` Record portal test CI checkpoint
   - `3447a2f` Add portal workflow browser journeys
   - `2f26a6c` Add staff mutation browser journeys
   - `5b0f2ea` Fix authorization test access fixtures
@@ -38,8 +41,8 @@ Updated: 2026-07-24
 
 ### Next testing steps
 
-1. Create a separate non-production Supabase project and add its URL, anon key, service-role key, and database connection URL to the GitHub `staging` environment as `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, and `STAGING_SUPABASE_DB_URL`.
-2. Manually dispatch **Staging application authorization tests**, confirm the real Auth/REST/RPC assertions pass, and verify the disposable project, records, and four Auth/application users were removed.
+1. Keep the push-triggered regression, Playwright, build, audit, Android, and local-Supabase authorization jobs green.
+2. Manually dispatch **Staging application authorization tests** after authorization-sensitive application or migration changes, and review its explicit cleanup result before treating the checkpoint as complete.
 
 ### Implemented milestone: Administrator-controlled project tabs
 
@@ -81,8 +84,15 @@ Updated: 2026-07-24
 - The application-level runner creates unique disposable Admin, Edit, Customer, and Subcontractor Auth/application users, one assigned project, one Admin-only project, a task, and audience-specific portal requests. It signs in through real Supabase Auth and verifies project RLS, filtered portal bootstraps, an Edit task mutation, Customer/Subcontractor audience filtering, and Customer warranty submission.
 - Cleanup runs in `finally` and removes workflow records, tasks, normalized access rows, projects, application users, and Auth users. Automated cleanup is the primary owner; Project Tracker repository maintainers own manual cleanup if a run reports a deletion failure.
 - The production project ref `oxojlwhmarafxuqvqgqg` is hard-blocked before any network write. A local negative check confirmed the runner refuses that URL.
-- The empty GitHub `staging` environment exists and currently has no secrets. No non-production Supabase project was available in the account inventory, and no staging write has run. Supabase CLI 2.109.1 remains unable to reach the authenticated management API from this workstation even though a credential-free HTTPS probe reaches it, so project creation and secret configuration remain the external prerequisites above.
+- A separate non-production Supabase project and all four required GitHub `staging` environment secrets are configured. Manual workflow run `30121239668` on commit `3e2a99c` successfully applied the complete tracked migration history, passed the real Auth/REST/RPC authorization assertions, and logged successful cleanup of its disposable fixture set.
+- Both CI workflows use `supabase/setup-cli@v3`, replacing the Node 20-targeted v1 action after the first successful staging run emitted GitHub's Node 20 deprecation warning. The Supabase CLI remains pinned to 2.109.1.
 - Local checkpoint verification passes all 123 regression tests, all 9 Playwright journeys, the 306-module production build, the staging runner syntax check, and `git diff --check`. No runtime application source changed, so the local Android APK was not rebuilt.
+
+### Recommendation roadmap #1 completion
+
+- Push CI now covers deterministic behavioral regressions, nine browser journeys, a production build and dependency audit, Android sync/debug compilation, and ten pgTAP authorization assertions against a freshly migrated local Supabase database.
+- The manual isolated-staging suite adds real hosted Supabase Auth, REST, RPC, RLS, migration replay, role-boundary, mutation, portal-audience, warranty-submission, and cleanup verification without using production.
+- Roadmap #1 is complete as of 2026-07-24. The proposed next roadmap milestone is production observability and privacy-safe error reporting; define its scope before implementation.
 
 ## Current priority: Takeoff integration
 

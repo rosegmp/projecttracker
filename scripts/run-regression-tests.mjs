@@ -3198,9 +3198,10 @@ const tests = [
   {
     name: 'staging application tests reject production and always clean disposable fixtures',
     async run() {
-      const [stagingSource, workflowSource, packageSource] = await Promise.all([
+      const [stagingSource, workflowSource, ciWorkflowSource, packageSource] = await Promise.all([
         readFile(new URL('./run-staging-application-tests.mjs', import.meta.url), 'utf8'),
         readFile(new URL('../.github/workflows/staging-application-tests.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
         readFile(new URL('../package.json', import.meta.url), 'utf8'),
       ]);
       assert.match(stagingSource, /PRODUCTION_PROJECT_REF = 'oxojlwhmarafxuqvqgqg'/);
@@ -3216,6 +3217,11 @@ const tests = [
       assert.match(workflowSource, /STAGING_SUPABASE_DB_URL/);
       assert.match(workflowSource, /Refusing to migrate the production Supabase project/);
       assert.match(workflowSource, /supabase db push --db-url "\$STAGING_SUPABASE_DB_URL" --include-all/);
+      assert.match(workflowSource, /supabase\/setup-cli@v3/);
+      assert.match(ciWorkflowSource, /supabase\/setup-cli@v3/);
+      assert.match(workflowSource, /version: 2\.109\.1/);
+      assert.match(ciWorkflowSource, /version: 2\.109\.1/);
+      assert.doesNotMatch(`${workflowSource}\n${ciWorkflowSource}`, /supabase\/setup-cli@v1/);
       assert.doesNotMatch(workflowSource, /push:|pull_request:/);
       assert.match(packageSource, /"test:staging": "node scripts\/run-staging-application-tests\.mjs"/);
     },
