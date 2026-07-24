@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "node scripts/run-regression-tests.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:server": "vite build && vite preview --host 127.0.0.1 --port 4173",
     "test:db": "supabase test db",
     "android:sync": "npm run build && npx cap sync android",
     "android:copy": "npm run build && npx cap copy android",

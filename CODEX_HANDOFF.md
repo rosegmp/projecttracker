@@ -8,6 +8,8 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `5b0f2ea` Fix authorization test access fixtures
+  - `6f7a51c` Start successful sign-ins on Home
   - `c311e47` Add administrator project tab visibility
   - `601a176` Add automated browser and authorization tests
   - `fa37a50` Add administrator workspace navigation controls
@@ -29,15 +31,13 @@ Updated: 2026-07-24
 - Added transactional pgTAP authorization coverage for Admin, Edit, View Only, Customer, assigned/unassigned projects, task visibility, authorized and rejected write-RPC calls, direct portal-table denial, and the filtered portal bootstrap boundary.
 - CI now installs Chromium and runs the Playwright journeys in the web job. A separate local-Supabase job starts the migrated database and runs `supabase test db`; no production accounts, secrets, or records are used.
 - Local checkpoint verification passes: 121 behavioral regression tests, 2 Playwright journeys, the 305-module production build, production dependency audit with zero vulnerabilities, JavaScript syntax checks, and `git diff --check`.
-- The pgTAP suite could not be executed on this Windows workstation because Docker is not installed. It is wired to execute in GitHub Actions, where the local Supabase database is available. Do not use `supabase test db --linked` as a substitute.
+- The pgTAP suite cannot execute on this Windows workstation because Docker is not installed. The first hosted run revealed that the test inserted only legacy project access JSON while its assertions expected normalized assignments; fixture-only commit `5b0f2ea` added `project_user_access` rows for both test projects without changing production authorization. GitHub Actions run `30114408370` then passed all 10 pgTAP assertions against a freshly migrated local Supabase database, along with the web and Android jobs. Do not use `supabase test db --linked` as a substitute.
 - The Android APK was not rebuilt for this test-only milestone; the immediately preceding `fa37a50` checkpoint already rebuilt it and no application/runtime source changed.
 
 ### Next testing steps
 
-1. Confirm the first CI local-database replay and pgTAP run after this milestone is pushed.
-2. Add staff Admin/Edit browser journeys for project/task mutations and optimistic-conflict behavior.
-3. Add Customer selection approval and warranty submission journeys, then Subcontractor audience/file boundaries.
-4. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
+1. Add Customer selection approval and warranty submission journeys, then Subcontractor audience/file boundaries.
+2. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
 
 ### Implemented milestone: Administrator-controlled project tabs
 
@@ -46,7 +46,7 @@ Updated: 2026-07-24
 - Hidden sections are removed from mouse and keyboard tab navigation. Project deep links, Overview live-count actions, schedule focus, recent-photo links, and task/selection cross-links cannot activate a hidden section; an active section that becomes hidden falls back to the first permitted tab.
 - The configuration persists in the existing versioned `app_settings` JSON as `visibleProjectTabs`, so no database migration is required.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 3 Playwright journeys, the 306-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
-- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 10:26 AM). The feature is committed locally but not yet pushed or deployed.
+- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 10:26 AM). Commit `c311e47` is pushed to `origin/main`; production deployment status has not been separately verified.
 
 ### Implemented milestone: Successful login starts at Home
 
@@ -54,7 +54,15 @@ Updated: 2026-07-24
 - Existing authorization remains authoritative after the reset: portal users and internal users for whom an Administrator has hidden Home continue to fall back to their first permitted workspace.
 - A deterministic Playwright journey covers a remembered Settings tab plus a stale project deep link and verifies that the signed-in Administrator lands on `?tab=home` with Home selected.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 4 Playwright journeys, the 306-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
-- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 12:00 PM). This login change is committed locally but not yet pushed or deployed.
+- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 12:00 PM). Commit `6f7a51c` is pushed to `origin/main`; production deployment status has not been separately verified.
+
+### Implemented milestone: Staff mutation and conflict browser coverage
+
+- New deterministic Playwright journeys exercise an Administrator creating a project through the real modal and versioned `apply_tracker_batch` boundary, plus an Edit user creating a project task through `save_task_with_attachments`.
+- The Edit journey also receives a real mocked `VERSION_CONFLICT` response while saving an existing task and verifies that the UI preserves the edit and presents the actionable refresh/review/retry message.
+- Browser tests now serve a production Vite build through Preview with two workers. This avoids Windows development-server connection resets while lazy-loading the large Fluent UI module and matches the existing CI concurrency.
+- Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 6 Playwright journeys, the 306-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check`.
+- This milestone changes only tests, test-server configuration, and documentation. The Android APK was not rebuilt; the July 24 12:00 PM artifact from the immediately preceding runtime checkpoint remains current. This staff-testing milestone is committed locally but not yet pushed or deployed.
 
 ## Current priority: Takeoff integration
 
