@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-regression-tests.mjs",
+    "test:e2e": "playwright test",
+    "test:db": "supabase test db",
     "android:sync": "npm run build && npx cap sync android",
     "android:copy": "npm run build && npx cap copy android",
     "android:open": "npx cap open android"
@@ -26,6 +28,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.10"
   }

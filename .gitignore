@@ -9,6 +9,8 @@ qa-output/
 supabase/.temp/
 dev-server.log
 dev-server-error.log
+playwright-report/
+test-results/
 
 # Local Netlify folder
 .netlify

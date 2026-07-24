@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-07-22
+Updated: 2026-07-24
 
 ## Working copy
 
@@ -8,6 +8,7 @@ Updated: 2026-07-22
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `fa37a50` Add administrator workspace navigation controls
   - `33789d7` Handle portal response timestamps safely
   - `92a3e71` Keep portal account controls accessible
   - `58e451b` Add construction workflows and secure project portal
@@ -15,6 +16,26 @@ Updated: 2026-07-22
   - `6e94084` Prevent startup splash from hanging
   - `d9d0e1c` Add Home dashboard and weather forecast
   - `dbc9809` Normalize tracker data and authorization
+
+## Current priority: Recommendation roadmap #1 — automated testing
+
+### Implemented milestone: behavioral, browser, and authorization foundation
+
+- Commit `fa37a50` closes the preceding workspace-navigation batch. Its checkpoint passed all 121 regression tests, the 305-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`; the July 24 debug APK remains the current Android artifact.
+- Added Playwright browser testing with deterministic Supabase API interception. The first journeys verify visible rejected-sign-in handling and a Customer account that is redirected out of an internal deep link, sees only the allowlisted project tabs, and can submit a portal response through the real UI and client service.
+- Added an idempotent core-schema baseline migration because the original `projects`, `tasks`, `subs`, `employees`, and `settings` tables predated this repository's migration history. Fresh local Supabase and CI databases can now replay the tracked migrations from an empty project.
+- Added transactional pgTAP authorization coverage for Admin, Edit, View Only, Customer, assigned/unassigned projects, task visibility, authorized and rejected write-RPC calls, direct portal-table denial, and the filtered portal bootstrap boundary.
+- CI now installs Chromium and runs the Playwright journeys in the web job. A separate local-Supabase job starts the migrated database and runs `supabase test db`; no production accounts, secrets, or records are used.
+- Local checkpoint verification passes: 121 behavioral regression tests, 2 Playwright journeys, the 305-module production build, production dependency audit with zero vulnerabilities, JavaScript syntax checks, and `git diff --check`.
+- The pgTAP suite could not be executed on this Windows workstation because Docker is not installed. It is wired to execute in GitHub Actions, where the local Supabase database is available. Do not use `supabase test db --linked` as a substitute.
+- The Android APK was not rebuilt for this test-only milestone; the immediately preceding `fa37a50` checkpoint already rebuilt it and no application/runtime source changed.
+
+### Next testing steps
+
+1. Confirm the first CI local-database replay and pgTAP run after this milestone is pushed.
+2. Add staff Admin/Edit browser journeys for project/task mutations and optimistic-conflict behavior.
+3. Add Customer selection approval and warranty submission journeys, then Subcontractor audience/file boundaries.
+4. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
 
 ## Current priority: Takeoff integration
 
