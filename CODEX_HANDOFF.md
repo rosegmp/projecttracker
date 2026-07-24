@@ -8,6 +8,7 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `c311e47` Add administrator project tab visibility
   - `601a176` Add automated browser and authorization tests
   - `fa37a50` Add administrator workspace navigation controls
   - `33789d7` Handle portal response timestamps safely
@@ -46,6 +47,14 @@ Updated: 2026-07-24
 - The configuration persists in the existing versioned `app_settings` JSON as `visibleProjectTabs`, so no database migration is required.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 3 Playwright journeys, the 306-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
 - The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 10:26 AM). The feature is committed locally but not yet pushed or deployed.
+
+### Implemented milestone: Successful login starts at Home
+
+- A successful internal password sign-in now clears any stale project target and session project filter, then starts at the Home workspace instead of restoring a remembered tab or honoring a pre-login deep link.
+- Existing authorization remains authoritative after the reset: portal users and internal users for whom an Administrator has hidden Home continue to fall back to their first permitted workspace.
+- A deterministic Playwright journey covers a remembered Settings tab plus a stale project deep link and verifies that the signed-in Administrator lands on `?tab=home` with Home selected.
+- Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 4 Playwright journeys, the 306-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
+- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 12:00 PM). This login change is committed locally but not yet pushed or deployed.
 
 ## Current priority: Takeoff integration
 

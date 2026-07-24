@@ -628,6 +628,9 @@ export default function App() {
     try {
       const { signInWithPassword } = await loadTrackerDataModule();
       const session = await signInWithPassword(email, password);
+      setProjectNavigationTarget(null);
+      setSessionProjectFilter('all');
+      setActiveTab('home');
       setAuthSession(session);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Sign-in failed.');

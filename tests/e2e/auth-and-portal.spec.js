@@ -75,6 +75,86 @@ test('shows a useful server error after a rejected sign-in', async ({ page }) =>
   await expect(page.getByText('Invalid login credentials')).toBeVisible();
 });
 
+test('successful internal sign-in starts at Home instead of a remembered or deep-linked tab', async ({ page }) => {
+  const adminEmail = 'login-admin@example.test';
+  const adminUserId = 'login-admin';
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem('cx_last_active_tab', 'settings');
+  });
+
+  await page.route(`${SUPABASE_ORIGIN}/auth/v1/token?grant_type=password`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        access_token: 'login-access-token',
+        refresh_token: 'login-refresh-token',
+        expires_in: 3600,
+        user: {
+          id: '30000000-0000-4000-8000-000000000001',
+          email: adminEmail,
+        },
+      }),
+    });
+  });
+
+  await page.route(`${SUPABASE_ORIGIN}/rest/v1/**`, async (route) => {
+    const url = new URL(route.request().url());
+    const settings = {
+      users: [{ id: adminUserId, name: 'Login Administrator', email: adminEmail, role: 'Admin' }],
+      currentUserId: adminUserId,
+    };
+    const appUser = {
+      id: adminUserId,
+      position: 0,
+      data: { name: 'Login Administrator', email: adminEmail, role: 'Admin' },
+      version: 1,
+    };
+
+    if (url.pathname.endsWith('/rpc/get_app_startup_bootstrap')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          profile: { id: adminUserId, name: 'Login Administrator', email: adminEmail, role: 'Admin' },
+          mode: 'staff',
+          startupProjectId: '',
+          settings: { data: settings, version: 1 },
+          appUsers: [appUser],
+          projectAccess: [],
+          projects: [],
+          tasks: [],
+          phases: [],
+          steps: [],
+          folders: [],
+          files: [],
+          photos: [],
+          selections: [],
+          inspections: [],
+        }),
+      });
+      return;
+    }
+
+    const responseBody =
+      url.pathname.endsWith('/settings')
+        ? [{ id: 'app_settings', data: settings, version: 1 }]
+        : url.pathname.endsWith('/app_users')
+          ? [appUser]
+          : [];
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody) });
+  });
+
+  await page.goto('/?tab=settings&project=stale-project');
+  await page.getByLabel('Email').fill(adminEmail);
+  await page.getByLabel('Password').fill('correct-password');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+
+  await expect(page).toHaveURL(/\?tab=home$/);
+  await expect(page.getByRole('button', { name: /^Home:/ })).toHaveAttribute('aria-current', 'page');
+});
+
 test('customer stays inside the allowlisted portal and can answer a published request', async ({ page }) => {
   let submittedResponse = null;
 
