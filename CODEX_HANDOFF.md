@@ -8,6 +8,7 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `3447a2f` Add portal workflow browser journeys
   - `2f26a6c` Add staff mutation browser journeys
   - `5b0f2ea` Fix authorization test access fixtures
   - `6f7a51c` Start successful sign-ins on Home
@@ -38,6 +39,7 @@ Updated: 2026-07-24
 ### Next testing steps
 
 1. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
+   - Required inputs: a non-production Supabase project, disposable Admin/Edit/Customer/Subcontractor accounts, one throwaway project assigned to those accounts, CI-safe staging credentials, and an explicit owner for deleting test records/accounts if automated cleanup fails.
 
 ### Implemented milestone: Administrator-controlled project tabs
 
@@ -71,7 +73,7 @@ Updated: 2026-07-24
 - Subcontractor coverage verifies the role remains limited to Portal, Selections, and Files; sees a subcontractor-audience request plus only the shared selection/folder/file supplied by the restricted bootstrap; and cannot navigate to Tasks or Warranty.
 - Playwright now uses a suite-wide 90-second test budget and 20-second assertion budget for Windows cold starts while retaining the production-preview server and two-worker concurrency.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 9 Playwright journeys, the 306-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check`.
-- This milestone changes only browser tests, their timing configuration, and documentation. No local APK rebuild is required. The portal-testing milestone is committed locally but not yet pushed.
+- This milestone changes only browser tests, their timing configuration, and documentation. No local APK rebuild is required. Commit `3447a2f` is pushed to `origin/main`, and GitHub Actions run `30116698473` passed all 9 browser journeys, all 10 pgTAP authorization assertions, regression/build/audit checks, and the Android debug build.
 
 ## Current priority: Takeoff integration
 
