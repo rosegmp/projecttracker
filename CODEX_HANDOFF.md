@@ -38,8 +38,8 @@ Updated: 2026-07-24
 
 ### Next testing steps
 
-1. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
-   - Required inputs: a non-production Supabase project, disposable Admin/Edit/Customer/Subcontractor accounts, one throwaway project assigned to those accounts, CI-safe staging credentials, and an explicit owner for deleting test records/accounts if automated cleanup fails.
+1. Create a separate non-production Supabase project, apply the tracked migrations, and add its URL, anon key, and service-role key to the GitHub `staging` environment as `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, and `STAGING_SUPABASE_SERVICE_ROLE_KEY`.
+2. Manually dispatch **Staging application authorization tests**, confirm the real Auth/REST/RPC assertions pass, and verify the disposable project, records, and four Auth/application users were removed.
 
 ### Implemented milestone: Administrator-controlled project tabs
 
@@ -74,6 +74,15 @@ Updated: 2026-07-24
 - Playwright now uses a suite-wide 90-second test budget and 20-second assertion budget for Windows cold starts while retaining the production-preview server and two-worker concurrency.
 - Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 9 Playwright journeys, the 306-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check`.
 - This milestone changes only browser tests, their timing configuration, and documentation. No local APK rebuild is required. Commit `3447a2f` is pushed to `origin/main`, and GitHub Actions run `30116698473` passed all 9 browser journeys, all 10 pgTAP authorization assertions, regression/build/audit checks, and the Android debug build.
+
+### Implemented milestone: Isolated staging-suite foundation
+
+- A manual-only GitHub workflow now targets the separately scoped `staging` environment and requires exactly three non-production secrets: URL, anon key, and service-role key. It never runs on pushes or pull requests.
+- The application-level runner creates unique disposable Admin, Edit, Customer, and Subcontractor Auth/application users, one assigned project, one Admin-only project, a task, and audience-specific portal requests. It signs in through real Supabase Auth and verifies project RLS, filtered portal bootstraps, an Edit task mutation, Customer/Subcontractor audience filtering, and Customer warranty submission.
+- Cleanup runs in `finally` and removes workflow records, tasks, normalized access rows, projects, application users, and Auth users. Automated cleanup is the primary owner; Project Tracker repository maintainers own manual cleanup if a run reports a deletion failure.
+- The production project ref `oxojlwhmarafxuqvqgqg` is hard-blocked before any network write. A local negative check confirmed the runner refuses that URL.
+- The empty GitHub `staging` environment exists and currently has no secrets. No non-production Supabase project was available in the account inventory, and no staging write has run. Supabase CLI 2.109.1 remains unable to reach the authenticated management API from this workstation even though a credential-free HTTPS probe reaches it, so project creation and secret configuration remain the external prerequisites above.
+- Local checkpoint verification passes all 123 regression tests, all 9 Playwright journeys, the 306-module production build, the staging runner syntax check, and `git diff --check`. No runtime application source changed, so the local Android APK was not rebuilt.
 
 ## Current priority: Takeoff integration
 

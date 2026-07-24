@@ -3195,6 +3195,28 @@ const tests = [
       assert.doesNotMatch(migrationSource, /create trigger (subs|employees|settings)_(unified_people|normalized_app_users)/);
     },
   },
+  {
+    name: 'staging application tests reject production and always clean disposable fixtures',
+    async run() {
+      const [stagingSource, workflowSource, packageSource] = await Promise.all([
+        readFile(new URL('./run-staging-application-tests.mjs', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/staging-application-tests.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../package.json', import.meta.url), 'utf8'),
+      ]);
+      assert.match(stagingSource, /PRODUCTION_PROJECT_REF = 'oxojlwhmarafxuqvqgqg'/);
+      assert.match(stagingSource, /Refusing to run staging writes against the production Supabase project/);
+      assert.match(stagingSource, /finally \{\s*await cleanup\(\);\s*\}/);
+      assert.match(stagingSource, /\/auth\/v1\/admin\/users/);
+      assert.match(stagingSource, /submit_customer_warranty_request/);
+      assert.match(stagingSource, /Customer portal audience boundary/);
+      assert.match(stagingSource, /Subcontractor portal audience boundary/);
+      assert.match(workflowSource, /workflow_dispatch:/);
+      assert.match(workflowSource, /environment: staging/);
+      assert.match(workflowSource, /STAGING_SUPABASE_SERVICE_ROLE_KEY/);
+      assert.doesNotMatch(workflowSource, /push:|pull_request:/);
+      assert.match(packageSource, /"test:staging": "node scripts\/run-staging-application-tests\.mjs"/);
+    },
+  },
 ];
 
 let failed = 0;
