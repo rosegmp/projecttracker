@@ -8,6 +8,7 @@ Updated: 2026-07-24
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `601a176` Add automated browser and authorization tests
   - `fa37a50` Add administrator workspace navigation controls
   - `33789d7` Handle portal response timestamps safely
   - `92a3e71` Keep portal account controls accessible
@@ -36,6 +37,15 @@ Updated: 2026-07-24
 2. Add staff Admin/Edit browser journeys for project/task mutations and optimistic-conflict behavior.
 3. Add Customer selection approval and warranty submission journeys, then Subcontractor audience/file boundaries.
 4. Introduce an isolated staging Supabase application-level suite only after dedicated disposable test accounts and cleanup ownership are defined; keep production out of automated test writes.
+
+### Implemented milestone: Administrator-controlled project tabs
+
+- **Settings → Display preferences → Project workspace navigation** now lets Administrators globally show or hide Tasks, Calendar, Inspections, Selections, Daily Logs, Change Orders, RFIs & Submittals, Budget & Commitments, Warranty & Closeout, Takeoff, Files, and Photos within every project.
+- Overview and Portal remain required entry points. Missing/legacy settings default to all project tabs, and Customer/Subcontractor allowlists still take precedence over the Administrator configuration.
+- Hidden sections are removed from mouse and keyboard tab navigation. Project deep links, Overview live-count actions, schedule focus, recent-photo links, and task/selection cross-links cannot activate a hidden section; an active section that becomes hidden falls back to the first permitted tab.
+- The configuration persists in the existing versioned `app_settings` JSON as `visibleProjectTabs`, so no database migration is required.
+- Checkpoint verification on 2026-07-24 passes all 122 regression tests, all 3 Playwright journeys, the 306-module production build, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
+- The refreshed APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (9,506,081 bytes, built July 24, 2026 at 10:26 AM). The feature is committed locally but not yet pushed or deployed.
 
 ## Current priority: Takeoff integration
 

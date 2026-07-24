@@ -7473,6 +7473,10 @@ textarea:focus-visible {
   display: none;
 }
 
+.project-detail-tabs .react-tab[hidden] {
+  display: none !important;
+}
+
 .folder-visibility-controls {
   display: flex;
   align-items: center;

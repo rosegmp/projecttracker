@@ -1,7 +1,8 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { downloadProjectFileFromStorage, loadAuditEvents } from '../services/trackerData.js';
 import { buildAuditTrailEntries } from '../utils/auditTrail.js';
 import { formatShortDate } from '../utils/calendarUi.js';
+import { getVisibleProjectTabs } from '../utils/projectTabs.js';
 import FluentIcon from './FluentIcon.jsx';
 
 const NativeInspectionsView = lazy(() => import('./NativeInspectionsView.jsx'));
@@ -16,9 +17,6 @@ const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.j
 const ProjectWarrantyCloseoutManager = lazy(() => import('./ProjectWarrantyCloseoutManager.jsx'));
 const ProjectWorkflowManager = lazy(() => import('./ProjectWorkflowManager.jsx'));
 const TakeoffWorkspace = lazy(() => import('../features/takeoff/TakeoffWorkspace.jsx'));
-
-const CUSTOMER_READ_ONLY_TABS = new Set(['overview', 'portal', 'calendar', 'selections', 'warranty-closeout', 'files', 'photos']);
-const SUBCONTRACTOR_READ_ONLY_TABS = new Set(['portal', 'selections', 'files']);
 
 function ProjectOverviewMainPhoto({ project }) {
   const mainPhoto = (project?.photos || []).find((photo) => photo.id === project?.mainPhotoId) || null;
@@ -130,7 +128,16 @@ export default function ProjectDetailView({
   const externalPortalUser = ['Customer', 'Subcontractor'].includes(activeUser?.role);
   const customerReadOnly = activeUser?.role === 'Customer';
   const subcontractorReadOnly = activeUser?.role === 'Subcontractor';
-  const [activeDetailTab, setActiveDetailTab] = useState(() => (subcontractorReadOnly ? 'portal' : 'overview'));
+  const visibleProjectTabs = useMemo(
+    () => getVisibleProjectTabs(settings?.visibleProjectTabs, activeUser?.role),
+    [activeUser?.role, settings?.visibleProjectTabs],
+  );
+  const visibleProjectTabIds = useMemo(
+    () => new Set(visibleProjectTabs.map((tab) => tab.id)),
+    [visibleProjectTabs],
+  );
+  const defaultProjectTabId = visibleProjectTabs[0]?.id || (subcontractorReadOnly ? 'portal' : 'overview');
+  const [activeDetailTab, setActiveDetailTab] = useState(defaultProjectTabId);
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
   const [lastActivity, setLastActivity] = useState(null);
@@ -143,6 +150,10 @@ export default function ProjectDetailView({
   useEffect(() => {
     setActiveDetailTab(subcontractorReadOnly ? 'portal' : 'overview');
   }, [subcontractorReadOnly, project.id]);
+
+  useEffect(() => {
+    if (!visibleProjectTabIds.has(activeDetailTab)) setActiveDetailTab(defaultProjectTabId);
+  }, [activeDetailTab, defaultProjectTabId, visibleProjectTabIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,14 +173,12 @@ export default function ProjectDetailView({
   useEffect(() => {
     const requestedTab = selectionNavigationRequest?.detailTab;
     if (selectionNavigationRequest?.projectId !== project.id) return;
-    if (subcontractorReadOnly && !SUBCONTRACTOR_READ_ONLY_TABS.has(requestedTab)) return;
-    if (customerReadOnly && !CUSTOMER_READ_ONLY_TABS.has(requestedTab)) return;
-    if (!['overview', 'portal', 'tasks', 'calendar', 'inspections', 'selections', 'daily-logs', 'change-orders', 'rfis-submittals', 'budget-commitments', 'warranty-closeout', 'takeoff', 'files', 'photos'].includes(requestedTab)) return;
+    if (!visibleProjectTabIds.has(requestedTab)) return;
     setActiveDetailTab(requestedTab);
     if (requestedTab === 'selections' && selectionNavigationRequest?.selectionId) {
       setSelectionHighlightRequest(selectionNavigationRequest);
     }
-  }, [customerReadOnly, subcontractorReadOnly, project.id, selectionNavigationRequest]);
+  }, [project.id, selectionNavigationRequest, visibleProjectTabIds]);
 
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -213,7 +222,7 @@ export default function ProjectDetailView({
     { label: 'Files', count: projectFileCount, tab: 'files' },
     { label: 'Photos', count: (project.photos || []).length, tab: 'photos' },
     { label: 'Schedule remaining', count: Math.max(0, totalSteps - completedSteps), tab: 'calendar' },
-  ].filter((row) => !customerReadOnly || CUSTOMER_READ_ONLY_TABS.has(row.tab));
+  ].filter((row) => visibleProjectTabIds.has(row.tab));
   const missingInformation = [
     !project.customerPhone && 'customer phone',
     !project.customerEmail && 'customer email',
@@ -224,6 +233,7 @@ export default function ProjectDetailView({
   const projectUsers = (data?.settings?.users || []).filter((user) => (project.accessUserIds || []).includes(user.id));
 
   function openOverviewTarget(row) {
+    if (!visibleProjectTabIds.has(row.tab)) return;
     setActiveDetailTab(row.tab);
     if (row.taskId) setTaskHighlightRequest({ taskId: row.taskId, token: `${row.taskId}-${Date.now()}` });
   }
@@ -253,6 +263,7 @@ export default function ProjectDetailView({
       >
         <button
           id="project-tab-overview"
+          hidden={!visibleProjectTabIds.has('overview')}
           className={`react-tab${activeDetailTab === 'overview' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -265,6 +276,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-portal"
+          hidden={!visibleProjectTabIds.has('portal')}
           className={`react-tab${activeDetailTab === 'portal' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -277,6 +289,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-tasks"
+          hidden={!visibleProjectTabIds.has('tasks')}
           className={`react-tab${activeDetailTab === 'tasks' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -289,6 +302,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-calendar"
+          hidden={!visibleProjectTabIds.has('calendar')}
           className={`react-tab${activeDetailTab === 'calendar' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -301,6 +315,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-inspections"
+          hidden={!visibleProjectTabIds.has('inspections')}
           className={`react-tab${activeDetailTab === 'inspections' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -313,6 +328,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-selections"
+          hidden={!visibleProjectTabIds.has('selections')}
           className={`react-tab${activeDetailTab === 'selections' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -325,6 +341,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-daily-logs"
+          hidden={!visibleProjectTabIds.has('daily-logs')}
           className={`react-tab${activeDetailTab === 'daily-logs' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -337,6 +354,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-change-orders"
+          hidden={!visibleProjectTabIds.has('change-orders')}
           className={`react-tab${activeDetailTab === 'change-orders' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -349,6 +367,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-rfis-submittals"
+          hidden={!visibleProjectTabIds.has('rfis-submittals')}
           className={`react-tab${activeDetailTab === 'rfis-submittals' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -361,6 +380,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-budget-commitments"
+          hidden={!visibleProjectTabIds.has('budget-commitments')}
           className={`react-tab${activeDetailTab === 'budget-commitments' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -373,6 +393,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-warranty-closeout"
+          hidden={!visibleProjectTabIds.has('warranty-closeout')}
           className={`react-tab${activeDetailTab === 'warranty-closeout' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -385,6 +406,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-takeoff"
+          hidden={!visibleProjectTabIds.has('takeoff')}
           className={`react-tab${activeDetailTab === 'takeoff' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -397,6 +419,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-files"
+          hidden={!visibleProjectTabIds.has('files')}
           className={`react-tab${activeDetailTab === 'files' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -409,6 +432,7 @@ export default function ProjectDetailView({
         </button>
         <button
           id="project-tab-photos"
+          hidden={!visibleProjectTabIds.has('photos')}
           className={`react-tab${activeDetailTab === 'photos' ? ' active' : ''}`}
           type="button"
           role="tab"
@@ -482,20 +506,20 @@ export default function ProjectDetailView({
                   ))}
                 </div>
               </section>
-              <section className="project-overview-rail-section">
+              {visibleProjectTabIds.has('calendar') ? <section className="project-overview-rail-section">
                 <h3>Schedule focus</h3>
                 <button type="button" onClick={() => setActiveDetailTab('calendar')}>
                   <small>Next milestone</small>
                   <strong>{nextMilestone?.name || 'No remaining milestone'}</strong>
                   {nextMilestone ? <span>{nextMilestone.phaseName}{nextMilestone.end || nextMilestone.start ? ` · ${formatShortDate(nextMilestone.end || nextMilestone.start)}` : ''}</span> : null}
                 </button>
-                {criticalItem ? (
+                {criticalItem && visibleProjectTabIds.has(criticalItem.tab) ? (
                   <button className="is-critical" type="button" onClick={() => openOverviewTarget(criticalItem)}>
                     <small>Needs attention</small><strong>{criticalItem.label}</strong>
                     {criticalItem.date ? <span>{formatShortDate(criticalItem.date)}</span> : null}
                   </button>
                 ) : <p className="project-overview-empty-copy">No overdue or delayed items.</p>}
-              </section>
+              </section> : null}
               {!customerReadOnly ? <section className="project-overview-rail-section">
                 <h3>Last activity</h3>
                 {lastActivity ? (
@@ -511,10 +535,10 @@ export default function ProjectDetailView({
                 {projectUsers.map((user) => <div className="project-overview-team-member" key={user.id}><strong>{user.name || user.email || 'Project user'}</strong><span>{user.role || 'Assigned user'}</span></div>)}
                 {!project.manager && !projectUsers.length ? <p className="project-overview-empty-copy">No project team assigned.</p> : null}
               </section>
-              <section className="project-overview-rail-section">
+              {visibleProjectTabIds.has('photos') ? <section className="project-overview-rail-section">
                 <div className="project-overview-section-heading"><h3>Recent photos</h3><button type="button" onClick={() => setActiveDetailTab('photos')}>View all</button></div>
                 <ProjectOverviewRecentPhotos photos={project.photos} onOpenPhotos={() => setActiveDetailTab('photos')} />
-              </section>
+              </section> : null}
             </aside>
           </div>
         </section>
@@ -554,6 +578,7 @@ export default function ProjectDetailView({
             highlightTaskId={taskHighlightRequest?.taskId || ''}
             highlightToken={taskHighlightRequest?.token || ''}
             onOpenSelection={(selectionLink) => {
+              if (!visibleProjectTabIds.has('selections')) return;
               setActiveDetailTab('selections');
               setSelectionHighlightRequest({
                 ...selectionLink,
@@ -603,6 +628,7 @@ export default function ProjectDetailView({
             highlightSelectionId={selectionHighlightRequest?.selectionId || ''}
             highlightToken={selectionHighlightRequest?.token || ''}
             onOpenTask={(taskId) => {
+              if (!visibleProjectTabIds.has('tasks')) return;
               setActiveDetailTab('tasks');
               setTaskHighlightRequest({
                 taskId,

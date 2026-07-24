@@ -6,6 +6,7 @@ import { getVisibleProjectsForUser } from './utils/accessUi.js';
 import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
+import { DEFAULT_VISIBLE_PROJECT_TABS } from './utils/projectTabs.js';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -198,6 +199,7 @@ export default function App() {
       showCalendarHebrewDates: false,
       showPageStats: true,
       visibleTopLevelTabs: DEFAULT_VISIBLE_TOP_LEVEL_TABS,
+      visibleProjectTabs: DEFAULT_VISIBLE_PROJECT_TABS,
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
       users: [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
       currentUserId: 'user-admin',

@@ -65,6 +65,11 @@ import {
 } from '../src/features/takeoff/projectFilePicker.js';
 import { buildProjectPhotoGallery } from '../src/utils/projectPhotoGallery.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../src/utils/navigationTabs.js';
+import {
+  DEFAULT_VISIBLE_PROJECT_TABS,
+  getVisibleProjectTabs,
+  normalizeVisibleProjectTabs,
+} from '../src/utils/projectTabs.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -79,6 +84,22 @@ const tests = [
       assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'settings']);
       assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'settings']);
       assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'settings']);
+    },
+  },
+  {
+    name: 'project tab visibility preserves required and role-safe navigation',
+    run() {
+      assert.deepEqual(normalizeVisibleProjectTabs(undefined), DEFAULT_VISIBLE_PROJECT_TABS);
+      assert.deepEqual(normalizeVisibleProjectTabs(['tasks', 'files']), ['overview', 'portal', 'tasks', 'files']);
+      assert.deepEqual(normalizeVisibleProjectTabs(['unknown', 'photos', 'photos']), ['overview', 'portal', 'photos']);
+      assert.deepEqual(
+        getVisibleProjectTabs(['overview', 'portal', 'tasks', 'calendar', 'files'], 'Customer').map((tab) => tab.id),
+        ['overview', 'portal', 'calendar', 'files'],
+      );
+      assert.deepEqual(
+        getVisibleProjectTabs(['overview', 'portal', 'tasks', 'files'], 'Subcontractor').map((tab) => tab.id),
+        ['portal', 'files'],
+      );
     },
   },
   {
@@ -2990,9 +3011,10 @@ const tests = [
   {
     name: 'customer and subcontractor portal items use restricted response workflows',
     async run() {
-      const [appSource, accessSource, projectsSource, detailSource, managerSource, filesSource, selectionsSource, selectionModalSource, photosSource, serviceSource, migrationSource, hardeningSource, customerReadsSource, customerPhotoWritesSource, sharedContentSource, visibilityUpdatesSource, trackerSource, styleSource] = await Promise.all([
+      const [appSource, accessSource, projectTabsSource, projectsSource, detailSource, managerSource, filesSource, selectionsSource, selectionModalSource, photosSource, serviceSource, migrationSource, hardeningSource, customerReadsSource, customerPhotoWritesSource, sharedContentSource, visibilityUpdatesSource, trackerSource, styleSource] = await Promise.all([
         readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/utils/accessUi.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/projectTabs.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
@@ -3053,12 +3075,14 @@ const tests = [
       assert.match(trackerSource, /const sharedFolderIds = new Set/);
       assert.match(trackerSource, /filter\(\(folder\) => sharedFolderIds\.has\(folder\.id\)\)/);
       assert.match(trackerSource, /portalMode: true/);
-      assert.match(detailSource, /CUSTOMER_READ_ONLY_TABS = new Set\(\['overview', 'portal', 'calendar', 'selections', 'warranty-closeout', 'files', 'photos'\]\)/);
-      assert.match(detailSource, /SUBCONTRACTOR_READ_ONLY_TABS = new Set\(\['portal', 'selections', 'files'\]\)/);
+      assert.match(projectTabsSource, /const CUSTOMER_PROJECT_TABS = new Set\(\[/);
+      assert.match(projectTabsSource, /'warranty-closeout'/);
+      assert.match(projectTabsSource, /const SUBCONTRACTOR_PROJECT_TABS = new Set\(\['portal', 'selections', 'files'\]\)/);
+      assert.match(projectTabsSource, /export function getVisibleProjectTabs/);
       assert.match(detailSource, /const subcontractorReadOnly = activeUser\?\.role === 'Subcontractor'/);
-      assert.match(detailSource, /subcontractorReadOnly && !SUBCONTRACTOR_READ_ONLY_TABS\.has\(requestedTab\)/);
+      assert.match(detailSource, /getVisibleProjectTabs\(settings\?\.visibleProjectTabs, activeUser\?\.role\)/);
+      assert.match(detailSource, /if \(!visibleProjectTabIds\.has\(requestedTab\)\) return/);
       assert.match(detailSource, /if \(externalPortalUser\) return/);
-      assert.match(detailSource, /customerReadOnly && !CUSTOMER_READ_ONLY_TABS\.has\(requestedTab\)/);
       assert.match(detailSource, /readOnly=\{!canEdit\}/);
       assert.match(detailSource, /canAddPhotos=\{canEdit \|\| customerReadOnly\}/);
       assert.match(photosSource, /canAddPhotos = !readOnly/);

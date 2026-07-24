@@ -5,14 +5,17 @@ const CUSTOMER_EMAIL = 'customer@example.test';
 const CUSTOMER_ID = 'customer-user';
 const PROJECT_ID = 'project-portal-1';
 
-function storedSession() {
+function storedSession({
+  email = CUSTOMER_EMAIL,
+  userId = '10000000-0000-4000-8000-000000000001',
+} = {}) {
   return {
     accessToken: 'e2e-access-token',
     refreshToken: 'e2e-refresh-token',
     expiresAt: Date.now() + 60 * 60 * 1000,
     user: {
-      id: '10000000-0000-4000-8000-000000000001',
-      email: CUSTOMER_EMAIL,
+      id: userId,
+      email,
     },
   };
 }
@@ -174,4 +177,109 @@ test('customer stays inside the allowlisted portal and can answer a published re
     p_response: 'Friday morning works for us.',
     p_decision: '',
   });
+});
+
+test('administrator project-tab settings hide project sections and preserve required entries', async ({ page }) => {
+  test.setTimeout(60_000);
+  const adminEmail = 'admin@example.test';
+  const adminUserId = 'admin-user';
+  const adminProjectId = 'project-admin-1';
+  const adminSettings = {
+    visibleProjectTabs: ['tasks', 'files'],
+    users: [{ id: adminUserId, name: 'Test Administrator', email: adminEmail, role: 'Admin' }],
+    currentUserId: adminUserId,
+  };
+  const adminUserRow = {
+    id: adminUserId,
+    position: 0,
+    data: { name: 'Test Administrator', email: adminEmail, role: 'Admin' },
+    version: 1,
+  };
+  const adminProjectRow = {
+    id: adminProjectId,
+    data: {
+      id: adminProjectId,
+      name: 'Admin Tab Test',
+      status: 'active',
+      accessUserIds: [adminUserId],
+      phases: [],
+      inspections: [],
+      selections: [],
+      files: { folders: [] },
+      photos: [],
+    },
+    version: 1,
+  };
+  const adminAccessRow = { project_id: adminProjectId, user_id: adminUserId, position: 0, version: 1 };
+
+  await page.addInitScript((session) => {
+    window.localStorage.setItem('cx_auth_session', JSON.stringify(session));
+  }, storedSession({
+    email: adminEmail,
+    userId: '20000000-0000-4000-8000-000000000001',
+  }));
+
+  await page.route(`${SUPABASE_ORIGIN}/rest/v1/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/rpc/get_app_startup_bootstrap')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          profile: {
+            id: adminUserId,
+            name: 'Test Administrator',
+            email: adminEmail,
+            role: 'Admin',
+          },
+          mode: 'staff',
+          startupProjectId: adminProjectId,
+          settings: {
+            data: adminSettings,
+            version: 1,
+          },
+          appUsers: [adminUserRow],
+          projectAccess: [adminAccessRow],
+          projects: [adminProjectRow],
+          tasks: [],
+          phases: [],
+          steps: [],
+          folders: [],
+          files: [],
+          photos: [],
+          selections: [],
+          inspections: [],
+        }),
+      });
+      return;
+    }
+    const responseBody =
+      url.pathname.endsWith('/settings')
+        ? [{ id: 'app_settings', data: adminSettings, version: 1 }]
+        : url.pathname.endsWith('/project_core_records') || url.pathname.endsWith('/projects')
+          ? [adminProjectRow]
+          : url.pathname.endsWith('/app_users')
+            ? [adminUserRow]
+            : url.pathname.endsWith('/project_user_access')
+              ? [adminAccessRow]
+              : [];
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody) });
+  });
+
+  await page.goto(`/?tab=projects&project=${adminProjectId}`);
+
+  await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Portal' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Tasks' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Files' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Calendar' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Photos' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^Settings:/ }).click();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Display preferences' }).click();
+  const projectNavigation = page.getByRole('heading', { name: 'Project workspace navigation' }).locator('xpath=ancestor::section[1]');
+  await expect(projectNavigation.getByRole('checkbox', { name: /Overview/ })).toBeDisabled();
+  await expect(projectNavigation.getByRole('checkbox', { name: /Tasks/ })).toBeChecked();
+  await expect(projectNavigation.getByRole('checkbox', { name: /Calendar/ })).not.toBeChecked();
 });

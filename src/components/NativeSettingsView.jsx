@@ -16,6 +16,7 @@ import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js
 import { buildProjectAccessUpdates } from '../utils/accessUi.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { normalizeVisibleTopLevelTabs, TOP_LEVEL_TAB_DEFS } from '../utils/navigationTabs.js';
+import { normalizeVisibleProjectTabs, PROJECT_TAB_DEFS } from '../utils/projectTabs.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
@@ -252,6 +253,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
         showPageStats: data.settings?.showPageStats !== false,
         visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
+        visibleProjectTabs: normalizeVisibleProjectTabs(data.settings?.visibleProjectTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
           ? data.settings.inspectionSubcodes.filter(Boolean)
           : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
@@ -631,6 +633,16 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     runSettingsMutation({ visibleTopLevelTabs: normalizeVisibleTopLevelTabs(next) });
   }
 
+  function handleToggleProjectTab(tabId, enabled) {
+    const tab = PROJECT_TAB_DEFS.find((item) => item.id === tabId);
+    if (!tab || tab.required) return;
+    const current = normalizeVisibleProjectTabs(settings.visibleProjectTabs);
+    const next = enabled
+      ? Array.from(new Set([...current, tabId]))
+      : current.filter((item) => item !== tabId);
+    runSettingsMutation({ visibleProjectTabs: normalizeVisibleProjectTabs(next) });
+  }
+
   function movePeopleColumn(columnId, direction) {
     const current = [...settings.peopleListColumns];
     const index = current.indexOf(columnId);
@@ -991,6 +1003,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const peopleColumnsSaving =
     isMutating(['settings', 'peopleListColumns']) || isMutating(['settings', 'peopleListBoldColumns']);
   const navigationTabsSaving = isMutating(['settings', 'visibleTopLevelTabs']);
+  const projectTabsSaving = isMutating(['settings', 'visibleProjectTabs']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1749,7 +1762,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           <div className="settings-section-header">
             <div>
               <h3>Display preferences</h3>
-              <p>Choose the main workspace tabs and People columns shown to internal users.</p>
+              <p>Choose workspace navigation and the People columns used across the app.</p>
             </div>
           </div>
           <div className="settings-grid settings-grid-single">
@@ -1771,6 +1784,34 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                         checked={visible}
                         onChange={(event) => handleToggleTopLevelTab(tab.id, event.target.checked)}
                         disabled={navigationTabsSaving || tab.required}
+                      />
+                      <span>
+                        <strong>{tab.label}</strong>
+                        <small>{tab.required ? `${tab.description} This tab is required.` : tab.description}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Project workspace navigation</h3>
+                  <p>Choose sections shown inside each project. Customer and Subcontractor role restrictions still apply.</p>
+                </div>
+              </div>
+              {projectTabsSaving ? <div className="mutation-status" role="status">Saving project navigation settings...</div> : null}
+              <div className="settings-order-list">
+                {PROJECT_TAB_DEFS.map((tab) => {
+                  const visible = settings.visibleProjectTabs.includes(tab.id);
+                  return (
+                    <label key={tab.id} className="settings-toggle">
+                      <input
+                        type="checkbox"
+                        checked={visible}
+                        onChange={(event) => handleToggleProjectTab(tab.id, event.target.checked)}
+                        disabled={projectTabsSaving || tab.required}
                       />
                       <span>
                         <strong>{tab.label}</strong>
