@@ -1,5 +1,6 @@
 import { getCurrentUrl, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { trackerQueryClient } from './queryClient.js';
+import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../utils/navigationTabs.js';
 
 const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
@@ -69,6 +70,7 @@ const EMPTY_SETTINGS = {
   showCalendarPhases: true,
   showCalendarHebrewDates: false,
   showPageStats: true,
+  visibleTopLevelTabs: DEFAULT_VISIBLE_TOP_LEVEL_TABS,
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
@@ -427,6 +429,7 @@ function normalizeSettings(settings) {
     inspectionSubcodes: Array.isArray(settings?.inspectionSubcodes) ? settings.inspectionSubcodes : EMPTY_SETTINGS.inspectionSubcodes,
     peopleListColumns: Array.isArray(settings?.peopleListColumns) ? settings.peopleListColumns : EMPTY_SETTINGS.peopleListColumns,
     peopleListBoldColumns: Array.isArray(settings?.peopleListBoldColumns) ? settings.peopleListBoldColumns : EMPTY_SETTINGS.peopleListBoldColumns,
+    visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     users,
     currentUserId,
   };

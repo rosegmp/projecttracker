@@ -64,6 +64,7 @@ import {
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
 import { buildProjectPhotoGallery } from '../src/utils/projectPhotoGallery.js';
+import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../src/utils/navigationTabs.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -71,6 +72,15 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'top-level tab visibility preserves required navigation and safe defaults',
+    run() {
+      assert.deepEqual(normalizeVisibleTopLevelTabs(undefined), DEFAULT_VISIBLE_TOP_LEVEL_TABS);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'settings']);
+    },
+  },
   {
     name: 'project photo gallery includes images from every photo-bearing project area',
     run() {

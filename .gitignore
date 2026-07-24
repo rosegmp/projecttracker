@@ -8,6 +8,7 @@ android/app/google-services.json
 qa-output/
 supabase/.temp/
 dev-server.log
+dev-server-error.log
 
 # Local Netlify folder
 .netlify

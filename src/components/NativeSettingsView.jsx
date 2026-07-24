@@ -15,6 +15,7 @@ import { syncAndroidPushRegistration } from '../utils/androidPushNotifications.j
 import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js';
 import { buildProjectAccessUpdates } from '../utils/accessUi.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { normalizeVisibleTopLevelTabs, TOP_LEVEL_TAB_DEFS } from '../utils/navigationTabs.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
@@ -25,7 +26,7 @@ const SETTINGS_SECTIONS = [
   { id: 'notifications', label: 'Notifications', description: 'Android reminder and notification preferences.' },
   { id: 'users', label: 'Users & access', description: 'App roles and project assignments.' },
   { id: 'audit', label: 'Audit history', description: 'Recent project changes and responsible users.' },
-  { id: 'display', label: 'Display preferences', description: 'People columns and visual preferences.' },
+  { id: 'display', label: 'Display preferences', description: 'Workspace navigation, People columns, and visual preferences.' },
   { id: 'system', label: 'System status', description: 'Data source, record counts, and refresh controls.' },
 ];
 const PEOPLE_LIST_COLUMN_DEFS = [
@@ -250,6 +251,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
         showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
         showPageStats: data.settings?.showPageStats !== false,
+        visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
           ? data.settings.inspectionSubcodes.filter(Boolean)
           : ['FOOT-101', 'FRAME-220', 'ELEC-310'],
@@ -619,6 +621,16 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     runSettingsMutation({ peopleListColumns: next });
   }
 
+  function handleToggleTopLevelTab(tabId, enabled) {
+    const tab = TOP_LEVEL_TAB_DEFS.find((item) => item.id === tabId);
+    if (!tab || tab.required) return;
+    const current = normalizeVisibleTopLevelTabs(settings.visibleTopLevelTabs);
+    const next = enabled
+      ? Array.from(new Set([...current, tabId]))
+      : current.filter((item) => item !== tabId);
+    runSettingsMutation({ visibleTopLevelTabs: normalizeVisibleTopLevelTabs(next) });
+  }
+
   function movePeopleColumn(columnId, direction) {
     const current = [...settings.peopleListColumns];
     const index = current.indexOf(columnId);
@@ -978,6 +990,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const holidaysSaving = isMutating(['settings', 'holidays']);
   const peopleColumnsSaving =
     isMutating(['settings', 'peopleListColumns']) || isMutating(['settings', 'peopleListBoldColumns']);
+  const navigationTabsSaving = isMutating(['settings', 'visibleTopLevelTabs']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1735,11 +1748,39 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         <section id="settings-panel-display" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-display" hidden={activeSettingsSection !== 'display'}>
           <div className="settings-section-header">
             <div>
-              <h3>People List Display</h3>
-              <p>Choose which columns appear in People list view, how they are ordered, and which are emphasized.</p>
+              <h3>Display preferences</h3>
+              <p>Choose the main workspace tabs and People columns shown to internal users.</p>
             </div>
           </div>
           <div className="settings-grid settings-grid-single">
+            <section className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Workspace navigation</h3>
+                  <p>Hidden tabs are removed for internal users. Existing role restrictions still apply.</p>
+                </div>
+              </div>
+              {navigationTabsSaving ? <div className="mutation-status" role="status">Saving navigation settings...</div> : null}
+              <div className="settings-order-list">
+                {TOP_LEVEL_TAB_DEFS.map((tab) => {
+                  const visible = settings.visibleTopLevelTabs.includes(tab.id);
+                  return (
+                    <label key={tab.id} className="settings-toggle">
+                      <input
+                        type="checkbox"
+                        checked={visible}
+                        onChange={(event) => handleToggleTopLevelTab(tab.id, event.target.checked)}
+                        disabled={navigationTabsSaving || tab.required}
+                      />
+                      <span>
+                        <strong>{tab.label}</strong>
+                        <small>{tab.required ? `${tab.description} This tab is required.` : tab.description}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
             <section className="settings-card">
               <div className="settings-card-header">
                 <div>

@@ -5,6 +5,7 @@ import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
 import { getVisibleProjectsForUser } from './utils/accessUi.js';
 import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
+import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -196,6 +197,7 @@ export default function App() {
       showCalendarPhases: true,
       showCalendarHebrewDates: false,
       showPageStats: true,
+      visibleTopLevelTabs: DEFAULT_VISIBLE_TOP_LEVEL_TABS,
       inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
       users: [{ id: 'user-admin', name: 'Admin', email: '', role: 'Admin' }],
       currentUserId: 'user-admin',
@@ -361,7 +363,14 @@ export default function App() {
     [trackerState.settings?.users],
   );
   const activeUser = useMemo(() => getActiveUserForAuthSession(users, authSession), [users, authSession]);
-  const capabilities = useMemo(() => getUserCapabilities(activeUser?.role), [activeUser?.role]);
+  const capabilities = useMemo(() => {
+    const base = getUserCapabilities(activeUser?.role);
+    const configuredTabs = new Set(normalizeVisibleTopLevelTabs(trackerState.settings?.visibleTopLevelTabs));
+    return {
+      ...base,
+      allowedTabs: base.allowedTabs.filter((tabId) => configuredTabs.has(tabId)),
+    };
+  }, [activeUser?.role, trackerState.settings?.visibleTopLevelTabs]);
 
   useEffect(() => {
     if (!nativeAndroid || loading || !authSession || !activeUser?.id) return;
@@ -496,10 +505,11 @@ export default function App() {
   }, [sessionProjectFilter]);
 
   useEffect(() => {
+    if (!activeUser) return;
     if (!capabilities.allowedTabs.includes(activeTab)) {
       setActiveTab(capabilities.allowedTabs[0] || 'projects');
     }
-  }, [activeTab, capabilities.allowedTabs]);
+  }, [activeTab, activeUser, capabilities.allowedTabs]);
 
   useEffect(() => {
     setShowAndroidNavMenu(false);
