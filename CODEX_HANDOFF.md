@@ -94,6 +94,20 @@ Updated: 2026-07-24
 - The manual isolated-staging suite adds real hosted Supabase Auth, REST, RPC, RLS, migration replay, role-boundary, mutation, portal-audience, warranty-submission, and cleanup verification without using production.
 - Roadmap #1 is complete as of 2026-07-24. The proposed next roadmap milestone is production observability and privacy-safe error reporting; define its scope before implementation.
 
+## Current priority: Recommendation roadmap #2 — production observability
+
+### Completed milestone: inventory and privacy design
+
+- The read-only inventory found strong user-visible error handling but no durable runtime reporting. The React workspace boundary does not report caught render exceptions; browser errors and unhandled promise rejections are uncaptured; query/mutation failures are decentralized; Netlify sees deployments rather than client runtime failures; Firebase is push-only; and Supabase's existing platform logs cover backend services without a shared application correlation id.
+- `OBSERVABILITY_PLAN.md` defines the provider decision, privacy contract, expected-error suppression, bounded milestone 2.1, external prerequisites, and later backend/alerting/native phases.
+- The recommended primary path is one Sentry project using matching official React and Capacitor SDK versions. The current official Capacitor SDK supports Capacitor 8. Firebase Crashlytics is reserved as a later native-only supplement, while Supabase Logs Explorer remains the backend diagnostic source.
+- Initial telemetry must be errors-only and disabled without explicit configuration. The plan forbids PII, project/customer content, credentials, request bodies, raw route identifiers, replay, screenshots, DOM/console capture, tracing, and stable user identifiers.
+- No vendor SDK, DSN, upload token, source map upload, test event, log drain, Crashlytics, Analytics, or production telemetry was added or activated in this design milestone.
+
+### Next observability step
+
+Review and approve the privacy contract and provider prerequisites in `OBSERVABILITY_PLAN.md`. After a Sentry project and least-privilege configuration are available, implement milestone 2.1 behind disabled-by-default environment configuration and validate it against staging before production.
+
 ## Current priority: Takeoff integration
 
 The original Takeoff source used for the import is located at:
