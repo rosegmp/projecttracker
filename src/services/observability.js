@@ -53,6 +53,7 @@ let sentryProvider = null;
 let observabilityEnabled = false;
 let testSink = null;
 let recentReports = new Map();
+let transportDiagnostic = null;
 const observedErrors = new WeakSet();
 
 function getBuildRelease() {
@@ -152,6 +153,27 @@ async function waitForSentryClient(provider, timeoutMs = 2500) {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 25));
   } while (Date.now() < deadline);
   return null;
+}
+
+function createTemporaryStagingTransport(environment, makeFetchTransport) {
+  if (environment?.VITE_SENTRY_ENVIRONMENT !== 'staging' || typeof makeFetchTransport !== 'function') {
+    return undefined;
+  }
+  return (options) =>
+    makeFetchTransport(options, async (url, requestOptions) => {
+      try {
+        const response = await globalThis.fetch(url, requestOptions);
+        const responseBody = await response.clone().text().catch(() => '');
+        transportDiagnostic = {
+          response: boundedText(responseBody, 'No response body.', 240),
+          status: response.status,
+        };
+        return response;
+      } catch {
+        transportDiagnostic = { response: 'Network request failed.', status: 0 };
+        throw new Error('Sentry transport request failed.');
+      }
+    });
 }
 
 export function normalizeObservabilityOperation(value, fallback = 'application.operation') {
@@ -257,6 +279,7 @@ export async function initializeObservability(environment = getRuntimeEnvironmen
         sendClientReports: false,
         sendDefaultPii: false,
         tracesSampleRate: 0,
+        transport: createTemporaryStagingTransport(environment, reactSentry.makeFetchTransport),
       },
       reactSentry.init,
     );
@@ -325,6 +348,10 @@ export async function flushObservability(timeoutMs = 5000) {
   } catch {
     return false;
   }
+}
+
+export function getObservabilityTransportDiagnostic() {
+  return transportDiagnostic ? { ...transportDiagnostic } : null;
 }
 
 export function setObservabilityTestSink(sink) {

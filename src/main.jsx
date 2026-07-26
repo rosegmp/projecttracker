@@ -1,7 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
-import { flushObservability, initializeObservability, reportError } from './services/observability.js';
+import {
+  flushObservability,
+  getObservabilityTransportDiagnostic,
+  initializeObservability,
+  reportError,
+} from './services/observability.js';
 import './design-tokens.css';
 import './styles.css';
 
@@ -21,15 +26,15 @@ async function runTemporaryStagingValidation(observabilityReady) {
     workspace: 'settings',
   });
   const flushed = eventId ? await flushObservability(10000) : false;
+  const transport = getObservabilityTransportDiagnostic();
 
   const notice = document.createElement('aside');
   notice.setAttribute('role', 'status');
   notice.style.cssText =
     'position:fixed;z-index:9999;right:16px;bottom:16px;max-width:420px;padding:12px 16px;border-radius:8px;background:#123047;color:white;font:14px/1.4 system-ui;box-shadow:0 4px 18px #0004';
-  notice.textContent =
-    reported && flushed
-      ? `Staging observability test delivered. Support ID: ${supportId}. Event ID: ${eventId}.`
-      : 'Staging observability delivery was not confirmed. Confirm the Deploy Preview Sentry variables.';
+  notice.textContent = `Staging observability diagnostic. Queued: ${reported}. Flushed: ${flushed}. HTTP status: ${
+    transport?.status ?? 'none'
+  }. Response: ${transport?.response || 'none'}. Support ID: ${supportId}. Event ID: ${eventId || 'none'}.`;
   document.body.appendChild(notice);
 }
 
