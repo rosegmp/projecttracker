@@ -150,6 +150,8 @@ Updated: 2026-07-26
 - Trusted Sentry builds now create a deploy record tied to the release commit and `VITE_SENTRY_ENVIRONMENT`, named for the Netlify context and linked to the HTTPS deploy URL. Local/untrusted builds still create neither source-map uploads nor deploy records.
 - The Project Tracker repository/Sentry owner is the primary responder. The Netlify owner owns failed builds/rollbacks, and the repository owner owns failed required GitHub checks. No backup or 24/7 pager is claimed; add a named Sentry organization member before representing continuous coverage.
 - Checkpoint validation passed on 2026-07-26: all 126 focused regression tests passed; the production Vite build transformed 678 modules successfully; Node syntax and `git diff --check` passed. Playwright, Capacitor sync, and APK builds were intentionally deferred until a later commit checkpoint because this batch changes only reporting metadata, build integration, tests, and documentation.
+- Repository checkpoint commit `f9bdd79` (`Add production health alerting foundation`) was pushed to `origin/main`. GitHub Actions run `30221519191` then passed all three jobs, including browser journeys, Supabase authorization tests, dependency audit, Capacitor sync, and Android debug APK build.
+- Netlify reported the production deploy complete, and `https://projecthub.destinyhomesnj.com/` returned HTTP 200 after the deployment. The Sentry UI still needs to confirm that release `f9bdd79` has a production deploy record.
 - External Sentry alert rules are not yet active. Their email recipient requires selection in Sentry after the repository checkpoint passes.
 
 ## Current priority: Takeoff integration

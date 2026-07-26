@@ -157,6 +157,8 @@ Repository implementation passed its bounded checkpoint on 2026-07-26.
 - Trusted Netlify/Sentry builds create a deploy record tied to the release commit, environment, context, and HTTPS deploy URL.
 - The Project Tracker repository/Sentry owner is the primary responder. A backup responder and 24/7 coverage are not currently defined.
 - All 126 focused regression tests passed, the production build transformed 678 modules successfully, and syntax/whitespace checks passed. Playwright, Capacitor sync, and APK builds were intentionally deferred at this checkpoint.
+- Checkpoint commit `f9bdd79` is on `origin/main`. GitHub Actions run `30221519191` passed browser, Supabase authorization, audit, Capacitor, and Android APK jobs; Netlify completed the production deploy and the live URL returned HTTP 200.
+- Confirm release `f9bdd79` has a production deploy record in Sentry after the trusted build, then activate the three documented alert rules.
 - External alert rules remain inactive until the repository checkpoint passes and the Sentry email recipient is selected.
 
 ## Later milestones
