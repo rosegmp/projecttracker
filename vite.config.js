@@ -7,6 +7,14 @@ const sentryOrg = String(process.env.SENTRY_ORG || '').trim();
 const sentryProject = String(process.env.SENTRY_PROJECT || '').trim();
 const release = String(process.env.COMMIT_REF || process.env.GITHUB_SHA || 'project-tracker@0.1.0-local').trim();
 const sentryUploadEnabled = Boolean(sentryAuthToken && sentryOrg && sentryProject);
+const sentryEnvironment = String(process.env.VITE_SENTRY_ENVIRONMENT || '').trim().toLowerCase();
+const deployContext = String(process.env.CONTEXT || '').trim().toLowerCase();
+const deployUrl = String(process.env.DEPLOY_PRIME_URL || process.env.URL || '').trim();
+const sentryDeployEnabled = Boolean(
+  sentryUploadEnabled
+    && sentryEnvironment
+    && !release.endsWith('-local'),
+);
 
 export default defineConfig({
   build: {
@@ -24,6 +32,13 @@ export default defineConfig({
           project: sentryProject,
           release: {
             name: release,
+            deploy: sentryDeployEnabled
+              ? {
+                  env: sentryEnvironment,
+                  name: deployContext ? `netlify-${deployContext}` : 'trusted-build',
+                  url: /^https:\/\//i.test(deployUrl) ? deployUrl : undefined,
+                }
+              : false,
             setCommits: {
               auto: true,
               ignoreMissing: true,

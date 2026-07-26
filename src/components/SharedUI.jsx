@@ -28,6 +28,7 @@ export class AppErrorBoundary extends React.Component {
   componentDidCatch(error) {
     const { supportId } = reportError(error, {
       force: true,
+      level: 'fatal',
       operation: 'application.render',
       workspace: this.props.resetKey,
     });

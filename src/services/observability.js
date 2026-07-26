@@ -31,6 +31,7 @@ const OPERATION_TOKENS = new Set([
   'project',
   'query',
   'registration',
+  'render',
   'restore',
   'save',
   'schedule',
@@ -92,6 +93,10 @@ function getErrorCode(error) {
 function getErrorType(error) {
   if (error instanceof Error && error.name) return boundedText(error.name, 'Error', 50);
   return 'Error';
+}
+
+function getReportLevel(value) {
+  return String(value || '').trim().toLowerCase() === 'fatal' ? 'fatal' : 'error';
 }
 
 function sanitizeFrameFilename(filename) {
@@ -284,7 +289,8 @@ export function reportError(error, context = {}) {
   const status = getErrorStatus(error);
   const code = getErrorCode(error);
   const errorType = getErrorType(error);
-  const duplicateKey = `${operation}:${errorType}:${status}:${code}:${requestId}`;
+  const level = getReportLevel(context.level);
+  const duplicateKey = `${operation}:${errorType}:${status}:${code}:${requestId}:${level}`;
   const now = Date.now();
 
   if (error instanceof Error) {
@@ -298,6 +304,7 @@ export function reportError(error, context = {}) {
   const supportId = createSupportId();
   const safeReport = {
     code: code || undefined,
+    level,
     operation,
     platform: getRuntimePlatform(),
     requestId: requestId || undefined,
@@ -312,6 +319,7 @@ export function reportError(error, context = {}) {
   if (observabilityEnabled && sentryProvider) {
     const capturedError = error instanceof Error ? error : new Error(DEFAULT_ERROR_MESSAGE);
     sentryProvider.withScope((scope) => {
+      scope.setLevel(level);
       scope.setTag('operation', operation);
       scope.setTag('platform', safeReport.platform);
       if (requestId) scope.setTag('request_id', requestId.toLowerCase());

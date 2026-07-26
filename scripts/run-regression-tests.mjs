@@ -3334,21 +3334,40 @@ const tests = [
         operation: ['task', '65e8c830-b4af-4ee4-a560-8355f4c28646', 'save'],
         workspace: 'tasks',
       });
+      const fatal = reportError(
+        Object.assign(new Error('Private render failure'), { code: 'RENDER_FAILED', status: 500 }),
+        { force: true, level: 'fatal', operation: 'application.render', workspace: 'projects' },
+      );
       setObservabilityTestSink(null);
 
       assert.equal(first.reported, true);
       assert.match(first.supportId, /^ERR-[A-Z0-9]{10}$/);
       assert.equal(duplicate.reported, false);
-      assert.deepEqual(reports, [{
-        code: 'pgrst500',
-        operation: 'task.save',
-        platform: 'web',
-        requestId: 'REQ-A1B2C3D4E5F60708',
-        status: 500,
-        supportId: first.supportId,
-        type: 'Error',
-        workspace: 'tasks',
-      }]);
+      assert.equal(fatal.reported, true);
+      assert.deepEqual(reports, [
+        {
+          code: 'pgrst500',
+          level: 'error',
+          operation: 'task.save',
+          platform: 'web',
+          requestId: 'REQ-A1B2C3D4E5F60708',
+          status: 500,
+          supportId: first.supportId,
+          type: 'Error',
+          workspace: 'tasks',
+        },
+        {
+          code: 'render_failed',
+          level: 'fatal',
+          operation: 'application.render',
+          platform: 'web',
+          requestId: undefined,
+          status: 500,
+          supportId: fatal.supportId,
+          type: 'Error',
+          workspace: 'projects',
+        },
+      ]);
       assert.doesNotMatch(JSON.stringify(reports), /private@example\.com|105 Destiny Way|65e8c830/);
 
       const [boundarySource, mainSource, viteSource, packageSource] = await Promise.all([
@@ -3359,6 +3378,7 @@ const tests = [
       ]);
       assert.match(boundarySource, /componentDidCatch\(error\)/);
       assert.match(boundarySource, /force: true/);
+      assert.match(boundarySource, /level: 'fatal'/);
       assert.match(boundarySource, /Support ID:/);
       assert.doesNotMatch(boundarySource, /this\.state\.message/);
       assert.match(mainSource, /await initializeObservability\(\)/);
@@ -3367,6 +3387,9 @@ const tests = [
         /await waitForSentryClient\(capacitorSentry\)/,
       );
       assert.match(viteSource, /sourcemap: sentryUploadEnabled \? 'hidden' : false/);
+      assert.match(viteSource, /deploy: sentryDeployEnabled/);
+      assert.match(viteSource, /env: sentryEnvironment/);
+      assert.match(viteSource, /name: deployContext \? `netlify-\$\{deployContext\}` : 'trusted-build'/);
       assert.match(viteSource, /filesToDeleteAfterUpload: \['\.\/dist\/\*\*\/\*\.map'\]/);
       assert.match(viteSource, /telemetry: false/);
       assert.match(packageSource, /"@sentry\/capacitor": "4\.2\.0"/);

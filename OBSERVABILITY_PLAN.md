@@ -147,7 +147,18 @@ Replace the sample request id before running the first query. Supabase documents
 - Netlify did not publish the first client build because the account had exhausted its build credits. After credits were replenished, commit `dfa03d2` retriggered the trusted production build successfully; direct checks confirmed the live entry and tracker bundles contain the request-correlation code.
 - Milestone 2.2 is complete as of 2026-07-26.
 
+## Milestone 2.3: health and alerting
+
+Repository implementation passed its bounded checkpoint on 2026-07-26.
+
+- `OBSERVABILITY_RUNBOOK.md` defines three production-only, hourly-throttled alert rules: first-seen/regressed issues; 3 fatal occurrences in 5 minutes; and 10 occurrences of one issue in 15 minutes.
+- The sustained threshold is report volume rather than a percentage failure rate because sessions, tracing, analytics, and stable user identifiers remain disabled.
+- Only React render-boundary failures receive Sentry level `fatal`.
+- Trusted Netlify/Sentry builds create a deploy record tied to the release commit, environment, context, and HTTPS deploy URL.
+- The Project Tracker repository/Sentry owner is the primary responder. A backup responder and 24/7 coverage are not currently defined.
+- All 126 focused regression tests passed, the production build transformed 678 modules successfully, and syntax/whitespace checks passed. Playwright, Capacitor sync, and APK builds were intentionally deferred at this checkpoint.
+- External alert rules remain inactive until the repository checkpoint passes and the Sentry email recipient is selected.
+
 ## Later milestones
 
-- **2.3 Health and alerting:** alert only on new regressions, repeated fatal errors, and sustained failure-rate thresholds; link releases to commits and deployment status.
 - **2.4 Native depth, if justified:** evaluate Firebase Crashlytics only if native Android crashes or ANRs remain invisible through the Capacitor path.
