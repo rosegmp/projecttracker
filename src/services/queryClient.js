@@ -1,3 +1,5 @@
+import { reportError } from './observability.js';
+
 function normalizeKey(key) {
   return Array.isArray(key) ? key.map((part) => String(part)) : [String(key)];
 }
@@ -87,6 +89,7 @@ export class QueryClient {
           if (attempt >= retry || !isRetryableQueryError(error)) {
             this.cache.set(serialized, { key: parts, data: cached?.data, updatedAt: 0, promise: null, error });
             this.notify();
+            reportError(error, { operation: ['query', ...parts] });
             throw error;
           }
           const delay = typeof retryDelay === 'function' ? retryDelay(attempt, error) : retryDelay;
@@ -124,6 +127,7 @@ export class QueryClient {
       const latest = this.mutations.get(serialized) || current;
       this.mutations.set(serialized, { ...latest, error });
       this.notify();
+      reportError(error, { operation: ['mutation', ...parts] });
       throw error;
     } finally {
       const latest = this.mutations.get(serialized) || current;

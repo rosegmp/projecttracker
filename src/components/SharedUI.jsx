@@ -1,4 +1,5 @@
 import React from 'react';
+import { reportError } from '../services/observability.js';
 
 export function DashboardStat({ label, value, tone = 'default' }) {
   return (
@@ -17,28 +18,42 @@ export function PageStats({ settings, children }) {
 export class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, message: '' };
+    this.state = { hasError: false, supportId: '' };
   }
 
-  static getDerivedStateFromError(error) {
-    return {
-      hasError: true,
-      message: error instanceof Error ? error.message : 'A screen failed to render.',
-    };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    const { supportId } = reportError(error, {
+      force: true,
+      operation: 'application.render',
+      workspace: this.props.resetKey,
+    });
+    this.setState({ supportId });
   }
 
   componentDidUpdate(prevProps) {
     if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false, message: '' });
+      this.setState({ hasError: false, supportId: '' });
     }
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <section className="error-banner">
+        <section className="error-banner" role="alert">
           <strong>Screen render failed.</strong>
-          <span>{this.state.message}</span>
+          <span>Try this screen again. If the problem continues, share the support ID with an administrator.</span>
+          {this.state.supportId ? <span>Support ID: {this.state.supportId}</span> : null}
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => this.setState({ hasError: false, supportId: '' })}
+          >
+            Try again
+          </button>
         </section>
       );
     }

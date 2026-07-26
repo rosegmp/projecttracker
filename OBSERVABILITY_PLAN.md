@@ -1,6 +1,6 @@
 # Production observability plan
 
-Updated: 2026-07-24
+Updated: 2026-07-26
 
 ## Goal
 
@@ -77,21 +77,27 @@ Required SDK configuration:
 7. Add deterministic tests for disabled mode, redaction, expected-error suppression, render-boundary reporting, mutation deduplication, and support ids.
 8. Validate first in staging with an intentional sanitized test exception, confirm the event contains no forbidden fields, then remove the trigger before production activation.
 
+### Implementation status
+
+- Steps 1–7 are implemented locally and verified at the commit checkpoint.
+- The privacy contract is approved, and the Sentry project plus Netlify runtime/build variables are configured.
+- All 125 regression tests, all 9 Playwright journeys, the production build, dependency audit, Capacitor sync, Android debug build, syntax checks, and `git diff --check` pass.
+- No event has been sent. Step 8 remains the final pre-production gate: use a Netlify Deploy Preview with `VITE_SENTRY_ENVIRONMENT=staging`, send one intentional sanitized exception, inspect the complete event against this contract, remove the trigger, and obtain final approval before pushing to `main`.
+
 ## External prerequisites and approval boundary
 
-Do not begin milestone 2.1 activation until the repository owner:
+Milestone 2.1 activation required the repository owner to:
 
-1. creates or selects a Sentry organization and Project Tracker project;
-2. accepts the provider's plan, retention, data-processing, and access settings;
-3. supplies the web/Capacitor DSN through Netlify and local staging configuration;
-4. creates a least-privilege source-map upload token and stores it as a GitHub/Netlify secret;
-5. approves the privacy contract above.
+1. create or select a Sentry organization and Project Tracker project;
+2. accept the provider's plan, retention, data-processing, and access settings;
+3. supply the web/Capacitor DSN through Netlify and local staging configuration;
+4. create a least-privilege source-map upload token and store it as a GitHub/Netlify secret;
+5. approve the privacy contract above.
 
-No DSN, upload token, SDK, source-map upload, test event, production telemetry, Supabase log drain, Crashlytics, Analytics, replay, or tracing is active as of this plan.
+These prerequisites are complete for Sentry and Netlify. The SDK is installed locally but remains unpushed; no test event, production telemetry, Supabase log drain, Crashlytics, Analytics, replay, or tracing is active. Production activation remains blocked on the staging-event inspection and explicit final review.
 
 ## Later milestones
 
 - **2.2 Backend correlation:** add random request ids to privileged Edge Function responses and privacy-safe structured failure logs; document Supabase Logs Explorer queries. Do not enable a paid log drain initially.
 - **2.3 Health and alerting:** alert only on new regressions, repeated fatal errors, and sustained failure-rate thresholds; link releases to commits and deployment status.
 - **2.4 Native depth, if justified:** evaluate Firebase Crashlytics only if native Android crashes or ANRs remain invisible through the Capacitor path.
-

@@ -7,6 +7,7 @@ import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS } from './utils/projectTabs.js';
+import { reportError } from './services/observability.js';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -267,6 +268,7 @@ export default function App() {
             })
             .catch((deferredError) => {
               if (requestId !== refreshRequestIdRef.current) return;
+              reportError(deferredError, { operation: 'startup.hydrate', workspace: activeTab });
               setError(
                 deferredError instanceof Error
                   ? `The overview loaded, but remaining workspace data did not: ${deferredError.message}`
@@ -285,6 +287,7 @@ export default function App() {
       }
     } catch (err) {
       if (requestId === refreshRequestIdRef.current) {
+        reportError(err, { operation: 'startup.bootstrap', workspace: activeTab });
         setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
       }
     } finally {
@@ -307,6 +310,7 @@ export default function App() {
       })
       .catch((err) => {
         if (!cancelled) {
+          reportError(err, { operation: 'auth.startup' });
           setAuthError(err instanceof Error ? err.message : 'Failed to initialize sign-in.');
         }
       })
@@ -378,8 +382,10 @@ export default function App() {
     if (!nativeAndroid || loading || !authSession || !activeUser?.id) return;
     void loadAndroidNotificationsModule()
       .then(({ syncAndroidNotifications }) => syncAndroidNotifications({ data: trackerState, activeUser }))
-      .catch(() => {});
-  }, [activeUser, authSession, loading, nativeAndroid, trackerState.projects, trackerState.settings, trackerState.tasks]);
+      .catch((notificationError) => {
+        reportError(notificationError, { operation: 'notification.sync', workspace: activeTab });
+      });
+  }, [activeTab, activeUser, authSession, loading, nativeAndroid, trackerState.projects, trackerState.settings, trackerState.tasks]);
 
   useEffect(() => {
     if (!nativeAndroid || loading || !authSession || !activeUser?.id) return undefined;
@@ -387,11 +393,13 @@ export default function App() {
       if (document.visibilityState !== 'visible') return;
       void loadAndroidNotificationsModule()
         .then(({ syncAndroidNotifications }) => syncAndroidNotifications({ data: trackerStateRef.current, activeUser }))
-        .catch(() => {});
+        .catch((notificationError) => {
+          reportError(notificationError, { operation: 'notification.sync', workspace: activeTab });
+        });
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [activeUser, authSession, loading, nativeAndroid]);
+  }, [activeTab, activeUser, authSession, loading, nativeAndroid]);
 
   useEffect(() => {
     if (!nativeAndroid) return undefined;
@@ -411,6 +419,7 @@ export default function App() {
           trackerStateRef.current = nextState;
           setTrackerState(nextState);
         } catch (actionError) {
+          reportError(actionError, { operation: 'notification.task.update', workspace: 'tasks' });
           setError(actionError instanceof Error ? actionError.message : 'Unable to mark the task complete.');
         }
       }
@@ -445,12 +454,14 @@ export default function App() {
     ]).then((handles) => {
       if (cancelled) handles.forEach((handle) => void handle.remove());
       else listenerHandles.push(...handles);
-    }).catch(() => {});
+    }).catch((notificationError) => {
+      reportError(notificationError, { operation: 'notification.registration', workspace: activeTab });
+    });
     return () => {
       cancelled = true;
       listenerHandles.forEach((handle) => void handle.remove());
     };
-  }, [activeUser, capabilities.allowedTabs, capabilities.canEdit, nativeAndroid]);
+  }, [activeTab, activeUser, capabilities.allowedTabs, capabilities.canEdit, nativeAndroid]);
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(trackerState.projects, trackerState.settings, activeUser),
     [trackerState.projects, trackerState.settings, activeUser],

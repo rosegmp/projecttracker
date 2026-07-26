@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { reportError } from '../services/observability.js';
 
 function normalizeMutationKey(key) {
   if (Array.isArray(key)) return key.filter(Boolean).join(':');
@@ -28,6 +29,9 @@ export function useEntityMutations() {
     const normalizedKey = beginMutation(key);
     try {
       return await mutation();
+    } catch (error) {
+      reportError(error, { operation: normalizedKey });
+      throw error;
     } finally {
       endMutation(normalizedKey);
     }

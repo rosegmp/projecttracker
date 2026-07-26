@@ -38,6 +38,15 @@ import {
 import { describeWeatherCode, formatCurrentWeather, normalizeCurrentWeather, normalizeWeatherForecast } from '../src/utils/weather.js';
 import { isRetryableQueryError, QueryClient } from '../src/services/queryClient.js';
 import {
+  initializeObservability,
+  isExpectedOperationalError,
+  isObservabilityEnabled,
+  normalizeObservabilityOperation,
+  reportError,
+  sanitizeSentryEvent,
+  setObservabilityTestSink,
+} from '../src/services/observability.js';
+import {
   getNormalizedProjectSectionChanges,
   hydratePeopleFromNormalizedRows,
   hydrateSettingsWithNormalizedUsers,
@@ -3193,6 +3202,126 @@ const tests = [
       assert.match(migrationSource, /perform public\.sync_normalized_app_users\(p_record_data\)/);
       assert.match(migrationSource, /perform public\.sync_explicit_legacy_record\(/);
       assert.doesNotMatch(migrationSource, /create trigger (subs|employees|settings)_(unified_people|normalized_app_users)/);
+    },
+  },
+  {
+    name: 'observability redacts private data and suppresses expected operational failures',
+    async run() {
+      assert.equal(await initializeObservability({}), false);
+      assert.equal(isObservabilityEnabled(), false);
+      assert.equal(
+        normalizeObservabilityOperation(['task', '65e8c830-b4af-4ee4-a560-8355f4c28646', 'save']),
+        'task.save',
+      );
+
+      const sanitized = sanitizeSentryEvent({
+        breadcrumbs: [{ message: 'Opened 105 Destiny Way' }],
+        contexts: { browser: { name: 'Chrome' } },
+        extra: { customerName: 'Private Customer' },
+        message: 'Failed for private@example.com',
+        logentry: { formatted: 'Customer private@example.com at 105 Destiny Way' },
+        request: {
+          cookies: { session: 'secret' },
+          headers: { Authorization: 'Bearer secret' },
+          url: 'https://projecthub.destinyhomesnj.com/?project=private-project-id',
+        },
+        tags: {
+          operation: 'project.save',
+          privateTag: 'Private Customer',
+          support_id: 'ERR-SAFE123',
+        },
+        user: { email: 'private@example.com', id: 'private-user-id' },
+        exception: {
+          values: [{
+            type: 'TypeError',
+            value: 'Private Customer failed',
+            stacktrace: {
+              frames: [{
+                filename: 'https://projecthub.destinyhomesnj.com/assets/index.js?project=private-project-id',
+                function: 'saveProject',
+                lineno: 42,
+                vars: { projectName: '105 Destiny Way' },
+              }],
+            },
+          }],
+        },
+      });
+
+      assert.equal(sanitized.message, 'Unexpected application error.');
+      assert.equal(sanitized.user, undefined);
+      assert.equal(sanitized.request, undefined);
+      assert.equal(sanitized.contexts, undefined);
+      assert.equal(sanitized.extra, undefined);
+      assert.equal(sanitized.logentry, undefined);
+      assert.equal(sanitized.stacktrace, undefined);
+      assert.deepEqual(sanitized.breadcrumbs, []);
+      assert.deepEqual(sanitized.tags, {
+        operation: 'project.save',
+        platform: 'web',
+        support_id: 'err-safe123',
+      });
+      assert.equal(sanitized.exception.values[0].value, 'Unexpected application error.');
+      assert.equal(sanitized.exception.values[0].stacktrace.frames[0].filename, '/assets/index.js');
+      assert.equal('vars' in sanitized.exception.values[0].stacktrace.frames[0], false);
+
+      const forbiddenText = JSON.stringify(sanitized);
+      assert.doesNotMatch(forbiddenText, /private@example\.com|Private Customer|105 Destiny Way|private-project-id|Bearer secret/);
+
+      const forbiddenError = Object.assign(new Error('Forbidden'), { status: 403 });
+      assert.equal(isExpectedOperationalError(forbiddenError), true);
+      assert.equal(reportError(forbiddenError, { operation: 'project.save' }).reported, false);
+    },
+  },
+  {
+    name: 'observability reports one sanitized operation and guards source-map activation',
+    async run() {
+      const reports = [];
+      setObservabilityTestSink((report) => reports.push(report));
+      const sensitiveError = Object.assign(new Error('Save failed for private@example.com at 105 Destiny Way'), {
+        code: 'PGRST500',
+        status: 500,
+      });
+      const first = reportError(sensitiveError, {
+        operation: ['task', '65e8c830-b4af-4ee4-a560-8355f4c28646', 'save'],
+        workspace: 'tasks',
+      });
+      const duplicate = reportError(sensitiveError, {
+        operation: ['task', '65e8c830-b4af-4ee4-a560-8355f4c28646', 'save'],
+        workspace: 'tasks',
+      });
+      setObservabilityTestSink(null);
+
+      assert.equal(first.reported, true);
+      assert.match(first.supportId, /^ERR-[A-Z0-9]{10}$/);
+      assert.equal(duplicate.reported, false);
+      assert.deepEqual(reports, [{
+        code: 'pgrst500',
+        operation: 'task.save',
+        platform: 'web',
+        status: 500,
+        supportId: first.supportId,
+        type: 'Error',
+        workspace: 'tasks',
+      }]);
+      assert.doesNotMatch(JSON.stringify(reports), /private@example\.com|105 Destiny Way|65e8c830/);
+
+      const [boundarySource, mainSource, viteSource, packageSource] = await Promise.all([
+        readFile(new URL('../src/components/SharedUI.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/main.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../vite.config.js', import.meta.url), 'utf8'),
+        readFile(new URL('../package.json', import.meta.url), 'utf8'),
+      ]);
+      assert.match(boundarySource, /componentDidCatch\(error\)/);
+      assert.match(boundarySource, /force: true/);
+      assert.match(boundarySource, /Support ID:/);
+      assert.doesNotMatch(boundarySource, /this\.state\.message/);
+      assert.match(mainSource, /await initializeObservability\(\)/);
+      assert.match(viteSource, /sourcemap: sentryUploadEnabled \? 'hidden' : false/);
+      assert.match(viteSource, /filesToDeleteAfterUpload: \['\.\/dist\/\*\*\/\*\.map'\]/);
+      assert.match(viteSource, /telemetry: false/);
+      assert.match(packageSource, /"@sentry\/capacitor": "4\.2\.0"/);
+      assert.match(packageSource, /"@sentry\/react": "10\.60\.0"/);
+      assert.match(packageSource, /"@sentry\/vite-plugin": "5\.4\.0"/);
     },
   },
   {

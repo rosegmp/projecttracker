@@ -25,12 +25,15 @@
     "@capacitor/push-notifications": "^8.1.2",
     "@capacitor/share": "^8.0.1",
     "@fluentui/react-icons": "^2.0.328",
+    "@sentry/capacitor": "4.2.0",
+    "@sentry/react": "10.60.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@sentry/vite-plugin": "5.4.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.10"
   }
