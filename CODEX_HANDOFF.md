@@ -128,7 +128,7 @@ Updated: 2026-07-26
 - Commits `e50610b` and `9e8c725` were pushed to `origin/main` with explicit production approval. Netlify completed the production deployment at `https://projecthub.destinyhomesnj.com`; the live site returns HTTP 200 and its served bundle contains the production Sentry configuration without the validation trigger or transport probe. No intentional production event was sent.
 - GitHub Actions run `30219313372` passed the 125 regression tests, all 9 browser journeys, production build and dependency audit, all 10 pgTAP authorization assertions, Android sync/debug compilation, and APK upload.
 
-### Milestone 2.2 implementation checkpoint: backend request correlation
+### Milestone 2.2 complete: backend request correlation
 
 - Privileged calls to `create-auth-user` and `send-project-notification` now receive a fresh opaque `REQ-` identifier from the client. Each function validates or replaces it, returns it in both the `x-request-id` response header and JSON response, and exposes the header through CORS.
 - Genuine client-side failures preserve that identifier through user-friendly error wrapping and add it to the existing sanitized Sentry event allowlist. Expected validation, authentication, authorization, network, and not-found failures remain suppressed by the milestone 2.1 classifier.
@@ -138,8 +138,9 @@ Updated: 2026-07-26
 - Local checkpoint verification on 2026-07-26 passes all 126 regression tests, the 678-module production build, and `git diff --check`. No Capacitor sync or APK build was run because this bounded batch does not change native configuration.
 - Production activation was explicitly approved. Commit `524fdb4` is pushed to `origin/main`; `create-auth-user` is active at version 5 and `send-project-notification` is active at version 4, with JWT verification still enabled for both.
 - Non-mutating production `OPTIONS` checks returned the supplied request id and the expected CORS allowlist from both functions. Bounded anonymous POST checks then returned generic `401` responses with matching request ids in both the response header and JSON body, before any data mutation.
-- The synthetic failure ids from that check are `REQ-D0808C9B6463E8A8` for `create-auth-user` and `REQ-3B6D8585DD98BC8C` for `send-project-notification`. Confirm their structured records in Supabase Logs Explorer using the documented `function_logs` query; programmatic log access was intentionally not expanded beyond the CLI credential boundary.
+- The synthetic failure ids from that check are `REQ-D0808C9B6463E8A8` for `create-auth-user` and `REQ-3B6D8585DD98BC8C` for `send-project-notification`. The repository owner confirmed both structured records appeared correctly in `function_logs` with only the approved fields; programmatic log access was intentionally not expanded beyond the CLI credential boundary.
 - The first Netlify build triggered by `524fdb4` did not publish because the account had exhausted its credits. After credits were replenished, commit `dfa03d2` retriggered the trusted build successfully. The live production entry bundle contains the `REQ-` generator and the live tracker bundle contains the `x-request-id` request header logic.
+- Milestone 2.2 is complete as of 2026-07-26. The next observability milestone is 2.3 health and alerting; define its thresholds and notification ownership before implementation.
 
 ## Current priority: Takeoff integration
 

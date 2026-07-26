@@ -143,8 +143,9 @@ Replace the sample request id before running the first query. Supabase documents
 - Commit `524fdb4` is pushed to `origin/main`.
 - `create-auth-user` version 5 and `send-project-notification` version 4 are active with JWT verification enabled.
 - Non-mutating production checks verified request-id echoing, CORS exposure, and correlated generic `401` responses from both functions without changing application data or sending a Sentry event.
-- The two synthetic validation ids are recorded in `CODEX_HANDOFF.md` for one manual Logs Explorer confirmation.
+- The repository owner confirmed both synthetic validation ids appeared correctly in `function_logs` with only the approved structured fields.
 - Netlify did not publish the first client build because the account had exhausted its build credits. After credits were replenished, commit `dfa03d2` retriggered the trusted production build successfully; direct checks confirmed the live entry and tracker bundles contain the request-correlation code.
+- Milestone 2.2 is complete as of 2026-07-26.
 
 ## Later milestones
 
