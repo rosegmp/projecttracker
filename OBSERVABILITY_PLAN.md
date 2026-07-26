@@ -83,7 +83,8 @@ Required SDK configuration:
 - The privacy contract is approved, and the Sentry project plus Netlify runtime/build variables are configured.
 - All 125 regression tests, all 9 Playwright journeys, the production build, dependency audit, Capacitor sync, Android debug build, syntax checks, and `git diff --check` pass.
 - A Netlify Deploy Preview sent an intentional `staging` exception containing fake private markers. The repository owner inspected the received event and confirmed that the complete privacy checklist passed. The temporary trigger and transport probes are absent from the clean production change.
-- Validation also added a bounded wait for Capacitor's asynchronous sibling-client initialization, updated audited `brace-expansion` to 5.0.8, and documented that browser tracking prevention can block direct Sentry delivery. Production activation still requires explicit final approval before pushing local `main`.
+- Validation also added a bounded wait for Capacitor's asynchronous sibling-client initialization, updated audited `brace-expansion` to 5.0.8, and documented that browser tracking prevention can block direct Sentry delivery.
+- Production activation was explicitly approved and deployed from commits `e50610b` and `9e8c725`. The live site returns HTTP 200 with production Sentry configuration and no validation instrumentation; GitHub Actions run `30219313372` passed every web, authorization, and Android job. No intentional production event was sent.
 
 ## External prerequisites and approval boundary
 
@@ -95,7 +96,7 @@ Milestone 2.1 activation required the repository owner to:
 4. create a least-privilege source-map upload token and store it as a GitHub/Netlify secret;
 5. approve the privacy contract above.
 
-These prerequisites and the staging-event inspection are complete. The SDK is installed locally but remains unpushed; no production telemetry, Supabase log drain, Crashlytics, Analytics, replay, or tracing is active. Production activation remains blocked on explicit final review.
+These prerequisites, the staging-event inspection, and final production approval are complete. Privacy-safe error telemetry is active in production. Supabase log drains, Crashlytics, Analytics, replay, and tracing remain inactive.
 
 ## Later milestones
 

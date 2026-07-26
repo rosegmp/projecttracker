@@ -8,6 +8,8 @@ Updated: 2026-07-26
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `9e8c725` Complete observability staging validation
+  - `e50610b` Add privacy-safe production observability
   - `5064a85` Define privacy-safe observability roadmap
   - `97ffe7e` Complete automated testing roadmap
   - `3e2a99c` Apply migrations in staging test workflow
@@ -119,7 +121,9 @@ Updated: 2026-07-26
 - Validation found that Capacitor returns before its sibling React/browser Sentry client is ready. Initialization now waits for the real client before mounting React, preventing startup failures from being silently dropped.
 - A newly published high-severity `brace-expansion` advisory failed the first hosted dependency gate. The lockfile-only update to 5.0.8 restores a zero-vulnerability production audit without changing a direct dependency.
 - Edge Tracking Prevention blocked direct Sentry ingestion during the first browser attempts. Disabling it for the preview allowed the complete SDK path to return HTTP 200 and produce the verified event. Direct client telemetry remains best-effort for users with aggressive tracking protection; a first-party tunnel is deferred because it adds proxy-abuse and operational surface.
-- All temporary exception triggers and transport probes are absent from the clean production change. The draft validation PR is not mergeable and is being closed. No production activation has occurred; local `main` remains unpushed behind explicit final approval.
+- All temporary exception triggers and transport probes are absent from the clean production change. Draft validation PR #1 was closed without merging.
+- Commits `e50610b` and `9e8c725` were pushed to `origin/main` with explicit production approval. Netlify completed the production deployment at `https://projecthub.destinyhomesnj.com`; the live site returns HTTP 200 and its served bundle contains the production Sentry configuration without the validation trigger or transport probe. No intentional production event was sent.
+- GitHub Actions run `30219313372` passed the 125 regression tests, all 9 browser journeys, production build and dependency audit, all 10 pgTAP authorization assertions, Android sync/debug compilation, and APK upload.
 
 ## Current priority: Takeoff integration
 
