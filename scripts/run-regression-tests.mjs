@@ -3316,6 +3316,10 @@ const tests = [
       assert.match(boundarySource, /Support ID:/);
       assert.doesNotMatch(boundarySource, /this\.state\.message/);
       assert.match(mainSource, /await initializeObservability\(\)/);
+      assert.match(
+        await readFile(new URL('../src/services/observability.js', import.meta.url), 'utf8'),
+        /await waitForSentryClient\(capacitorSentry\)/,
+      );
       assert.match(viteSource, /sourcemap: sentryUploadEnabled \? 'hidden' : false/);
       assert.match(viteSource, /filesToDeleteAfterUpload: \['\.\/dist\/\*\*\/\*\.map'\]/);
       assert.match(viteSource, /telemetry: false/);

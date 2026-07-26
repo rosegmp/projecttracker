@@ -106,7 +106,7 @@ Updated: 2026-07-26
 - Initial telemetry must be errors-only and disabled without explicit configuration. The plan forbids PII, project/customer content, credentials, request bodies, raw route identifiers, replay, screenshots, DOM/console capture, tracing, and stable user identifiers.
 - No vendor SDK, DSN, upload token, source map upload, test event, log drain, Crashlytics, Analytics, or production telemetry was added or activated in this design milestone.
 
-### Milestone 2.1 implementation ready for staging review
+### Milestone 2.1 implementation and staging privacy validation complete
 
 - The repository owner approved the privacy contract and configured the Sentry project plus Netlify runtime/build variables.
 - A provider-neutral observability service now initializes Sentry only for an explicitly valid DSN. It disables default PII, replay, tracing, breadcrumbs, native collection, console capture, and client reports; applies a strict event/tag/stack allowlist; replaces raw exception messages; strips URL queries and fragments; suppresses expected operational failures; deduplicates reports; and creates random support IDs.
@@ -114,8 +114,12 @@ Updated: 2026-07-26
 - Trusted builds enable hidden source maps only when all three Sentry upload credentials are present, associate uploads with the deploy commit, and remove map files from the published output after upload. Ordinary local builds generate no source maps.
 - Exact SDK versions are `@sentry/capacitor` 4.2.0, `@sentry/react` 10.60.0, and `@sentry/vite-plugin` 5.4.0. Capacitor Android registration is generated and checked in.
 - Checkpoint verification on 2026-07-26 passes all 125 regression tests, all 9 Playwright journeys, the 677-module production build, dependency audit with zero vulnerabilities, Capacitor Android sync, Gradle `assembleDebug`, JavaScript syntax checks, and `git diff --check`.
-- The refreshed debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,946,798 bytes, built July 26, 2026 at 2:58 PM). Gradle required the Windows root certificate store for the first Sentry Android dependency download.
-- No Sentry event has been sent and no production activation has occurred. Before pushing this runtime change to `main`, validate a single intentional sanitized exception in a Netlify Deploy Preview configured with the Sentry environment `staging`; confirm the event contains no forbidden fields, then remove the temporary trigger. Production activation remains behind explicit final review.
+- The refreshed debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,946,798 bytes, built July 26, 2026 at 4:33 PM). Gradle required the Windows root certificate store for Sentry Android dependency resolution.
+- Netlify Deploy Preview validation sent an intentional exception containing fake email, address, and project markers. The received `staging` event retained only the generic exception value, approved operation/workspace/platform/support tags, release metadata, and source stack; the repository owner confirmed the complete privacy checklist passed.
+- Validation found that Capacitor returns before its sibling React/browser Sentry client is ready. Initialization now waits for the real client before mounting React, preventing startup failures from being silently dropped.
+- A newly published high-severity `brace-expansion` advisory failed the first hosted dependency gate. The lockfile-only update to 5.0.8 restores a zero-vulnerability production audit without changing a direct dependency.
+- Edge Tracking Prevention blocked direct Sentry ingestion during the first browser attempts. Disabling it for the preview allowed the complete SDK path to return HTTP 200 and produce the verified event. Direct client telemetry remains best-effort for users with aggressive tracking protection; a first-party tunnel is deferred because it adds proxy-abuse and operational surface.
+- All temporary exception triggers and transport probes are absent from the clean production change. The draft validation PR is not mergeable and is being closed. No production activation has occurred; local `main` remains unpushed behind explicit final approval.
 
 ## Current priority: Takeoff integration
 
