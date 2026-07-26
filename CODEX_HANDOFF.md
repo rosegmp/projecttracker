@@ -8,6 +8,7 @@ Updated: 2026-07-26
 - Branch: `main`
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
+  - `524fdb4` Add backend request correlation
   - `f3d251a` Record production observability activation
   - `9e8c725` Complete observability staging validation
   - `e50610b` Add privacy-safe production observability
@@ -134,7 +135,10 @@ Updated: 2026-07-26
 - Function error responses no longer expose raw Supabase, Firebase, environment, or provider exception messages. Expected rejections remain actionable but generic.
 - `OBSERVABILITY_PLAN.md` contains the Logs Explorer lookup procedure and ClickHouse query templates. A request id from Sentry can be searched against `function_logs`; no paid log drain is enabled.
 - Local checkpoint verification on 2026-07-26 passes all 126 regression tests, the 678-module production build, and `git diff --check`. No Capacitor sync or APK build was run because this bounded batch does not change native configuration.
-- The two updated Edge Functions are **not deployed**. Deployment and live correlation validation require explicit approval after the local commit; the existing production function versions remain active.
+- Production activation was explicitly approved. Commit `524fdb4` is pushed to `origin/main`; `create-auth-user` is active at version 5 and `send-project-notification` is active at version 4, with JWT verification still enabled for both.
+- Non-mutating production `OPTIONS` checks returned the supplied request id and the expected CORS allowlist from both functions. Bounded anonymous POST checks then returned generic `401` responses with matching request ids in both the response header and JSON body, before any data mutation.
+- The synthetic failure ids from that check are `REQ-D0808C9B6463E8A8` for `create-auth-user` and `REQ-3B6D8585DD98BC8C` for `send-project-notification`. Confirm their structured records in Supabase Logs Explorer using the documented `function_logs` query; programmatic log access was intentionally not expanded beyond the CLI credential boundary.
+- The first Netlify build triggered by `524fdb4` did not publish because the account had exhausted its credits. Credits were replenished, but the live bundle still served the pre-2.2 client during validation. The deployment-record push immediately following this handoff update is intended to retrigger the trusted Netlify build.
 
 ## Current priority: Takeoff integration
 
