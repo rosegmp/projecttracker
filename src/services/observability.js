@@ -144,6 +144,16 @@ function pruneRecentReports(now) {
   });
 }
 
+async function waitForSentryClient(provider, timeoutMs = 2500) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const client = provider?.getClient?.();
+    if (client) return client;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  return null;
+}
+
 export function normalizeObservabilityOperation(value, fallback = 'application.operation') {
   const parts = (Array.isArray(value) ? value : String(value || '').split(/[:./\s_-]+/))
     .flatMap((part) => String(part || '').toLowerCase().split(/[:./\s_-]+/))
@@ -250,6 +260,8 @@ export async function initializeObservability(environment = getRuntimeEnvironmen
       },
       reactSentry.init,
     );
+    const client = await waitForSentryClient(capacitorSentry);
+    if (!client) return false;
     sentryProvider = capacitorSentry;
     observabilityEnabled = true;
     return true;
@@ -292,6 +304,7 @@ export function reportError(error, context = {}) {
 
   if (typeof testSink === 'function') testSink(safeReport);
 
+  let eventId = '';
   if (observabilityEnabled && sentryProvider) {
     const capturedError = error instanceof Error ? error : new Error(DEFAULT_ERROR_MESSAGE);
     sentryProvider.withScope((scope) => {
@@ -299,10 +312,19 @@ export function reportError(error, context = {}) {
       scope.setTag('platform', safeReport.platform);
       scope.setTag('support_id', supportId);
       if (workspace) scope.setTag('workspace', workspace);
-      sentryProvider.captureException(capturedError);
+      eventId = sentryProvider.captureException(capturedError);
     });
   }
-  return { reported: observabilityEnabled || typeof testSink === 'function', supportId };
+  return { eventId, reported: Boolean(eventId) || typeof testSink === 'function', supportId };
+}
+
+export async function flushObservability(timeoutMs = 5000) {
+  if (!observabilityEnabled || !sentryProvider?.flush) return false;
+  try {
+    return await sentryProvider.flush(timeoutMs);
+  } catch {
+    return false;
+  }
 }
 
 export function setObservabilityTestSink(sink) {
