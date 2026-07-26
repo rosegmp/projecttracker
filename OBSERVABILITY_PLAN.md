@@ -101,7 +101,7 @@ These prerequisites, the staging-event inspection, and final production approval
 
 ## Milestone 2.2: backend correlation
 
-Implementation and production Edge Function activation are complete. The trusted Netlify client rebuild is being retriggered after the account's build credits were replenished.
+Implementation and production activation are complete.
 
 - The client creates a fresh `REQ-` value for each privileged Edge Function call. The function accepts only the exact opaque format, generates a replacement for malformed or absent values, and returns the accepted id in the JSON body plus `x-request-id`.
 - `create-auth-user` and `send-project-notification` emit structured failure lines with only six fields: `event`, `function`, `operation`, `status`, normalized `code`, and `request_id`.
@@ -144,7 +144,7 @@ Replace the sample request id before running the first query. Supabase documents
 - `create-auth-user` version 5 and `send-project-notification` version 4 are active with JWT verification enabled.
 - Non-mutating production checks verified request-id echoing, CORS exposure, and correlated generic `401` responses from both functions without changing application data or sending a Sentry event.
 - The two synthetic validation ids are recorded in `CODEX_HANDOFF.md` for one manual Logs Explorer confirmation.
-- Netlify did not publish the first client build because the account had exhausted its build credits. After credits were replenished, the deployment-record push was used to retrigger the trusted production build.
+- Netlify did not publish the first client build because the account had exhausted its build credits. After credits were replenished, commit `dfa03d2` retriggered the trusted production build successfully; direct checks confirmed the live entry and tracker bundles contain the request-correlation code.
 
 ## Later milestones
 
