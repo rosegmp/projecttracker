@@ -73,6 +73,12 @@ import {
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
 import { buildProjectPhotoGallery } from '../src/utils/projectPhotoGallery.js';
+import {
+  attachRequestId,
+  createRequestId,
+  getResponseRequestId,
+  normalizeRequestId,
+} from '../src/utils/requestCorrelation.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../src/utils/navigationTabs.js';
 import {
   DEFAULT_VISIBLE_PROJECT_TABS,
@@ -3205,6 +3211,42 @@ const tests = [
     },
   },
   {
+    name: 'privileged requests use privacy-safe correlation IDs and structured Edge failure logs',
+    async run() {
+      const generated = createRequestId();
+      assert.match(generated, /^REQ-[A-F0-9]{16}$/);
+      assert.equal(normalizeRequestId(generated.toLowerCase()), generated);
+      assert.equal(normalizeRequestId('REQ-private-project-id'), '');
+
+      const correlatedError = attachRequestId(new Error('Private failure detail'), generated);
+      assert.equal(correlatedError.requestId, generated);
+      assert.equal(
+        getResponseRequestId(
+          { headers: new Headers({ 'x-request-id': generated }) },
+          {},
+        ),
+        generated,
+      );
+
+      const [trackerSource, inviteSource, notificationSource, sharedSource] = await Promise.all([
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/create-auth-user/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/_shared/requestCorrelation.ts', import.meta.url), 'utf8'),
+      ]);
+      assert.match(trackerSource, /headers\['x-request-id'\] = requestId/);
+      assert.match(trackerSource, /throw attachRequestId\(error, requestId\)/);
+      assert.match(inviteSource, /Access-Control-Expose-Headers/);
+      assert.match(notificationSource, /Access-Control-Expose-Headers/);
+      assert.match(inviteSource, /return fail\(\s*'Unexpected function error\.'/);
+      assert.match(notificationSource, /return fail\(\s*'Unexpected notification error\.'/);
+      assert.match(sharedSource, /event: 'edge_function_failure'/);
+      assert.match(sharedSource, /request_id: requestId/);
+      assert.match(sharedSource, /\/\^\[a-z0-9_\]\{1,40\}\$\//);
+      assert.doesNotMatch(sharedSource, /email|project_id|user_id|payload|message/);
+    },
+  },
+  {
     name: 'observability redacts private data and suppresses expected operational failures',
     async run() {
       assert.equal(await initializeObservability({}), false);
@@ -3228,6 +3270,7 @@ const tests = [
         tags: {
           operation: 'project.save',
           privateTag: 'Private Customer',
+          request_id: 'REQ-A1B2C3D4E5F60708',
           support_id: 'ERR-SAFE123',
         },
         user: { email: 'private@example.com', id: 'private-user-id' },
@@ -3258,6 +3301,7 @@ const tests = [
       assert.deepEqual(sanitized.tags, {
         operation: 'project.save',
         platform: 'web',
+        request_id: 'req-a1b2c3d4e5f60708',
         support_id: 'err-safe123',
       });
       assert.equal(sanitized.exception.values[0].value, 'Unexpected application error.');
@@ -3279,6 +3323,7 @@ const tests = [
       setObservabilityTestSink((report) => reports.push(report));
       const sensitiveError = Object.assign(new Error('Save failed for private@example.com at 105 Destiny Way'), {
         code: 'PGRST500',
+        requestId: 'REQ-A1B2C3D4E5F60708',
         status: 500,
       });
       const first = reportError(sensitiveError, {
@@ -3298,6 +3343,7 @@ const tests = [
         code: 'pgrst500',
         operation: 'task.save',
         platform: 'web',
+        requestId: 'REQ-A1B2C3D4E5F60708',
         status: 500,
         supportId: first.supportId,
         type: 'Error',

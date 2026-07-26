@@ -1,16 +1,19 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import {
+  getRequestId,
+  jsonResponse,
+  logEdgeFailure,
+  REQUEST_ID_HEADER,
+} from '../_shared/requestCorrelation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': `authorization, x-client-info, apikey, content-type, ${REQUEST_ID_HEADER}`,
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Expose-Headers': REQUEST_ID_HEADER,
 };
 const allowedKinds = new Set(['task-created', 'task-updated', 'task-assigned', 'inspection-updated', 'comment-mentioned', 'selection-approval-requested']);
 let cachedGoogleToken: { value: string; expiresAt: number } | null = null;
-
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-}
 
 function requiredEnv(name: string) {
   const value = Deno.env.get(name);
@@ -77,41 +80,65 @@ function normalizeRole(value: unknown) {
 }
 
 Deno.serve(async (request) => {
-  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405);
+  const requestId = getRequestId(request);
+  const respond = (body: Record<string, unknown>, status = 200) =>
+    jsonResponse(body, status, requestId, corsHeaders);
+  const fail = (error: string, status: number, operation: string, code: unknown) => {
+    logEdgeFailure({ code, functionName: 'send-project-notification', operation, requestId, status });
+    return respond({ error }, status);
+  };
+  let operation = 'request.initialize';
+
+  if (request.method === 'OPTIONS') {
+    return new Response('ok', { headers: { ...corsHeaders, [REQUEST_ID_HEADER]: requestId } });
+  }
+  if (request.method !== 'POST') {
+    return fail('Method not allowed.', 405, 'request.validate', 'method_not_allowed');
+  }
 
   try {
+    operation = 'configuration.read';
     const supabaseUrl = requiredEnv('SUPABASE_URL');
     const admin = createClient(supabaseUrl, serviceRoleKey(), { auth: { autoRefreshToken: false, persistSession: false } });
     const callerToken = bearerToken(request);
+    operation = 'auth.verify';
     const { data: callerData, error: callerError } = await admin.auth.getUser(callerToken);
     const caller = callerData?.user;
-    if (callerError || !caller?.id || !caller.email) return jsonResponse({ error: 'Unable to verify signed-in user.' }, 401);
+    if (callerError || !caller?.id || !caller.email) {
+      return fail('Unable to verify signed-in user.', 401, operation, 'invalid_token');
+    }
 
+    operation = 'request.validate';
     const payload = await request.json().catch(() => ({}));
     const eventId = String(payload.eventId || '').slice(0, 160);
     const projectId = String(payload.projectId || '').slice(0, 160);
     const kind = String(payload.kind || '');
-    if (!eventId || !projectId || !allowedKinds.has(kind)) return jsonResponse({ error: 'Invalid notification event.' }, 400);
+    if (!eventId || !projectId || !allowedKinds.has(kind)) {
+      return fail('Invalid notification event.', 400, operation, 'invalid_event');
+    }
 
+    operation = 'users.read';
     const { data: appUsers, error: usersError } = await admin.from('app_users').select('id,position,data');
     if (usersError) throw usersError;
     const callerAppUser = (appUsers || []).find((user) =>
       String(user.data?.email || '').trim().toLowerCase() === String(caller.email).trim().toLowerCase(),
     );
     if (!callerAppUser || !['Admin', 'Edit'].includes(normalizeRole(callerAppUser.data?.role))) {
-      return jsonResponse({ error: 'Only project editors can send project notifications.' }, 403);
+      return fail('Only project editors can send project notifications.', 403, 'authorization.check', 'editor_required');
     }
 
+    operation = 'project.read';
     const [{ data: project }, { data: accessRows }] = await Promise.all([
       admin.from('projects').select('id,data').eq('id', projectId).maybeSingle(),
       admin.from('project_user_access').select('user_id').eq('project_id', projectId),
     ]);
-    if (!project) return jsonResponse({ error: 'Project not found.' }, 404);
+    if (!project) return fail('Project not found.', 404, operation, 'project_not_found');
     const accessIds = new Set((accessRows || []).map((row) => row.user_id));
     const callerCanAccess = normalizeRole(callerAppUser.data?.role) === 'Admin'
       || (accessIds.size ? accessIds.has(callerAppUser.id) : normalizeRole(callerAppUser.data?.role) === 'Edit');
-    if (!callerCanAccess) return jsonResponse({ error: 'You cannot notify users for this project.' }, 403);
+    if (!callerCanAccess) {
+      return fail('You cannot notify users for this project.', 403, 'authorization.check', 'project_access_required');
+    }
 
     const requestedRecipients = new Set(
       Array.isArray(payload.recipientAppUserIds) ? payload.recipientAppUserIds.map(String) : [],
@@ -126,6 +153,7 @@ Deno.serve(async (request) => {
       .filter((user) => !requestedRecipients.size || requestedRecipients.has(user.id))
       .map((user) => user.id);
 
+    operation = 'notification.record';
     const { error: eventError } = await admin.from('push_notification_events').insert({
       id: eventId,
       actor_auth_user_id: caller.id,
@@ -135,18 +163,20 @@ Deno.serve(async (request) => {
       entity_id: String(payload.entityId || '').slice(0, 160),
       recipient_count: recipientIds.length,
     });
-    if (eventError?.code === '23505') return jsonResponse({ ok: true, duplicate: true, sent: 0 });
+    if (eventError?.code === '23505') return respond({ ok: true, duplicate: true, sent: 0 });
     if (eventError) throw eventError;
 
-    if (!recipientIds.length) return jsonResponse({ ok: true, sent: 0 });
+    if (!recipientIds.length) return respond({ ok: true, sent: 0 });
+    operation = 'notification.tokens.read';
     const { data: tokenRows, error: tokenError } = await admin
       .from('device_push_tokens')
       .select('id,token')
       .in('app_user_id', recipientIds)
       .eq('enabled', true);
     if (tokenError) throw tokenError;
-    if (!tokenRows?.length) return jsonResponse({ ok: true, sent: 0 });
+    if (!tokenRows?.length) return respond({ ok: true, sent: 0 });
 
+    operation = 'notification.deliver';
     const serviceAccount = JSON.parse(requiredEnv('FIREBASE_SERVICE_ACCOUNT_JSON'));
     const firebaseProjectId = serviceAccount.project_id || requiredEnv('FIREBASE_PROJECT_ID');
     const accessToken = await googleAccessToken(serviceAccount);
@@ -186,9 +216,24 @@ Deno.serve(async (request) => {
     if (invalidTokenIds.length) await admin.from('device_push_tokens').delete().in('id', invalidTokenIds);
     const sent = results.filter((result) => result.ok).length;
     const failed = results.length - sent;
+    operation = 'notification.record';
     await admin.from('push_notification_events').update({ sent_count: sent, failed_count: failed }).eq('id', eventId);
-    return jsonResponse({ ok: true, sent, failed });
+    if (failed) {
+      logEdgeFailure({
+        code: 'partial_delivery',
+        functionName: 'send-project-notification',
+        operation: 'notification.deliver',
+        requestId,
+        status: 200,
+      });
+    }
+    return respond({ ok: true, sent, failed });
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : 'Unexpected notification error.' }, 500);
+    return fail(
+      'Unexpected notification error.',
+      500,
+      operation,
+      (error as { code?: unknown })?.code || 'unexpected_error',
+    );
   }
 });

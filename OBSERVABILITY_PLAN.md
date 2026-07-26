@@ -48,6 +48,7 @@ Allowed:
 - bounded operation category such as `project.save`, `task.create`, `startup.bootstrap`, or `storage.upload`;
 - HTTP status and normalized Supabase/Postgres error code when present;
 - a random per-error support id shown to the user.
+- a random per-request correlation id for privileged Edge Function failures.
 
 Forbidden:
 
@@ -98,8 +99,46 @@ Milestone 2.1 activation required the repository owner to:
 
 These prerequisites, the staging-event inspection, and final production approval are complete. Privacy-safe error telemetry is active in production. Supabase log drains, Crashlytics, Analytics, replay, and tracing remain inactive.
 
+## Milestone 2.2: backend correlation
+
+Implementation is complete locally and awaits explicit Edge Function deployment approval.
+
+- The client creates a fresh `REQ-` value for each privileged Edge Function call. The function accepts only the exact opaque format, generates a replacement for malformed or absent values, and returns the accepted id in the JSON body plus `x-request-id`.
+- `create-auth-user` and `send-project-notification` emit structured failure lines with only six fields: `event`, `function`, `operation`, `status`, normalized `code`, and `request_id`.
+- Raw caught error messages and downstream response content are excluded from application logs and function error responses. The notification function still examines Firebase response content in memory to retire invalid tokens, but never logs or returns that content.
+- Client errors retain the request id. Reportable failures add it as the allowlisted Sentry `request_id` tag; expected operational failures remain suppressed.
+- No log drain, external backend telemetry sink, replay, tracing, or new stable identifier is enabled.
+
+### Supabase Logs Explorer lookup
+
+1. Copy the `request_id` tag from the sanitized Sentry event.
+2. In the production Supabase project, open **Logs → Logs Explorer**, use a narrow time range, and select the `function_logs` source.
+3. Search the event message for the complete opaque id. Never search by an email, project name/id, notification text, or other customer content.
+4. With the current ClickHouse Logs Explorer, the equivalent query is:
+
+```sql
+select timestamp, severity_text, event_message
+from logs
+where source = 'function_logs'
+  and event_message like '%REQ-0123456789ABCDEF%'
+order by timestamp desc
+limit 20;
+```
+
+5. To review recent application-owned function failures without customer fields:
+
+```sql
+select timestamp, severity_text, event_message
+from logs
+where source = 'function_logs'
+  and event_message like '%"event":"edge_function_failure"%'
+order by timestamp desc
+limit 100;
+```
+
+Replace the sample request id before running the first query. Supabase documents `function_logs` as internal function console output and notes that current Logs Explorer queries use the shared `logs` table with `source`, `event_message`, and structured `log_attributes`: https://supabase.com/docs/guides/telemetry/logs
+
 ## Later milestones
 
-- **2.2 Backend correlation:** add random request ids to privileged Edge Function responses and privacy-safe structured failure logs; document Supabase Logs Explorer queries. Do not enable a paid log drain initially.
 - **2.3 Health and alerting:** alert only on new regressions, repeated fatal errors, and sustained failure-rate thresholds; link releases to commits and deployment status.
 - **2.4 Native depth, if justified:** evaluate Firebase Crashlytics only if native Android crashes or ANRs remain invisible through the Capacitor path.

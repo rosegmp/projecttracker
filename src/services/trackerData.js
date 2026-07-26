@@ -1,7 +1,13 @@
 import { getCurrentUrl, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { trackerQueryClient } from './queryClient.js';
+import { reportError } from './observability.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS, normalizeVisibleProjectTabs } from '../utils/projectTabs.js';
+import {
+  attachRequestId,
+  createRequestId,
+  getResponseRequestId,
+} from '../utils/requestCorrelation.js';
 
 const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
@@ -266,12 +272,24 @@ export async function inviteAuthUser(email, name = '', redirectTo = '') {
       }),
     }, 'Login invite', 20000);
   } catch (error) {
+    const requestId = error?.requestId || '';
     if (/session expired|sign in again/i.test(String(error?.message || error || ''))) {
-      throw new Error('Your login session expired. Sign out, then sign in again before sending the invite.');
+      const nextError = attachRequestId(
+        new Error('Your login session expired. Sign out, then sign in again before sending the invite.'),
+        requestId,
+      );
+      reportError(nextError, { operation: 'auth.user.invite' });
+      throw nextError;
     }
     if (/failed to fetch|network|connection|load failed/i.test(String(error?.message || error || ''))) {
-      throw new Error('Unable to reach the login invite service. Check your connection, then sign out and back in before trying again.');
+      const nextError = attachRequestId(
+        new Error('Unable to reach the login invite service. Check your connection, then sign out and back in before trying again.'),
+        requestId,
+      );
+      reportError(nextError, { operation: 'auth.user.invite' });
+      throw nextError;
     }
+    reportError(error, { operation: 'auth.user.invite' });
     throw error;
   }
   const text = await response.text();
@@ -282,7 +300,13 @@ export async function inviteAuthUser(email, name = '', redirectTo = '') {
     payload = {};
   }
   if (!response.ok || payload.error) {
-    throw new Error(payload.error || text || 'Unable to send login invite.');
+    const error = attachRequestId(
+      new Error(payload.error || 'Unable to send login invite.'),
+      getResponseRequestId(response, payload),
+    );
+    error.status = response.status;
+    reportError(error, { operation: 'auth.user.invite' });
+    throw error;
   }
   return payload;
 }
@@ -1388,10 +1412,18 @@ export async function fetchAuthorizedSupabase(path, options = {}, label = 'Supab
     throw new Error('Supabase is not configured.');
   }
   const url = /^https?:\/\//i.test(String(path || '')) ? path : `${SUPABASE_URL}${path}`;
-  return fetchWithTimeout(url, {
-    ...options,
-    headers: storageAuthHeaders(options.headers || {}),
-  }, label, timeoutMs);
+  const isPrivilegedFunction = new URL(url).pathname.startsWith('/functions/v1/');
+  const requestId = isPrivilegedFunction ? createRequestId() : '';
+  const headers = storageAuthHeaders(options.headers || {});
+  if (requestId) headers['x-request-id'] = requestId;
+  try {
+    return await fetchWithTimeout(url, {
+      ...options,
+      headers,
+    }, label, timeoutMs);
+  } catch (error) {
+    throw attachRequestId(error, requestId);
+  }
 }
 
 function buildProjectStoragePath(projectId, folderId, fileId, originalName) {
@@ -2676,7 +2708,7 @@ function queueProjectPushNotification(currentState, event) {
   if (currentState?.storageMode !== 'supabase' || !event?.projectId || typeof window === 'undefined') return;
   void import('../utils/androidPushNotifications.js')
     .then(({ sendProjectPushNotification }) => sendProjectPushNotification(event))
-    .catch((error) => console.warn('The project change was saved, but live notification delivery failed.', error));
+    .catch(() => console.warn('The project change was saved, but live notification delivery failed.'));
 }
 
 function assignedAppUserIds(settings, task) {

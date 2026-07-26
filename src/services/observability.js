@@ -15,6 +15,7 @@ const OPERATION_TOKENS = new Set([
   'closeout',
   'create',
   'delete',
+  'delivery',
   'download',
   'file',
   'folder',
@@ -45,7 +46,9 @@ const OPERATION_TOKENS = new Set([
   'visibility',
   'warranty',
 ]);
-const ALLOWED_TAGS = new Set(['operation', 'platform', 'support_id', 'workspace']);
+import { normalizeRequestId } from '../utils/requestCorrelation.js';
+
+const ALLOWED_TAGS = new Set(['operation', 'platform', 'request_id', 'support_id', 'workspace']);
 const DEFAULT_ERROR_MESSAGE = 'Unexpected application error.';
 const DUPLICATE_WINDOW_MS = 5000;
 
@@ -276,11 +279,12 @@ export function reportError(error, context = {}) {
   if (!context.force && isExpectedOperationalError(error)) return { reported: false, supportId: '' };
 
   const operation = normalizeObservabilityOperation(context.operation);
+  const requestId = normalizeRequestId(context.requestId || error?.requestId);
   const workspace = context.workspace ? safeTag(context.workspace, 'unknown') : '';
   const status = getErrorStatus(error);
   const code = getErrorCode(error);
   const errorType = getErrorType(error);
-  const duplicateKey = `${operation}:${errorType}:${status}:${code}`;
+  const duplicateKey = `${operation}:${errorType}:${status}:${code}:${requestId}`;
   const now = Date.now();
 
   if (error instanceof Error) {
@@ -296,6 +300,7 @@ export function reportError(error, context = {}) {
     code: code || undefined,
     operation,
     platform: getRuntimePlatform(),
+    requestId: requestId || undefined,
     status: status || undefined,
     supportId,
     type: errorType,
@@ -309,6 +314,7 @@ export function reportError(error, context = {}) {
     sentryProvider.withScope((scope) => {
       scope.setTag('operation', operation);
       scope.setTag('platform', safeReport.platform);
+      if (requestId) scope.setTag('request_id', requestId.toLowerCase());
       scope.setTag('support_id', supportId);
       if (workspace) scope.setTag('workspace', workspace);
       sentryProvider.captureException(capturedError);

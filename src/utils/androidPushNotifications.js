@@ -2,6 +2,8 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { fetchAuthorizedSupabase } from '../services/trackerData.js';
 import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 import { ANDROID_NOTIFICATION_CHANNELS, getAndroidNotificationPreferences } from './androidNotifications.js';
+import { attachRequestId, getResponseRequestId } from './requestCorrelation.js';
+import { reportError } from '../services/observability.js';
 
 const TOKEN_STORAGE_PREFIX = 'project-tracker:android-push-token:';
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -164,26 +166,38 @@ export async function addAndroidPushActionListener(listener) {
 
 export async function sendProjectPushNotification(event) {
   if (!event?.projectId || !event?.kind) return { status: 'skipped' };
-  const response = await fetchAuthorizedSupabase(
-    '/functions/v1/send-project-notification',
-    {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify({
-        eventId: event.eventId || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
-        projectId: String(event.projectId),
-        kind: String(event.kind),
-        entityId: String(event.entityId || ''),
-        title: String(event.title || '').slice(0, 120),
-        body: String(event.body || '').slice(0, 300),
-        tab: String(event.tab || 'projects'),
-        detailTab: String(event.detailTab || ''),
-        recipientAppUserIds: Array.isArray(event.recipientAppUserIds) ? event.recipientAppUserIds : [],
-      }),
-    },
-    'Live notification delivery',
-  );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Unable to deliver live notification.');
-  return payload;
+  try {
+    const response = await fetchAuthorizedSupabase(
+      '/functions/v1/send-project-notification',
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          eventId: event.eventId || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+          projectId: String(event.projectId),
+          kind: String(event.kind),
+          entityId: String(event.entityId || ''),
+          title: String(event.title || '').slice(0, 120),
+          body: String(event.body || '').slice(0, 300),
+          tab: String(event.tab || 'projects'),
+          detailTab: String(event.detailTab || ''),
+          recipientAppUserIds: Array.isArray(event.recipientAppUserIds) ? event.recipientAppUserIds : [],
+        }),
+      },
+      'Live notification delivery',
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = attachRequestId(
+        new Error(payload.error || 'Unable to deliver live notification.'),
+        getResponseRequestId(response, payload),
+      );
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    reportError(error, { operation: 'notification.delivery' });
+    throw error;
+  }
 }
