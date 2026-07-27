@@ -36,6 +36,9 @@ jobs:
       - name: Run regression tests
         run: npm test
 
+      - name: Test backup automation
+        run: npm run test:backup
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 

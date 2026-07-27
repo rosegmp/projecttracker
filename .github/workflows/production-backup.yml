@@ -1,0 +1,58 @@
+name: Production recovery backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-recovery-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Encrypted Supabase and Storage backup
+    if: github.event_name == 'workflow_dispatch' || vars.PRODUCTION_BACKUPS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production-backup
+    env:
+      PRODUCTION_SUPABASE_URL: ${{ secrets.PRODUCTION_SUPABASE_URL }}
+      PRODUCTION_SUPABASE_DB_URL: ${{ secrets.PRODUCTION_SUPABASE_DB_URL }}
+      PRODUCTION_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PRODUCTION_SUPABASE_SERVICE_ROLE_KEY }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      BACKUP_ENCRYPTION_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+      B2_BUCKET: dph-recovery-2458
+      B2_ENDPOINT: https://s3.us-east-005.backblazeb2.com
+      B2_REGION: us-east-005
+      SUPABASE_NO_TELEMETRY: '1'
+      DO_NOT_TRACK: '1'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.109.1
+
+      - name: Verify runner dependencies
+        shell: bash
+        run: |
+          aws --version
+          gpg --version | head -n 1
+          tar --version | head -n 1
+
+      - name: Create and verify encrypted recovery point
+        shell: bash
+        run: bash scripts/run-production-backup.sh

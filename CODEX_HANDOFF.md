@@ -159,7 +159,23 @@ Updated: 2026-07-27
 - Milestone 2.3 is complete as of 2026-07-27.
 - Optional milestone 2.4 is deferred. Production observability is no longer the active implementation priority.
 
-## Current priority: Takeoff integration
+## Current priority: Recommendation roadmap #3 — backup and recovery
+
+### Milestone 3.1 complete: recovery inventory and target design
+
+- `RECOVERY_PLAN.md` inventories the production database/Auth, Storage, Edge Functions, GitHub, Netlify, Sentry, Firebase/Android, and client-local recovery surfaces. The inventory was read-only: it created no backup, exported no production data, changed no provider setting, rotated no credential, and performed no restore.
+- The live Supabase dashboard confirmed **Project Hub** is on the **Free** plan and reports **Last backup: No backups**. This is the highest-priority recovery gap because the database/Auth currently has no production recovery point.
+- The live project has two private Storage buckets: `project-files` and `takeoff-files`. Supabase database backups preserve Storage metadata but not object bytes, so both buckets require independent object backups regardless of the chosen database-backup path.
+- Git contains 43 migrations defining 42 public application tables plus the application/Edge Function source, tests, workflows, Android source, and operational documentation. The `takeoff-files` bucket is migration-backed; creation and complete configuration of `project-files` are not yet represented by an idempotent migration.
+- Proposed Tier 1 targets are a 24-hour initial RPO, 8-business-hour RTO, and 30 daily recovery points for database/Auth and Storage. Those are proposed targets rather than current guarantees; reducing database RPO may require a paid provider option.
+- The repository owner selected **Path A: remain on Supabase Free** on 2026-07-27. Milestone 3.2 will automate encrypted daily logical exports plus independent backups of `project-files` and `takeoff-files`; paid database backups/PITR are not part of the current plan.
+- The repository owner selected **Backblaze B2** as the independent destination on 2026-07-27. The approved baseline is one private S3-compatible bucket with Object Lock enabled at creation, 30-day default governance retention during validation, client-side encryption before upload, and a dedicated bucket-restricted application key rather than the B2 master key.
+- The owner created private Object Lock-enabled B2 bucket `dph-recovery-2458` at `https://s3.us-east-005.backblazeb2.com` in `us-east-005`. The standard web console exposes Compliance rather than Governance for default retention, so the bucket default remains unset during validation; the runner applies 30-day Governance retention explicitly to every uploaded recovery point.
+- A manual-first `Production recovery backup` workflow is prepared locally. It exports Supabase roles/schema/data/migration history, recursively backs up `project-files` and `takeoff-files`, creates a privacy-safe aggregate manifest, encrypts the complete working set with AES-256 before transfer, uploads to B2, downloads and checksum-verifies the encrypted copy, and verifies Object Lock mode. It rejects any unexpected production project, B2 bucket, endpoint, or region.
+- The scheduled trigger is gated by repository variable `PRODUCTION_BACKUPS_ENABLED=true`. Leave it unset until the first manual run passes. `PRODUCTION_BACKUP_RUNBOOK.md` lists the six required secrets in GitHub environment `production-backup`; none belong in this handoff or the repository.
+- Focused mock coverage verifies recursive two-bucket export without object-name/credential logging and verifies that the manifest contains aggregate COPY counts/hashes without row content. `npm run test:backup`, JavaScript syntax checks, Bash syntax validation, and `git diff --check` pass. Full application tests, Playwright, build, Capacitor, Gradle, and APK generation remain deferred because this checkpoint changes only recovery automation and documentation.
+
+## Completed priority: Takeoff integration
 
 The original Takeoff source used for the import is located at:
 
@@ -210,7 +226,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 1. Completed: `20260717060000_add_project_takeoffs.sql` is active in production.
 2. Completed: authenticated project-scoped Takeoff opening, PDF loading, save/reopen, rename, and delete behavior has been smoke-tested.
 3. Skipped by repository-owner decision on 2026-07-27: no legacy Takeoff records or PDFs need to be imported or preserved.
-4. In progress: normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables for current and future takeoffs.
+4. Completed: sheets, measurements, and markups are normalized out of the versioned snapshot into dedicated tables for current and future takeoffs.
 
 ### Takeoff normalization implementation checkpoint
 
@@ -222,7 +238,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Playwright, Capacitor sync, Gradle, and APK generation were intentionally deferred because this batch changes the Takeoff web data model and a database migration, not native configuration.
 - Production migration `20260727150000_normalize_project_takeoffs.sql` was applied successfully on 2026-07-27 and is recorded in the linked migration history. The older `20260713000000` fresh-stack baseline was marked applied without executing it because production's core tables predated migration tracking; this avoided replaying its obsolete grants.
 - Commit `caac892` (`Normalize project takeoff data`) is pushed to `origin/main`. GitHub Actions run `30283026007` passed, and Netlify published production `main @caac892` in 23 seconds.
-- The remaining activation check is an authenticated disposable Takeoff save/reopen smoke test confirming the parent snapshot omits scales/measurements/markups while the three normalized child collections reconstruct the editor unchanged.
+- The authenticated production activation check passed on 2026-07-27. A disposable Takeoff was saved, closed, reopened through **Open**, and verified with its scale, measurement, and markup reconstructed correctly from the normalized child collections; the disposable record was then removed.
 
 ### Takeoff header and full-window UI checkpoint
 
@@ -232,6 +248,7 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Recognizable Takeoff actions now use Fluent icons while retaining visible labels for clarity; page, zoom, and sidebar navigation use accessible icon-only controls. **Saved Takeoffs** is renamed **Open**, and **Upload PDF** is the final action in both the header and empty state.
 - Regression assertions verify the first-save gate, unique relocated controls, full-window state, viewport styling, icon usage, the **Open** label, and Upload PDF ordering. All 127 regression tests, the 679-module production build, JavaScript syntax checks, and `git diff --check` pass.
 - No native code or configuration changed, so Playwright, Capacitor sync, Gradle, and APK generation were not rerun. Local UI review passed and this batch is approved for release.
+- Commit `c281c4a` (`Improve Takeoff workspace controls`) is pushed to `origin/main`. The repository owner confirmed the production UI and disposable normalized save/reopen test passed.
 
 ### Implemented milestone: Project Files picker and collapsible Takeoff sidebars
 
