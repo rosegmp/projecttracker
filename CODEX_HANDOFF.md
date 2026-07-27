@@ -221,7 +221,8 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Checkpoint verification passes all 127 regression tests, the 679-module production build, JavaScript syntax checks, the focused split/reconstruction compatibility check, and `git diff --check`.
 - Playwright, Capacitor sync, Gradle, and APK generation were intentionally deferred because this batch changes the Takeoff web data model and a database migration, not native configuration.
 - Production migration `20260727150000_normalize_project_takeoffs.sql` was applied successfully on 2026-07-27 and is recorded in the linked migration history. The older `20260713000000` fresh-stack baseline was marked applied without executing it because production's core tables predated migration tracking; this avoided replaying its obsolete grants.
-- The client batch is not yet committed or deployed. After deployment, use an authenticated editable project to save/reopen one disposable Takeoff and confirm the parent snapshot omits scales/measurements/markups while the three normalized child collections reconstruct the editor unchanged.
+- Commit `caac892` (`Normalize project takeoff data`) is pushed to `origin/main`. GitHub Actions run `30283026007` passed, and Netlify published production `main @caac892` in 23 seconds.
+- The remaining activation check is an authenticated disposable Takeoff save/reopen smoke test confirming the parent snapshot omits scales/measurements/markups while the three normalized child collections reconstruct the editor unchanged.
 
 ### Implemented milestone: Project Files picker and collapsible Takeoff sidebars
 
