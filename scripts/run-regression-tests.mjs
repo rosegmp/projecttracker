@@ -3387,6 +3387,12 @@ const tests = [
         /await waitForSentryClient\(capacitorSentry\)/,
       );
       assert.match(viteSource, /sourcemap: sentryUploadEnabled \? 'hidden' : false/);
+      assert.match(viteSource, /repo: sentryRepository/);
+      assert.match(viteSource, /commit: release/);
+      assert.match(
+        viteSource,
+        /previousCommit: previousRelease && previousRelease !== release \? previousRelease : undefined/,
+      );
       assert.match(viteSource, /deploy: sentryDeployEnabled/);
       assert.match(viteSource, /env: sentryEnvironment/);
       assert.match(viteSource, /name: deployContext \? `netlify-\$\{deployContext\}` : 'trusted-build'/);

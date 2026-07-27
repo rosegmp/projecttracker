@@ -5,7 +5,9 @@ import { sentryVitePlugin } from '@sentry/vite-plugin';
 const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN || '').trim();
 const sentryOrg = String(process.env.SENTRY_ORG || '').trim();
 const sentryProject = String(process.env.SENTRY_PROJECT || '').trim();
+const sentryRepository = String(process.env.SENTRY_REPOSITORY || 'rosegmp/projecttracker').trim();
 const release = String(process.env.COMMIT_REF || process.env.GITHUB_SHA || 'project-tracker@0.1.0-local').trim();
+const previousRelease = String(process.env.CACHED_COMMIT_REF || '').trim();
 const sentryUploadEnabled = Boolean(sentryAuthToken && sentryOrg && sentryProject);
 const sentryEnvironment = String(process.env.VITE_SENTRY_ENVIRONMENT || '').trim().toLowerCase();
 const deployContext = String(process.env.CONTEXT || '').trim().toLowerCase();
@@ -40,8 +42,11 @@ export default defineConfig({
                 }
               : false,
             setCommits: {
-              auto: true,
+              repo: sentryRepository,
+              commit: release,
+              previousCommit: previousRelease && previousRelease !== release ? previousRelease : undefined,
               ignoreMissing: true,
+              ignoreEmpty: true,
             },
           },
           sourcemaps: {

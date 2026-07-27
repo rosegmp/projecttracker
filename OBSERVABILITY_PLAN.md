@@ -158,6 +158,7 @@ Repository implementation passed its bounded checkpoint on 2026-07-26.
 - The Project Tracker repository/Sentry owner is the primary responder. A backup responder and 24/7 coverage are not currently defined.
 - All 126 focused regression tests passed, the production build transformed 678 modules successfully, and syntax/whitespace checks passed. Playwright, Capacitor sync, and APK builds were intentionally deferred at this checkpoint.
 - Checkpoint commit `f9bdd79` is on `origin/main`. GitHub Actions run `30221519191` passed browser, Supabase authorization, audit, Capacitor, and Android APK jobs; Netlify completed the production deploy and the live URL returned HTTP 200.
+- Release `f9bdd79` uploaded 104 source-map artifacts but its deploy record was skipped after automatic commit discovery encountered an older object missing from Netlify's shallow checkout. Use Netlify's explicit `COMMIT_REF` and `CACHED_COMMIT_REF` with repository `rosegmp/projecttracker` so commit association no longer depends on local Git history and deployment creation can continue.
 - Confirm release `f9bdd79` has a production deploy record in Sentry after the trusted build, then activate the three documented alert rules.
 - External alert rules remain inactive until the repository checkpoint passes and the Sentry email recipient is selected.
 
