@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { addCustomerProjectPhotos, deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
 import { formatFileSize, isImageFile } from '../utils/fileUi.js';
-import { openPreview } from '../platform/platformAdapter.js';
+import { isNativeAndroidApp, openPreview } from '../platform/platformAdapter.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -9,7 +9,14 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { buildProjectPhotoGallery, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
 
-export default function ProjectPhotosManager({ data, project, onStateChange, readOnly = false, canAddPhotos = !readOnly }) {
+export default function ProjectPhotosManager({
+  data,
+  project,
+  onStateChange,
+  readOnly = false,
+  canAddPhotos = !readOnly,
+  incomingPhotoRequest = null,
+}) {
   const { beginMutation, endMutation, runMutation, isMutating } = useEntityMutations();
   const [photoNameDrafts, setPhotoNameDrafts] = useState({});
   const [editingPhotoNames, setEditingPhotoNames] = useState({});
@@ -20,7 +27,10 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
   const previewUrlsRef = useRef({});
   const dataRef = useRef(data);
   const uploadInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const replacePhotoInputRefs = useRef({});
+  const lastIncomingPhotoTokenRef = useRef('');
+  const nativeAndroid = isNativeAndroidApp();
 
   const photos = useMemo(
     () => buildProjectPhotoGallery({
@@ -210,6 +220,14 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
       endMutation(mutationKey);
     }
   }
+
+  useEffect(() => {
+    const token = String(incomingPhotoRequest?.token || '');
+    const file = incomingPhotoRequest?.sharedPhoto;
+    if (!token || token === lastIncomingPhotoTokenRef.current || !(file instanceof Blob) || !canAddPhotos) return;
+    lastIncomingPhotoTokenRef.current = token;
+    void handleUploadPhotos([file]);
+  }, [canAddPhotos, incomingPhotoRequest]);
 
   async function handleReplacePhoto(existingPhoto, fileList) {
     const replacement = Array.from(fileList || [])[0];
@@ -429,6 +447,25 @@ export default function ProjectPhotosManager({ data, project, onStateChange, rea
             multiple
             onChange={(event) => handleUploadPhotos(event.target.files)}
           />
+          {nativeAndroid ? (
+            <>
+              <input
+                ref={cameraInputRef}
+                className="visually-hidden"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => {
+                  void handleUploadPhotos(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+              <button className="button secondary" type="button" onClick={() => cameraInputRef.current?.click()} disabled={isMutating(['project', project.id, 'photos-upload'])}>
+                <FluentIcon name="camera" size={16} />
+                Take photo
+              </button>
+            </>
+          ) : null}
           <button className="button primary" type="button" onClick={triggerPhotoUpload} disabled={isMutating(['project', project.id, 'photos-upload'])}>
             {isMutating(['project', project.id, 'photos-upload']) ? 'Uploading...' : 'Add photos'}
           </button>

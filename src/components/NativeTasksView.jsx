@@ -90,6 +90,8 @@ export default function NativeTasksView({
   highlightTaskId = '',
   highlightToken = '',
   onOpenSelection = () => {},
+  createRequest = null,
+  onCreateRequestHandled = () => {},
 }) {
   const defaultTaskProjectId = lockedProjectId || (projectFilter !== 'all' ? projectFilter : '');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -114,10 +116,21 @@ export default function NativeTasksView({
   const taskRowRefs = useRef({});
   const dataRef = useRef(data);
   const taskSaveMessageTimerRef = useRef(0);
+  const lastCreateRequestTokenRef = useRef('');
 
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    const token = String(createRequest?.token || '');
+    if (!token || token === lastCreateRequestTokenRef.current) return;
+    lastCreateRequestTokenRef.current = token;
+    setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
+    setNewTaskFiles([]);
+    setMobileCreateTaskOpen(true);
+    onCreateRequestHandled();
+  }, [createRequest, defaultTaskProjectId, onCreateRequestHandled]);
 
   useEffect(() => () => {
     if (taskSaveMessageTimerRef.current) {

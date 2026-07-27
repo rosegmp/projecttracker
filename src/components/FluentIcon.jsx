@@ -22,6 +22,7 @@ import {
   MoreVertical24Regular,
   Navigation24Regular,
   ReOrderDotsVertical24Regular,
+  ShareAndroid24Regular,
   SignOut24Regular,
   Search24Regular,
   Warning24Regular,
@@ -51,6 +52,7 @@ const ICONS = {
   navigation: Navigation24Regular,
   search: Search24Regular,
   moreVertical: MoreVertical24Regular,
+  share: ShareAndroid24Regular,
   expandAll: ArrowExpandAll24Regular,
   collapseAll: ArrowCollapseAll24Regular,
 };

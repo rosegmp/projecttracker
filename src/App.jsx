@@ -1,12 +1,12 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import AppDialogHost from './components/AppDialogs.jsx';
+import AppDialogHost, { showAppAlert } from './components/AppDialogs.jsx';
 import FluentIcon from './components/FluentIcon.jsx';
 import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
 import { getVisibleProjectsForUser } from './utils/accessUi.js';
 import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
-import { DEFAULT_VISIBLE_PROJECT_TABS } from './utils/projectTabs.js';
+import { DEFAULT_VISIBLE_PROJECT_TABS, getVisibleProjectTabs } from './utils/projectTabs.js';
 import { reportError } from './services/observability.js';
 import {
   applyQueuedInspectionOperations,
@@ -30,9 +30,11 @@ const NativePhotosView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativePhotosView })),
 );
 import {
+  addAndroidIntentListener,
   getAppRedirectUrl,
   getSearchParam,
   isNativeAndroidApp,
+  readAndroidSharedPhoto,
   updateCurrentUrl,
 } from './platform/platformAdapter.js';
 
@@ -229,6 +231,9 @@ export default function App() {
   const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
   const [projectDrawerOpen, setProjectDrawerOpen] = useState(false);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState({ taskId: '', token: '' });
+  const [androidPendingAction, setAndroidPendingAction] = useState(null);
+  const [androidProjectPrompt, setAndroidProjectPrompt] = useState(null);
+  const [androidTaskCreateRequest, setAndroidTaskCreateRequest] = useState(null);
   const [sessionProjectFilter, setSessionProjectFilter] = useState(() => {
     if (typeof window === 'undefined') return 'all';
     return window.sessionStorage.getItem(SESSION_PROJECT_FILTER_KEY) || 'all';
@@ -241,6 +246,24 @@ export default function App() {
   useEffect(() => {
     trackerStateRef.current = trackerState;
   }, [trackerState]);
+
+  useEffect(() => {
+    if (!nativeAndroid) return undefined;
+    let cancelled = false;
+    let handle = null;
+    void addAndroidIntentListener((action) => {
+      if (!cancelled && action?.type) setAndroidPendingAction(action);
+    }).then((nextHandle) => {
+      if (cancelled) void nextHandle.remove();
+      else handle = nextHandle;
+    }).catch((intentError) => {
+      reportError(intentError, { operation: 'android.intent.listen' });
+    });
+    return () => {
+      cancelled = true;
+      if (handle) void handle.remove();
+    };
+  }, [nativeAndroid]);
 
   async function refreshData(options = {}) {
     if (!authSession) {
@@ -513,6 +536,99 @@ export default function App() {
     [trackerState.projects, trackerState.settings, activeUser],
   );
   const visibleProjectIds = useMemo(() => new Set(visibleProjects.map((project) => project.id)), [visibleProjects]);
+
+  useEffect(() => {
+    if (!androidPendingAction || authLoading || loading || !authSession || !activeUser?.id) return;
+    const action = androidPendingAction;
+    setAndroidPendingAction(null);
+
+    if (action.type === 'error') {
+      void showAppAlert(action.message || 'Android could not complete that action.', 'Android action failed');
+      return;
+    }
+    if (!capabilities.canEdit) {
+      void showAppAlert('Your account does not have permission to add field records or project photos.', 'Action unavailable');
+      return;
+    }
+    if (action.type === 'create-task') {
+      if (!capabilities.allowedTabs.includes('tasks')) {
+        void showAppAlert('The Tasks workspace is hidden by the administrator.', 'Task shortcut unavailable');
+        return;
+      }
+      setSessionProjectFilter('all');
+      setAndroidTaskCreateRequest({ token: String(action.token || Date.now()) });
+      setActiveTab('tasks');
+      return;
+    }
+    if (!['create-inspection', 'create-daily-log', 'share-photo'].includes(action.type)) return;
+    const requiredProjectTab = action.type === 'create-inspection'
+      ? 'inspections'
+      : action.type === 'create-daily-log'
+        ? 'daily-logs'
+        : 'photos';
+    const allowedProjectTabs = new Set(getVisibleProjectTabs(
+      trackerState.settings?.visibleProjectTabs,
+      activeUser?.role,
+    ).map((tab) => tab.id));
+    if (!allowedProjectTabs.has(requiredProjectTab)) {
+      void showAppAlert('That project workspace is hidden by the administrator.', 'Quick action unavailable');
+      return;
+    }
+    if (!visibleProjects.length) {
+      void showAppAlert('No editable project is available for this action.', 'Project required');
+      return;
+    }
+
+    void (async () => {
+      try {
+        const file = action.type === 'share-photo' ? await readAndroidSharedPhoto(action) : null;
+        const locationProjectId = getProjectIdFromLocation();
+        const preferredProjectId = visibleProjects.some((project) => project.id === locationProjectId)
+          ? locationProjectId
+          : visibleProjects.some((project) => project.id === sessionProjectFilter)
+            ? sessionProjectFilter
+            : visibleProjects[0].id;
+        setAndroidProjectPrompt({
+          type: action.type,
+          file,
+          projectId: preferredProjectId,
+          token: String(action.token || Date.now()),
+        });
+      } catch (intentError) {
+        reportError(intentError, { operation: 'android.intent.import' });
+        await showAppAlert(intentError instanceof Error ? intentError.message : 'Unable to import the shared photo.', 'Import failed');
+      }
+    })();
+  }, [
+    activeUser?.id,
+    androidPendingAction,
+    authLoading,
+    authSession,
+    capabilities.allowedTabs,
+    capabilities.canEdit,
+    loading,
+    sessionProjectFilter,
+    trackerState.settings?.visibleProjectTabs,
+    visibleProjects,
+  ]);
+
+  function continueAndroidProjectAction() {
+    if (!androidProjectPrompt?.projectId) return;
+    const detailTab = androidProjectPrompt.type === 'create-inspection'
+      ? 'inspections'
+      : androidProjectPrompt.type === 'create-daily-log'
+        ? 'daily-logs'
+        : 'photos';
+    setProjectNavigationTarget({
+      projectId: androidProjectPrompt.projectId,
+      detailTab,
+      detailAction: androidProjectPrompt.type,
+      sharedPhoto: androidProjectPrompt.file || null,
+      token: androidProjectPrompt.token,
+    });
+    setAndroidProjectPrompt(null);
+    setActiveTab('projects');
+  }
   const railTaskCountByProject = useMemo(() => {
     const counts = new Map();
     (trackerState.tasks || []).forEach((task) => {
@@ -863,6 +979,8 @@ export default function App() {
           highlightTaskId={taskHighlightRequest.taskId}
           highlightToken={taskHighlightRequest.token}
           onOpenSelection={openProjectSelectionLink}
+          createRequest={androidTaskCreateRequest}
+          onCreateRequestHandled={() => setAndroidTaskCreateRequest(null)}
         />
       );
     }
@@ -927,6 +1045,38 @@ export default function App() {
   return (
     <main className="app-shell">
       <AppDialogHost />
+      {androidProjectPrompt ? (
+        <div className="modal-backdrop" onClick={() => setAndroidProjectPrompt(null)}>
+          <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="android-project-action-title" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Android quick action</p>
+                <h2 id="android-project-action-title">
+                  {androidProjectPrompt.type === 'create-inspection'
+                    ? 'Add inspection'
+                    : androidProjectPrompt.type === 'create-daily-log'
+                      ? 'Add daily log'
+                      : 'Add shared photo'}
+                </h2>
+              </div>
+            </div>
+            <label className="field">
+              <span>Project</span>
+              <select
+                value={androidProjectPrompt.projectId}
+                onChange={(event) => setAndroidProjectPrompt((current) => ({ ...current, projectId: event.target.value }))}
+              >
+                {visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </label>
+            {androidProjectPrompt.file ? <p>Photo: {androidProjectPrompt.file.name}</p> : null}
+            <div className="modal-actions">
+              <button className="button secondary" type="button" onClick={() => setAndroidProjectPrompt(null)}>Cancel</button>
+              <button className="button primary" type="button" onClick={continueAndroidProjectAction}>Continue</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {nativeAndroid && showAndroidNotificationSettings ? (
         <div className="modal-backdrop" onClick={() => setShowAndroidNotificationSettings(false)}>
           <div className="modal-card notification-preferences-modal" role="dialog" aria-modal="true" aria-labelledby="notification-preferences-title" onClick={(event) => event.stopPropagation()}>

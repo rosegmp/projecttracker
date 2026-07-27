@@ -1,5 +1,6 @@
 let nativeFileModulesPromise = null;
 let notificationSettingsPluginPromise = null;
+let androidIntentsModulesPromise = null;
 
 async function loadNativeFileModules() {
   if (!nativeFileModulesPromise) {
@@ -22,6 +23,44 @@ export function isNativeAndroidApp() {
   const isNativePlatform = window.Capacitor?.isNativePlatform?.() === true;
   const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
   return isNativePlatform && /Android/i.test(userAgent);
+}
+
+async function loadAndroidIntentsModules() {
+  if (!androidIntentsModulesPromise) {
+    androidIntentsModulesPromise = import('@capacitor/core').then(({ Capacitor, registerPlugin }) => ({
+      AndroidIntents: registerPlugin('AndroidIntents'),
+      Capacitor,
+    }));
+  }
+  return androidIntentsModulesPromise;
+}
+
+export async function addAndroidIntentListener(listener) {
+  if (!isNativeAndroidApp()) return { remove: async () => {} };
+  const { AndroidIntents } = await loadAndroidIntentsModules();
+  const handle = await AndroidIntents.addListener('actionReceived', async (action) => {
+    await listener(action);
+    await AndroidIntents.consumePendingAction().catch(() => {});
+  });
+  const pending = await AndroidIntents.consumePendingAction();
+  if (pending?.action) await listener(pending.action);
+  return handle;
+}
+
+export async function readAndroidSharedPhoto(action) {
+  if (!isNativeAndroidApp() || action?.type !== 'share-photo' || !action.filePath) return null;
+  const { AndroidIntents, Capacitor } = await loadAndroidIntentsModules();
+  try {
+    const response = await fetch(Capacitor.convertFileSrc(action.filePath));
+    if (!response.ok) throw new Error('Android could not open the shared photo.');
+    const blob = await response.blob();
+    return new File([blob], action.fileName || `shared-photo-${Date.now()}.jpg`, {
+      type: action.mimeType || blob.type || 'image/jpeg',
+      lastModified: Date.now(),
+    });
+  } finally {
+    await AndroidIntents.removeSharedFile({ filePath: action.filePath }).catch(() => {});
+  }
 }
 
 export async function openAndroidNotificationSettings() {

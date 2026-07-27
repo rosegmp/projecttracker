@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 
 const SELECTION_STATUS_OPTIONS = ['needs decision', 'selected', 'ordered', 'installed'];
 const SELECTION_CATEGORY_OPTIONS = ['Exterior', 'Interior', 'Flooring', 'Cabinets', 'Countertops', 'Plumbing', 'Electrical', 'Paint', 'Appliances', 'Misc'];
@@ -23,6 +24,7 @@ export default function SelectionModal({
 }) {
   if (!draft) return null;
   const isEditing = draft.mode === 'edit';
+  const nativeAndroid = isNativeAndroidApp();
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
@@ -147,7 +149,13 @@ export default function SelectionModal({
           </label>
           <label className="full">
             <span>Photos</span>
-            <input type="file" accept="image/*" multiple onChange={(event) => onChange('pendingPhotos', Array.from(event.target.files || []))} />
+            <input type="file" accept="image/*" multiple onChange={(event) => onChange('pendingPhotos', [...(draft.pendingPhotos || []), ...Array.from(event.target.files || [])])} />
+            {nativeAndroid ? (
+              <>
+                <span>Take photo</span>
+                <input type="file" accept="image/*" capture="environment" onChange={(event) => onChange('pendingPhotos', [...(draft.pendingPhotos || []), ...Array.from(event.target.files || [])])} />
+              </>
+            ) : null}
             {draft.photos?.length || draft.pendingPhotos?.length ? (
               <div className="task-attachment-list selection-modal-file-list">
                 {(draft.photos || []).map((photo) => (
@@ -211,4 +219,3 @@ export default function SelectionModal({
     </div>,
   );
 }
-

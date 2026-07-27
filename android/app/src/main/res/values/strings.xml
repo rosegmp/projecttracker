@@ -4,4 +4,10 @@
     <string name="title_activity_main">Destiny Project Hub</string>
     <string name="package_name">com.destinyhomes.projecthub</string>
     <string name="custom_url_scheme">com.destinyhomes.projecthub</string>
+    <string name="shortcut_task_short">New task</string>
+    <string name="shortcut_task_long">Add a new task</string>
+    <string name="shortcut_inspection_short">New inspection</string>
+    <string name="shortcut_inspection_long">Add a new inspection</string>
+    <string name="shortcut_daily_log_short">New daily log</string>
+    <string name="shortcut_daily_log_long">Add a new daily log</string>
 </resources>

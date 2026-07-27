@@ -208,6 +208,16 @@ Updated: 2026-07-27
 2. Extend the offline queue to the next highest-value field workflows after conflict handling is proven.
 3. Extend the proven queue to task updates and warranty/punch items; keep administration, access control, budgets, and destructive bulk operations online-only.
 
+### Android field-entry and file-action checkpoint
+
+- Android now publishes three long-press launcher shortcuts from the app icon: **New task**, **New inspection**, and **New daily log**. Task opens the authorized Tasks creation modal; inspection and daily-log shortcuts ask for a project and then open the corresponding project form. Hidden administrator tabs and non-edit roles remain enforced.
+- The Android manifest now accepts `ACTION_SEND` for `image/*`. A native Capacitor plugin copies the incoming content URI into app cache, the web layer converts it to a browser `File`, the user selects an authorized project, and the existing project-photo upload path stores it. The temporary native file is removed after import.
+- Project Files displays direct **Open** and **Share** actions on Android, including read-only file lists. Both reuse the existing authenticated download, cache, FileProvider, and Android share-sheet implementation; the existing Save to Downloads choice remains available through the file-name/download flow.
+- Android photo forms retain gallery/file selection and add camera capture using the rear camera for Project Photos, Daily Log work photos, inspection sticker/report photos, and Selection photos.
+- Verification passes all 131 regression tests, the 682-module production build, all 10 Playwright journeys, Capacitor Android copy/sync, Gradle `assembleDebug`, JavaScript syntax checks, and `git diff --check`. APK inspection confirms the compiled `image/*` share target plus all three compiled shortcut actions.
+- The fresh debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,950,015 bytes, built July 27, 2026 at 5:50 PM). No Android device was connected to ADB, so installing the APK and physically exercising each launcher shortcut, camera intent, photo share target, and file Open/Share action remains the post-build smoke test.
+- This checkpoint changes no Supabase migration or authorization policy. It has not been pushed or deployed.
+
 ## Completed priority: Takeoff integration
 
 The original Takeoff source used for the import is located at:

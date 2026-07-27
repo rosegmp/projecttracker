@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
+import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 
@@ -86,6 +87,7 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
   if (!draft) return null;
   const isEditing = draft.mode === 'edit';
   const showReportField = ['failed', 'follow-up'].includes(draft.status);
+  const nativeAndroid = isNativeAndroidApp();
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
@@ -170,16 +172,30 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
                 : draft.stickerFile?.originalName || 'No sticker photo uploaded yet.'}
             </small>
           </label>
-          {showReportField ? (
+          {nativeAndroid ? (
             <label className="inspection-form-span">
-              <span>Failed inspection report</span>
-              <input type="file" accept="image/*,.pdf" onChange={(event) => onChange('reportPendingFile', event.target.files?.[0] || null)} />
-              <small className="inspection-file-help">
-                {draft.reportPendingFile
-                  ? `Ready to upload: ${draft.reportPendingFile.name}`
-                  : draft.reportFile?.originalName || 'No failed inspection report uploaded yet.'}
-              </small>
+              <span>Take sticker photo</span>
+              <input type="file" accept="image/*" capture="environment" onChange={(event) => onChange('stickerPendingFile', event.target.files?.[0] || null)} />
             </label>
+          ) : null}
+          {showReportField ? (
+            <>
+              <label className="inspection-form-span">
+                <span>Failed inspection report</span>
+                <input type="file" accept="image/*,.pdf" onChange={(event) => onChange('reportPendingFile', event.target.files?.[0] || null)} />
+                <small className="inspection-file-help">
+                  {draft.reportPendingFile
+                    ? `Ready to upload: ${draft.reportPendingFile.name}`
+                    : draft.reportFile?.originalName || 'No failed inspection report uploaded yet.'}
+                </small>
+              </label>
+              {nativeAndroid ? (
+                <label className="inspection-form-span">
+                  <span>Take failed-report photo</span>
+                  <input type="file" accept="image/*" capture="environment" onChange={(event) => onChange('reportPendingFile', event.target.files?.[0] || null)} />
+                </label>
+              ) : null}
+            </>
           ) : null}
         </div>
 

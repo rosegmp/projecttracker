@@ -8,6 +8,7 @@ import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 
 const MoveFileModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.MoveFileModal })));
 const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
@@ -20,6 +21,7 @@ export default function ProjectFilesManager({
   forcedViewMode = '',
   hideViewToggle = false,
 }) {
+  const nativeAndroid = isNativeAndroidApp();
   const [viewMode, setViewMode] = useState(forcedViewMode || 'cards');
   const { beginMutation, endMutation, runMutation, isMutating } = useEntityMutations();
   const [fileNameDraft, setFileNameDraft] = useState(null);
@@ -403,6 +405,14 @@ export default function ProjectFilesManager({
     void downloadFileWithUi(file, { failureMessage: 'Failed to download file.' });
   }
 
+  function runAndroidFileAction(file, action) {
+    void downloadFileWithUi(file, {
+      action,
+      failureMessage: action === 'open' ? 'Failed to open file.' : 'Failed to share file.',
+      failureTitle: action === 'open' ? 'Open failed' : 'Share failed',
+    });
+  }
+
   function getDisplayFileName(file) {
     return String(file.name || file.originalName || 'Untitled file');
   }
@@ -740,6 +750,32 @@ export default function ProjectFilesManager({
     );
   }
 
+  function renderAndroidFileActions(file) {
+    if (!nativeAndroid) return null;
+    return (
+      <div className="files-list-actions android-file-access-actions">
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => runAndroidFileAction(file, 'open')}
+          title="Open file"
+          aria-label={`Open ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="eye" />
+        </button>
+        <button
+          className="button secondary gantt-icon-button"
+          type="button"
+          onClick={() => runAndroidFileAction(file, 'share')}
+          title="Share file"
+          aria-label={`Share ${getDisplayFileName(file)}`}
+        >
+          <FluentIcon name="share" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="project-files-manager">
       {storageNotice ? (
@@ -849,12 +885,13 @@ export default function ProjectFilesManager({
                               {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
                             </small>
                           </div>
-                          {readOnly ? null : (
+                          {nativeAndroid || !readOnly ? (
                             <div className="files-card-trailing">
-                              {renderFileActions(file, folder.id, false)}
-                              {renderFileDragHandle(file, folder.id)}
+                              {renderAndroidFileActions(file)}
+                              {readOnly ? null : renderFileActions(file, folder.id, false)}
+                              {readOnly ? null : renderFileDragHandle(file, folder.id)}
                             </div>
-                          )}
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -946,7 +983,12 @@ export default function ProjectFilesManager({
                           {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
                         </small>
                       </div>
-                      {readOnly ? null : renderFileActions(file, folder.id)}
+                      {nativeAndroid || !readOnly ? (
+                        <div className="files-card-trailing">
+                          {renderAndroidFileActions(file)}
+                          {readOnly ? null : renderFileActions(file, folder.id)}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>

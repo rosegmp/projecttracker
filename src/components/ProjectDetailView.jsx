@@ -612,6 +612,7 @@ export default function ProjectDetailView({
             activeUser={activeUser}
             projectFilter={project.id}
             onProjectFilterChange={() => {}}
+            createRequest={selectionNavigationRequest?.detailAction === 'create-inspection' ? selectionNavigationRequest : null}
             embedded
           />
         </section>
@@ -654,7 +655,15 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'daily-logs' ? (
         <section id="project-panel-daily-logs" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-daily-logs">
-          <ProjectWorkflowManager data={data} project={project} canEdit={canEdit} workflowType="dailyLogs" subcontractors={data?.subs || []} onStateChange={onStateChange} />
+          <ProjectWorkflowManager
+            data={data}
+            project={project}
+            canEdit={canEdit}
+            workflowType="dailyLogs"
+            subcontractors={data?.subs || []}
+            onStateChange={onStateChange}
+            createRequest={selectionNavigationRequest?.detailAction === 'create-daily-log' ? selectionNavigationRequest : null}
+          />
         </section>
       ) : null}
 
@@ -690,7 +699,14 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'photos' ? (
         <section id="project-panel-photos" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-photos">
-          <ProjectPhotosManager data={data} project={project} onStateChange={onStateChange} readOnly={!canEdit} canAddPhotos={canEdit || customerReadOnly} />
+          <ProjectPhotosManager
+            data={data}
+            project={project}
+            onStateChange={onStateChange}
+            readOnly={!canEdit}
+            canAddPhotos={canEdit || customerReadOnly}
+            incomingPhotoRequest={selectionNavigationRequest?.detailAction === 'share-photo' ? selectionNavigationRequest : null}
+          />
         </section>
       ) : null}
       </Suspense>

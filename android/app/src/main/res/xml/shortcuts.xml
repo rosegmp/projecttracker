@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="create_task"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_task"
+        android:shortcutShortLabel="@string/shortcut_task_short"
+        android:shortcutLongLabel="@string/shortcut_task_long">
+        <intent
+            android:action="com.destinyhomes.projecthub.CREATE_TASK"
+            android:targetPackage="com.destinyhomes.projecthub"
+            android:targetClass="com.destinyhomes.projecthub.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="create_inspection"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_inspection"
+        android:shortcutShortLabel="@string/shortcut_inspection_short"
+        android:shortcutLongLabel="@string/shortcut_inspection_long">
+        <intent
+            android:action="com.destinyhomes.projecthub.CREATE_INSPECTION"
+            android:targetPackage="com.destinyhomes.projecthub"
+            android:targetClass="com.destinyhomes.projecthub.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="create_daily_log"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_daily_log"
+        android:shortcutShortLabel="@string/shortcut_daily_log_short"
+        android:shortcutLongLabel="@string/shortcut_daily_log_long">
+        <intent
+            android:action="com.destinyhomes.projecthub.CREATE_DAILY_LOG"
+            android:targetPackage="com.destinyhomes.projecthub"
+            android:targetClass="com.destinyhomes.projecthub.MainActivity" />
+    </shortcut>
+</shortcuts>

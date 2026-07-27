@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { createPerson, deleteProjectFileFromStorage, downloadProjectFileFromStorage, getStoredAuthSession, uploadProjectFileToStorage } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { formatCurrentWeather, loadCurrentWeatherConditions } from '../utils/weather.js';
-import { openPreview } from '../platform/platformAdapter.js';
+import { isNativeAndroidApp, openPreview } from '../platform/platformAdapter.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import PersonModal from './PersonModal.jsx';
@@ -113,8 +113,17 @@ function money(value) {
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(number) : 'Not set';
 }
 
-export default function ProjectWorkflowManager({ data, project, canEdit = true, workflowType, subcontractors = [], onStateChange = null }) {
+export default function ProjectWorkflowManager({
+  data,
+  project,
+  canEdit = true,
+  workflowType,
+  subcontractors = [],
+  onStateChange = null,
+  createRequest = null,
+}) {
   const daily = workflowType === 'dailyLogs';
+  const nativeAndroid = isNativeAndroidApp();
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [records, setRecords] = useState([]);
   const [draft, setDraft] = useState(null);
@@ -126,6 +135,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
   const [personSaving, setPersonSaving] = useState(false);
   const [weatherPrefilling, setWeatherPrefilling] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
+  const lastCreateRequestTokenRef = useRef('');
   const subcontractorOptions = useMemo(() => (subcontractors || [])
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
@@ -182,6 +192,13 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
       setWeatherPrefilling(false);
     }
   }
+
+  useEffect(() => {
+    const token = String(createRequest?.token || '');
+    if (!token || token === lastCreateRequestTokenRef.current || !canEdit) return;
+    lastCreateRequestTokenRef.current = token;
+    void startNewRecord();
+  }, [canEdit, createRequest]);
 
   function addContractorEntry() {
     setDraft((current) => ({
@@ -424,7 +441,23 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
                       <div className="project-workflow-contractor-select"><label><span>Subcontractor</span><select value={entry.subcontractorId || ''} onChange={(event) => selectContractor(entry.id, event.target.value)}><option value="">Select from People</option>{subcontractorOptions.map((person) => <option value={person.id} key={person.id}>{person.label}</option>)}</select></label><button className="button secondary" type="button" onClick={() => startCreateSubcontractor(entry.id)}><FluentIcon name="add" size={16} />New subcontractor</button></div>
                       <label className="project-workflow-contractor-work"><span>Work performed</span><textarea value={entry.workPerformed || ''} onChange={(event) => updateContractorEntry(entry.id, { workPerformed: event.target.value })} placeholder="Describe the work completed by this subcontractor" /></label>
                       <div className="project-workflow-contractor-photos">
-                        <div className="project-workflow-contractor-photo-heading"><strong>Work photos</strong><label className="button secondary project-workflow-photo-picker"><FluentIcon name="camera" size={16} />Add photos<input className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addContractorPhotos(entry.id, event.target.files); event.target.value = ''; }} /></label></div>
+                        <div className="project-workflow-contractor-photo-heading">
+                          <strong>Work photos</strong>
+                          <div className="panel-actions">
+                            {nativeAndroid ? (
+                              <label className="button secondary project-workflow-photo-picker">
+                                <FluentIcon name="camera" size={16} />
+                                Take photo
+                                <input className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => { addContractorPhotos(entry.id, event.target.files); event.target.value = ''; }} />
+                              </label>
+                            ) : null}
+                            <label className="button secondary project-workflow-photo-picker">
+                              <FluentIcon name="upload" size={16} />
+                              Add photos
+                              <input className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addContractorPhotos(entry.id, event.target.files); event.target.value = ''; }} />
+                            </label>
+                          </div>
+                        </div>
                         {(entry.photos || []).length ? <div className="project-workflow-photo-list">{entry.photos.map((photo) => <WorkflowPhoto key={photo.id} photo={photo} onRemove={() => removeContractorPhoto(entry.id, photo.id)} disabled={saving} />)}</div> : <span className="project-workflow-contractor-empty">No photos added.</span>}
                       </div>
                     </article>

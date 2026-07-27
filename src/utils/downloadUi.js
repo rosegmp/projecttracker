@@ -8,9 +8,9 @@ export async function downloadFileWithUi(file, options = {}) {
   const fileName = String(
     options.fileName || file.originalName || file.name || 'download',
   ).trim() || 'download';
-  let androidAction = 'share';
+  let androidAction = options.action || 'share';
 
-  if (isNativeAndroidApp()) {
+  if (isNativeAndroidApp() && !options.action) {
     androidAction = await showAppChoice(`Choose what to do with "${fileName}".`, {
       title: 'Download file',
       options: [

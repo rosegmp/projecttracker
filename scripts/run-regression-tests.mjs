@@ -803,6 +803,58 @@ const tests = [
     },
   },
   {
+    name: 'Android quick actions sharing file actions and camera capture stay connected',
+    async run() {
+      const [
+        manifestSource,
+        shortcutsSource,
+        intentPluginSource,
+        activitySource,
+        appSource,
+        platformSource,
+        filesSource,
+        photosSource,
+        workflowSource,
+        inspectionDialogSource,
+        selectionDialogSource,
+      ] = await Promise.all([
+        readFile(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8'),
+        readFile(new URL('../android/app/src/main/res/xml/shortcuts.xml', import.meta.url), 'utf8'),
+        readFile(new URL('../android/app/src/main/java/com/destinyhomes/projecthub/AndroidIntentsPlugin.java', import.meta.url), 'utf8'),
+        readFile(new URL('../android/app/src/main/java/com/destinyhomes/projecthub/MainActivity.java', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/platform/platformAdapter.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPhotosManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskInspectionDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/SelectionModal.jsx', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(manifestSource, /android\.intent\.action\.SEND/);
+      assert.match(manifestSource, /android:mimeType="image\/\*"/);
+      assert.match(manifestSource, /android\.app\.shortcuts/);
+      assert.match(shortcutsSource, /CREATE_TASK/);
+      assert.match(shortcutsSource, /CREATE_INSPECTION/);
+      assert.match(shortcutsSource, /CREATE_DAILY_LOG/);
+      assert.match(activitySource, /registerPlugin\(AndroidIntentsPlugin\.class\)/);
+      assert.match(activitySource, /onNewIntent\(Intent intent\)/);
+      assert.match(intentPluginSource, /Intent\.ACTION_SEND/);
+      assert.match(intentPluginSource, /cacheSharedPhoto/);
+      assert.match(intentPluginSource, /removeSharedFile/);
+      assert.match(platformSource, /export async function addAndroidIntentListener/);
+      assert.match(platformSource, /export async function readAndroidSharedPhoto/);
+      assert.match(appSource, /detailAction: androidProjectPrompt\.type/);
+      assert.match(appSource, /createRequest=\{androidTaskCreateRequest\}/);
+      assert.match(filesSource, /runAndroidFileAction\(file, 'open'\)/);
+      assert.match(filesSource, /runAndroidFileAction\(file, 'share'\)/);
+      assert.match(photosSource, /capture="environment"/);
+      assert.match(workflowSource, /capture="environment"/);
+      assert.match(inspectionDialogSource, /capture="environment"/);
+      assert.match(selectionDialogSource, /capture="environment"/);
+    },
+  },
+  {
     name: 'platform downloads sharing previews mail and navigation stay behind one adapter',
     async run() {
       const platformSource = await readFile(new URL('../src/platform/platformAdapter.js', import.meta.url), 'utf8');

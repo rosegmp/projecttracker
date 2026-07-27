@@ -28,6 +28,7 @@ export default function NativeInspectionsView({
   activeUser = null,
   projectFilter = 'all',
   onProjectFilterChange = () => {},
+  createRequest = null,
   embedded = false,
 }) {
   const [inspectionDraft, setInspectionDraft] = useState(null);
@@ -36,6 +37,7 @@ export default function NativeInspectionsView({
   const [previewUrls, setPreviewUrls] = useState({});
   const [, setOfflineRevision] = useState(0);
   const previewUrlsRef = useRef({});
+  const lastCreateRequestTokenRef = useRef('');
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
   const offlineOperations = getOfflineOperations(offlineUserId, { kind: 'inspection.save' });
@@ -218,6 +220,13 @@ export default function NativeInspectionsView({
       reportPendingFile: null,
     });
   }
+
+  useEffect(() => {
+    const token = String(createRequest?.token || '');
+    if (!token || token === lastCreateRequestTokenRef.current || readOnly) return;
+    lastCreateRequestTokenRef.current = token;
+    startCreate();
+  }, [createRequest, readOnly]);
 
   function startEdit(inspection) {
     const inspectionProjectId = selectedProject?.id || inspection.projectId || '';
