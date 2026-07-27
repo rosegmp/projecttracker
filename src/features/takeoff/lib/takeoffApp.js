@@ -1688,6 +1688,7 @@ function createProjectSnapshot() {
     projectUnit: state.projectUnit,
     pdfName: state.pdfName,
     pdfDataBase64: state.pdfDataBase64,
+    pageCount: state.pdfDoc?.numPages || 0,
     pageNumber: state.pageNumber,
     zoom: state.zoom,
     scales: state.scales,

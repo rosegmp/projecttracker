@@ -85,6 +85,10 @@ import {
   getVisibleProjectTabs,
   normalizeVisibleProjectTabs,
 } from '../src/utils/projectTabs.js';
+import {
+  hydrateNormalizedTakeoff,
+  splitTakeoffSnapshot,
+} from '../src/features/takeoff/services/takeoffNormalization.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -3244,6 +3248,68 @@ const tests = [
       assert.match(sharedSource, /request_id: requestId/);
       assert.match(sharedSource, /\/\^\[a-z0-9_\]\{1,40\}\$\//);
       assert.doesNotMatch(sharedSource, /email|project_id|user_id|payload|message/);
+    },
+  },
+  {
+    name: 'Takeoff normalization splits and reconstructs editor snapshots without data loss',
+    async run() {
+      const snapshot = {
+        app: 'plan-takeoff',
+        version: 1,
+        pageCount: 2,
+        pageNumber: 2,
+        projectName: '105 Destiny Way',
+        scales: {
+          1: { pageNumber: 1, pdfUnitsPerUnit: 12, unit: 'ft' },
+        },
+        measurements: [{
+          id: 'measurement-1',
+          pageNumber: 1,
+          type: 'count',
+          label: 'Door',
+          color: '#123456',
+          symbol: 'square',
+          points: [{ x: 10, y: 20 }],
+          createdAt: '2026-07-27T12:00:00.000Z',
+        }],
+        markups: [{
+          id: 'markup-1',
+          pageNumber: 2,
+          type: 'text',
+          text: 'Verify opening',
+          color: '#654321',
+          points: [{ x: 30, y: 40 }],
+          createdAt: '2026-07-27T12:01:00.000Z',
+        }],
+      };
+      const normalized = splitTakeoffSnapshot(snapshot);
+      assert.equal(normalized.snapshot.measurements, undefined);
+      assert.equal(normalized.snapshot.markups, undefined);
+      assert.equal(normalized.snapshot.scales, undefined);
+      assert.deepEqual(normalized.sheets.map((sheet) => sheet.page_number), [1, 2]);
+      assert.deepEqual(normalized.measurements[0].points, snapshot.measurements[0].points);
+      assert.equal(normalized.markups[0].text, 'Verify opening');
+
+      const hydrated = hydrateNormalizedTakeoff(
+        normalized.snapshot,
+        normalized.sheets,
+        normalized.measurements,
+        normalized.markups,
+      );
+      assert.deepEqual(hydrated.scales, snapshot.scales);
+      assert.deepEqual(hydrated.measurements, snapshot.measurements);
+      assert.deepEqual(hydrated.markups, snapshot.markups);
+
+      const migrationSource = await readFile(
+        new URL('../supabase/migrations/20260727150000_normalize_project_takeoffs.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(migrationSource, /create table public\.project_takeoff_sheets/);
+      assert.match(migrationSource, /create table public\.project_takeoff_measurements/);
+      assert.match(migrationSource, /create table public\.project_takeoff_markups/);
+      assert.match(migrationSource, /security invoker/);
+      assert.match(migrationSource, /takeoff_version_conflict/);
+      assert.match(migrationSource, /Portal accounts cannot read takeoff measurements/);
     },
   },
   {

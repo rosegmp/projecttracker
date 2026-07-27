@@ -1,6 +1,10 @@
 import { fetchAuthorizedSupabase, getSupabaseDiagnosticsInfo } from '../../../services/trackerData.js';
+import { hydrateNormalizedTakeoff, splitTakeoffSnapshot } from './takeoffNormalization.js';
 
 const TAKEOFFS_TABLE = 'project_takeoffs';
+const TAKEOFF_SHEETS_TABLE = 'project_takeoff_sheets';
+const TAKEOFF_MEASUREMENTS_TABLE = 'project_takeoff_measurements';
+const TAKEOFF_MARKUPS_TABLE = 'project_takeoff_markups';
 const TAKEOFF_FILES_BUCKET = 'takeoff-files';
 
 function encodePath(path) {
@@ -176,49 +180,38 @@ export function createProjectTakeoffDataService({ projectId, canEdit = true }) {
   }
 
   async function saveRemoteRecord(record, existingId) {
-    const body = {
+    const normalized = splitTakeoffSnapshot(record.snapshot);
+    const takeoff = {
       id: record.id,
       project_id: scopedProjectId,
       name: record.name,
       pdf_name: record.pdfName,
       storage_bucket: record.storageBucket,
       storage_path: record.storagePath,
-      snapshot: record.snapshot,
+      snapshot: normalized.snapshot,
     };
 
     let currentVersion = versions.get(record.id);
     if (existingId && !currentVersion) currentVersion = (await getRemoteRecord(record.id))?.version;
 
-    if (currentVersion) {
-      body.version = currentVersion + 1;
-      const response = await fetchAuthorizedSupabase(
-        `/rest/v1/${TAKEOFFS_TABLE}?project_id=eq.${encodeURIComponent(scopedProjectId)}`
-          + `&id=eq.${encodeURIComponent(record.id)}&version=eq.${currentVersion}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
-          body: JSON.stringify(body),
-        },
-        'Takeoff save',
-      );
-      const payload = await parseJsonResponse(response, 'Unable to save the takeoff.');
-      if (!Array.isArray(payload) || !payload[0]) {
-        throw new Error('This takeoff changed elsewhere. Reopen it before saving again.');
-      }
-      const saved = normalizeRemoteRecord(payload[0]);
-      versions.set(saved.id, saved.version);
-      return saved;
-    }
-
     const response = await fetchAuthorizedSupabase(
-      `/rest/v1/${TAKEOFFS_TABLE}`,
+      '/rest/v1/rpc/save_project_takeoff_normalized',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          p_takeoff: takeoff,
+          p_sheets: normalized.sheets,
+          p_measurements: normalized.measurements,
+          p_markups: normalized.markups,
+          p_expected_version: currentVersion || null,
+        }),
       },
       'Takeoff save',
     );
+    if (response.status === 409) {
+      throw new Error('This takeoff changed elsewhere. Reopen it before saving again.');
+    }
     const payload = await parseJsonResponse(response, 'Unable to save the takeoff.');
     const saved = normalizeRemoteRecord(Array.isArray(payload) ? payload[0] : payload);
     versions.set(saved.id, saved.version);
@@ -302,8 +295,39 @@ export function createProjectTakeoffDataService({ projectId, canEdit = true }) {
         try {
           const remoteRecord = await getRemoteRecord(takeoffId);
           if (remoteRecord?.snapshot && remoteRecord.storagePath) {
+            const query = `takeoff_id=eq.${encodeURIComponent(takeoffId)}&project_id=eq.${encodeURIComponent(scopedProjectId)}`;
+            const [sheetsResponse, measurementsResponse, markupsResponse] = await Promise.all([
+              fetchAuthorizedSupabase(
+                `/rest/v1/${TAKEOFF_SHEETS_TABLE}?${query}&select=page_number,name,scale&order=page_number.asc`,
+                { method: 'GET', headers: { Accept: 'application/json' } },
+                'Takeoff sheet load',
+              ),
+              fetchAuthorizedSupabase(
+                `/rest/v1/${TAKEOFF_MEASUREMENTS_TABLE}?${query}`
+                  + '&select=id,page_number,type,label,color,symbol,points,source_created_at&order=created_at.asc',
+                { method: 'GET', headers: { Accept: 'application/json' } },
+                'Takeoff measurement load',
+              ),
+              fetchAuthorizedSupabase(
+                `/rest/v1/${TAKEOFF_MARKUPS_TABLE}?${query}`
+                  + '&select=id,page_number,type,text,color,points,source_created_at&order=created_at.asc',
+                { method: 'GET', headers: { Accept: 'application/json' } },
+                'Takeoff markup load',
+              ),
+            ]);
+            const [sheets, measurements, markups] = await Promise.all([
+              parseJsonResponse(sheetsResponse, 'Unable to load takeoff sheets.'),
+              parseJsonResponse(measurementsResponse, 'Unable to load takeoff measurements.'),
+              parseJsonResponse(markupsResponse, 'Unable to load takeoff markups.'),
+            ]);
+            const normalizedProject = hydrateNormalizedTakeoff(
+              remoteRecord.snapshot,
+              Array.isArray(sheets) ? sheets : [],
+              Array.isArray(measurements) ? measurements : [],
+              Array.isArray(markups) ? markups : [],
+            );
             const project = {
-              ...remoteRecord.snapshot,
+              ...normalizedProject,
               id: remoteRecord.id,
               pdfName: remoteRecord.pdfName,
               pdfDataBase64: await downloadPdf(remoteRecord),

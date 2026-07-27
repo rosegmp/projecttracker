@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-07-26
+Updated: 2026-07-27
 
 ## Working copy
 
@@ -140,7 +140,7 @@ Updated: 2026-07-26
 - Non-mutating production `OPTIONS` checks returned the supplied request id and the expected CORS allowlist from both functions. Bounded anonymous POST checks then returned generic `401` responses with matching request ids in both the response header and JSON body, before any data mutation.
 - The synthetic failure ids from that check are `REQ-D0808C9B6463E8A8` for `create-auth-user` and `REQ-3B6D8585DD98BC8C` for `send-project-notification`. The repository owner confirmed both structured records appeared correctly in `function_logs` with only the approved fields; programmatic log access was intentionally not expanded beyond the CLI credential boundary.
 - The first Netlify build triggered by `524fdb4` did not publish because the account had exhausted its credits. After credits were replenished, commit `dfa03d2` retriggered the trusted build successfully. The live production entry bundle contains the `REQ-` generator and the live tracker bundle contains the `x-request-id` request header logic.
-- Milestone 2.2 is complete as of 2026-07-26. Milestone 2.3 health and alerting is complete as of 2026-07-27; milestone 2.4 is an optional native-depth evaluation only if Capacitor-visible reporting proves insufficient for Android crashes or ANRs.
+- Milestone 2.2 is complete as of 2026-07-26. Milestone 2.3 health and alerting is complete as of 2026-07-27. The repository owner explicitly deferred optional milestone 2.4 native-depth evaluation on 2026-07-27; reconsider it only if Capacitor-visible reporting proves insufficient for Android crashes or ANRs.
 
 ### Milestone 2.3 implementation checkpoint: health and alerting
 
@@ -157,6 +157,7 @@ Updated: 2026-07-26
 - The three production alerting controls were activated on 2026-07-27. `Production - new or regressed issue` is limited to production, triggers on first-seen or resolved-to-unresolved issues, emails Aaron Engelman, and throttles actions to one hour. The fatal and sustained-volume metric monitors are production-only, assigned to Aaron, and create high-priority issues at the documented thresholds; the project alert applies to both.
 - Sentry's original all-environment, every-trigger `Send a notification for high priority issues` alert was disabled after it fired for staging validation events and would have duplicated the production monitor notifications.
 - Milestone 2.3 is complete as of 2026-07-27.
+- Optional milestone 2.4 is deferred. Production observability is no longer the active implementation priority.
 
 ## Current priority: Takeoff integration
 
@@ -206,10 +207,21 @@ Treat that folder as a preserved reference copy. The active integrated source is
 
 ### Next Takeoff steps
 
-1. Apply `20260717060000_add_project_takeoffs.sql` to the Project Tracker Supabase project.
-2. With an authenticated test user, smoke-test opening a project, loading the Takeoff tab, uploading a PDF, saving, reopening, renaming, and deleting a takeoff.
-3. Confirm mappings between legacy Takeoff records/PDFs and Project Tracker project IDs before importing existing data.
-4. After the compatibility milestone is stable, normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables.
+1. Completed: `20260717060000_add_project_takeoffs.sql` is active in production.
+2. Completed: authenticated project-scoped Takeoff opening, PDF loading, save/reopen, rename, and delete behavior has been smoke-tested.
+3. Skipped by repository-owner decision on 2026-07-27: no legacy Takeoff records or PDFs need to be imported or preserved.
+4. In progress: normalize sheets, measurements, and markups out of the versioned snapshot into dedicated tables for current and future takeoffs.
+
+### Takeoff normalization implementation checkpoint
+
+- Migration `20260727150000_normalize_project_takeoffs.sql` adds project-scoped sheets, measurements, and markups with authenticated view/edit RLS, explicit Customer/Subcontractor read denial, child integrity constraints, and cascade cleanup.
+- `save_project_takeoff_normalized` replaces the parent metadata and all normalized children in one transaction, enforces project edit authorization, and preserves optimistic version conflict detection. The source PDF remains in the existing private project-scoped storage path.
+- The client now removes scales, measurements, and markups from newly saved parent snapshots, reconstructs the editor payload from normalized rows on load, and retains compatibility with an existing snapshot until that takeoff is saved through the new path.
+- Editor snapshots now record the PDF page count so every sheet receives a stable row even when it has no scale, measurement, or markup.
+- Checkpoint verification passes all 127 regression tests, the 679-module production build, JavaScript syntax checks, the focused split/reconstruction compatibility check, and `git diff --check`.
+- Playwright, Capacitor sync, Gradle, and APK generation were intentionally deferred because this batch changes the Takeoff web data model and a database migration, not native configuration.
+- Production migration `20260727150000_normalize_project_takeoffs.sql` was applied successfully on 2026-07-27 and is recorded in the linked migration history. The older `20260713000000` fresh-stack baseline was marked applied without executing it because production's core tables predated migration tracking; this avoided replaying its obsolete grants.
+- The client batch is not yet committed or deployed. After deployment, use an authenticated editable project to save/reopen one disposable Takeoff and confirm the parent snapshot omits scales/measurements/markups while the three normalized child collections reconstruct the editor unchanged.
 
 ### Implemented milestone: Project Files picker and collapsible Takeoff sidebars
 
