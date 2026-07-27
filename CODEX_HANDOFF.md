@@ -200,7 +200,7 @@ Updated: 2026-07-27
 - Queued daily-log photos and inspection images can be previewed from the device, and queued inspection files can be opened or downloaded before synchronization. Image editing remains disabled for a device-only inspection attachment until it has synchronized.
 - The focused Chromium journey now covers a daily-log photo plus an inspection sticker and failed-inspection PDF: it verifies no Storage POST while offline, IndexedDB persistence, upload-before-metadata after reconnect, correct storage categories, visible synchronization state, queue cleanup, and IndexedDB cleanup.
 - Checkpoint verification passes all 130 regression tests, the 682-module production build, all 10 Playwright journeys, JavaScript syntax checks, and `git diff --check`. One focused browser run initially tried to lazy-load the inspection dialog after network isolation; the fixture was corrected to load that application chunk before going offline, matching a field session that has opened the workflow while connected.
-- Milestone 4.2 is complete locally. It changes no database migration, RLS policy, native plugin, or Android configuration, so Supabase authorization tests, Capacitor sync, Gradle, and APK generation remain deferred. No production push or deployment has been performed for this checkpoint.
+- Milestone 4.2 changes no database migration, RLS policy, native plugin, or Android configuration. Its original local-only/deferred-release state is superseded by the deployment checkpoint below.
 
 ### Next offline milestones
 
@@ -216,7 +216,15 @@ Updated: 2026-07-27
 - Android photo forms retain gallery/file selection and add camera capture using the rear camera for Project Photos, Daily Log work photos, inspection sticker/report photos, and Selection photos.
 - Verification passes all 131 regression tests, the 682-module production build, all 10 Playwright journeys, Capacitor Android copy/sync, Gradle `assembleDebug`, JavaScript syntax checks, and `git diff --check`. APK inspection confirms the compiled `image/*` share target plus all three compiled shortcut actions.
 - The fresh debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,950,015 bytes, built July 27, 2026 at 5:50 PM). No Android device was connected to ADB, so installing the APK and physically exercising each launcher shortcut, camera intent, photo share target, and file Open/Share action remains the post-build smoke test.
-- This checkpoint changes no Supabase migration or authorization policy. It has not been pushed or deployed.
+- This checkpoint changes no Supabase migration or authorization policy. Its original local-only state is superseded by the deployment checkpoint below.
+
+### Offline and Android field release deployed
+
+- Commits `1fc2296` (**Add offline field operation queue**), `b3c6df5` (**Add offline field attachment sync**), and `605edb5` (**Add Android field quick actions**) were pushed to `origin/main` on 2026-07-27.
+- GitHub Actions run `30309145286` passed all three required jobs: Web build, tests, and audit; Supabase authorization tests; and Android sync and debug build. The Android job uploaded the current debug APK artifact. The web job retained one non-blocking development-dependency advisory annotation; the workflow conclusion is success.
+- Netlify production deploy `6a67d519f5fe5e0007491134` is ready for exact commit `605edb5a9065a7a1523329cf9a349e396343aed3`. The deploy published to `https://projecthub.destinyhomesnj.com`, and Netlify's enhanced secret scan found no matches.
+- A direct production request returned HTTP 200 and served release assets `assets/index-OVdxd-0-.js` and `assets/index-DMp8Fw3w.css`.
+- No database migration or Edge Function deployment was required for this release. The remaining release validation is the physical Android-device smoke test for the launcher shortcuts, camera intents, inbound photo sharing, and Project Files Open/Share actions.
 
 ## Completed priority: Takeoff integration
 
