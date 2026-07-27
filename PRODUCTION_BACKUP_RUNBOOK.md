@@ -56,3 +56,13 @@ After the first manual run passes, create the repository variable:
 The scheduled job runs daily at 07:17 UTC. A skipped scheduled run means the variable is absent or not exactly `true`. A failed run must be treated as a missed recovery point and investigated without placing SQL, object names, credentials, or provider response bodies in an issue.
 
 Do not configure lifecycle deletion until at least two scheduled recovery points and the isolated restore drill have passed. Object Lock protects each uploaded recovery point for 30 days; later retention cleanup must never delete the newest verified copy.
+
+## Activation evidence
+
+- First verified recovery point: GitHub Actions run `30300685312`, 2026-07-27
+- Result: five logical dumps, two Storage buckets, 96 aggregate objects
+- Encrypted B2 object size: 317,835,231 bytes
+- Verification: downloaded SHA-256 matched; Object Lock mode `GOVERNANCE`; retention 30 days
+- Daily schedule: enabled with `PRODUCTION_BACKUPS_ENABLED=true`
+
+The two preceding configuration attempts failed before a recovery point was created: run `30300098932` rejected a missing database URL, and run `30300422870` rejected invalid pooler authentication. This is expected fail-closed behavior.

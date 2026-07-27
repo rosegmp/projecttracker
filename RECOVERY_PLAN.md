@@ -193,7 +193,15 @@ The repository now contains a manual-first `Production recovery backup` GitHub w
 - No backup is uploaded as a GitHub artifact, and the workflow does not delete B2 recovery points.
 - `PRODUCTION_BACKUP_RUNBOOK.md` defines the six required `production-backup` environment secrets and the manual-first activation procedure.
 
-This checkpoint has not accessed production, uploaded a recovery point, configured secrets, or activated the daily schedule. Do not claim the recovery targets until the activation and restore-drill gates pass.
+### First recovery point and daily activation
+
+- GitHub environment `production-backup` contains all six required secrets. Their values are not stored in Git, job artifacts, summaries, or this plan.
+- The first two manual attempts failed closed before creating a recovery point: run `30300098932` rejected a missing database URL, and run `30300422870` rejected invalid pooler authentication. Neither attempt reached Storage export or B2 upload.
+- Manual run `30300685312` passed on 2026-07-27 in 3 minutes 38 seconds. It completed all five logical dumps, exported both Storage buckets with 96 aggregate objects, encrypted the complete working set, uploaded a 317,835,231-byte B2 object, downloaded it, matched its SHA-256 checksum, and verified `GOVERNANCE` Object Lock with 30-day retention.
+- Repository variable `PRODUCTION_BACKUPS_ENABLED=true` now activates the daily 07:17 UTC schedule.
+- No backup content or object listing was uploaded as a GitHub artifact. Job output contained only fixed stage names and privacy-safe aggregate counts/sizes.
+
+This establishes one verified recovery point, not a proven RPO/RTO. Keep milestone 3.2 open until a second scheduled recovery point passes. Do not configure lifecycle deletion or claim the recovery targets until the isolated restore drill also passes.
 
 ## Milestone 3.3 isolated restore drill
 
