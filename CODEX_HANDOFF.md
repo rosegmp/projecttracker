@@ -224,6 +224,15 @@ Treat that folder as a preserved reference copy. The active integrated source is
 - Commit `caac892` (`Normalize project takeoff data`) is pushed to `origin/main`. GitHub Actions run `30283026007` passed, and Netlify published production `main @caac892` in 23 seconds.
 - The remaining activation check is an authenticated disposable Takeoff save/reopen smoke test confirming the parent snapshot omits scales/measurements/markups while the three normalized child collections reconstruct the editor unchanged.
 
+### Takeoff header and full-window UI checkpoint
+
+- New PDFs now keep **Save** disabled until the Takeoff has received a saved project ID; **Save As** remains the required first-save action. Save re-enables immediately after the first successful save, and read-only mode cannot re-enable editing actions during later renders.
+- **Undo**, **Redo**, **Snap line**, and **Finish** moved from the drawing tool strip into the Takeoff header. **Undo point** remains beside the drawing tools because it is specific to an in-progress measurement.
+- A **Full window** header control expands Takeoff over the available browser viewport without invoking the browser fullscreen permission API. The control changes to **Exit full window**, locks background scrolling, restores the embedded layout on collapse, and supports Escape when no Takeoff dialog or file picker is open.
+- Recognizable Takeoff actions now use Fluent icons while retaining visible labels for clarity; page, zoom, and sidebar navigation use accessible icon-only controls. **Saved Takeoffs** is renamed **Open**, and **Upload PDF** is the final action in both the header and empty state.
+- Regression assertions verify the first-save gate, unique relocated controls, full-window state, viewport styling, icon usage, the **Open** label, and Upload PDF ordering. All 127 regression tests, the 679-module production build, JavaScript syntax checks, and `git diff --check` pass.
+- No native code or configuration changed, so Playwright, Capacitor sync, Gradle, and APK generation were not rerun. Local UI review passed and this batch is approved for release.
+
 ### Implemented milestone: Project Files picker and collapsible Takeoff sidebars
 
 - Takeoff can now open a PDF directly from the current project's **Files** collection without exposing cross-project records.

@@ -1,4 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowRedo24Regular,
+  ArrowUndo24Regular,
+  ArrowUpload24Regular,
+  Checkmark24Regular,
+  ChevronLeft24Regular,
+  ChevronRight24Regular,
+  Document24Regular,
+  DocumentSave24Regular,
+  FolderOpen24Regular,
+  FullScreenMaximize24Regular,
+  FullScreenMinimize24Regular,
+  Line24Regular,
+  Save24Regular,
+  ZoomIn24Regular,
+  ZoomOut24Regular,
+} from "@fluentui/react-icons";
 import { formatFileSize } from "../../utils/fileUi.js";
 import { initTakeoffApp } from "./lib/takeoffApp.js";
 import {
@@ -41,6 +58,7 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
   const [pickerError, setPickerError] = useState("");
   const [loadingFileId, setLoadingFileId] = useState("");
   const [sidebarLayout, setSidebarLayout] = useState(initialSidebarLayout);
+  const [fullWindow, setFullWindow] = useState(false);
 
   const projectPdfs = useMemo(() => listProjectPdfFiles(project), [project]);
   const filteredProjectPdfs = useMemo(() => {
@@ -122,6 +140,20 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
   }, [loadingFileId, pickerOpen]);
 
   useEffect(() => {
+    document.body.classList.toggle("takeoff-full-window-open", fullWindow);
+    if (!fullWindow) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape" || pickerOpen || appRef.current?.querySelector("dialog[open]")) return;
+      setFullWindow(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.classList.remove("takeoff-full-window-open");
+    };
+  }, [fullWindow, pickerOpen]);
+
+  useEffect(() => {
     if (!appRef.current) return undefined;
     const services = {
       ...createProjectTakeoffDataService({ projectId, canEdit }),
@@ -145,7 +177,7 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
   }, [canEdit, projectId]);
 
   return (
-    <div className="takeoff-feature">
+    <div className={`takeoff-feature${fullWindow ? " is-full-window" : ""}`}>
       {!canEdit ? (
         <div className="takeoff-permission-notice" role="status">
           Review mode: you can open and inspect saved takeoffs, but saving changes requires edit access.
@@ -169,11 +201,57 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
         <div className="file-cluster">
           <input id="pdfInput" className="visually-hidden" type="file" accept="application/pdf" />
           <input id="projectInput" className="visually-hidden" type="file" accept=".takeoff.json,application/json" />
-          <button id="uploadButton" className="button primary" type="button">Upload PDF</button>
-          <button id="selectProjectPdfButton" className="button" type="button" title="Choose a PDF from this project's Files">Project PDF</button>
-          <button id="openProjectButton" className="button" type="button" title="Open a saved takeoff">Saved Takeoffs</button>
-          <button id="saveProjectButton" className="button" type="button" disabled>Save</button>
-          <button id="saveAsProjectButton" className="button" type="button" disabled>Save As</button>
+          <button id="selectProjectPdfButton" className="button button-with-icon" type="button" title="Choose a PDF from this project's Files">
+            <Document24Regular aria-hidden="true" />
+            <span>Project PDF</span>
+          </button>
+          <button id="openProjectButton" className="button button-with-icon" type="button" title="Open a saved takeoff">
+            <FolderOpen24Regular aria-hidden="true" />
+            <span>Open</span>
+          </button>
+          <button id="saveProjectButton" className="button button-with-icon" type="button" disabled>
+            <Save24Regular aria-hidden="true" />
+            <span>Save</span>
+          </button>
+          <button id="saveAsProjectButton" className="button button-with-icon" type="button" disabled>
+            <DocumentSave24Regular aria-hidden="true" />
+            <span>Save As</span>
+          </button>
+          <span className="header-action-divider" aria-hidden="true"></span>
+          <div className="header-edit-actions" role="group" aria-label="Takeoff editing actions">
+            <button id="undoAction" className="button compact button-with-icon" type="button" disabled>
+              <ArrowUndo24Regular aria-hidden="true" />
+              <span>Undo</span>
+            </button>
+            <button id="redoAction" className="button compact button-with-icon" type="button" disabled>
+              <ArrowRedo24Regular aria-hidden="true" />
+              <span>Redo</span>
+            </button>
+            <button id="snapToggle" className="button compact button-with-icon toggle-button" type="button" aria-pressed="false">
+              <Line24Regular aria-hidden="true" />
+              <span>Snap line</span>
+            </button>
+            <button id="finishMeasure" className="button compact button-with-icon" type="button" disabled>
+              <Checkmark24Regular aria-hidden="true" />
+              <span>Finish</span>
+            </button>
+          </div>
+          <span className="header-action-divider" aria-hidden="true"></span>
+          <button
+            className="button compact button-with-icon full-window-toggle"
+            type="button"
+            aria-pressed={fullWindow}
+            aria-label={fullWindow ? "Collapse Takeoff from full browser window" : "Expand Takeoff to full browser window"}
+            title={fullWindow ? "Exit full window" : "Use full browser window"}
+            onClick={() => setFullWindow((current) => !current)}
+          >
+            {fullWindow ? <FullScreenMinimize24Regular aria-hidden="true" /> : <FullScreenMaximize24Regular aria-hidden="true" />}
+            <span>{fullWindow ? "Exit full window" : "Full window"}</span>
+          </button>
+          <button id="uploadButton" className="button primary button-with-icon" type="button">
+            <ArrowUpload24Regular aria-hidden="true" />
+            <span>Upload PDF</span>
+          </button>
         </div>
 
         <div className="control-cluster project-unit-cluster" aria-label="Project units">
@@ -190,15 +268,23 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
         </div>
 
         <div className="control-cluster" aria-label="Page controls">
-          <button id="prevPage" className="icon-button" type="button" title="Previous page" aria-label="Previous page">&lt;</button>
+          <button id="prevPage" className="icon-button" type="button" title="Previous page" aria-label="Previous page">
+            <ChevronLeft24Regular aria-hidden="true" />
+          </button>
           <span id="pageLabel" className="page-label">Page 0 / 0</span>
-          <button id="nextPage" className="icon-button" type="button" title="Next page" aria-label="Next page">&gt;</button>
+          <button id="nextPage" className="icon-button" type="button" title="Next page" aria-label="Next page">
+            <ChevronRight24Regular aria-hidden="true" />
+          </button>
         </div>
 
         <div className="control-cluster" aria-label="Zoom controls">
-          <button id="zoomOut" className="icon-button" type="button" title="Zoom out" aria-label="Zoom out">-</button>
+          <button id="zoomOut" className="icon-button" type="button" title="Zoom out" aria-label="Zoom out">
+            <ZoomOut24Regular aria-hidden="true" />
+          </button>
           <span id="zoomLabel" className="zoom-label">100%</span>
-          <button id="zoomIn" className="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="zoomIn" className="icon-button" type="button" title="Zoom in" aria-label="Zoom in">
+            <ZoomIn24Regular aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -214,7 +300,11 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
               aria-label={`${sidebarLayout.pagesCollapsed ? "Expand" : "Collapse"} sheets`}
               title={`${sidebarLayout.pagesCollapsed ? "Expand" : "Collapse"} sheets`}
               onClick={() => toggleSidebar("pages")}
-            >{sidebarLayout.pagesCollapsed ? "›" : "‹"}</button>
+            >
+              {sidebarLayout.pagesCollapsed
+                ? <ChevronRight24Regular aria-hidden="true" />
+                : <ChevronLeft24Regular aria-hidden="true" />}
+            </button>
           </div>
           <div id="pagesList" className="pages-list"></div>
         </aside>
@@ -230,11 +320,7 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
             <button className="tool-button" type="button" data-tool="highlight">Highlight</button>
             <button className="tool-button" type="button" data-tool="text">Text</button>
             <div className="tool-spacer"></div>
-            <button id="undoAction" className="button compact" type="button" disabled>Undo</button>
-            <button id="redoAction" className="button compact" type="button" disabled>Redo</button>
-            <button id="snapToggle" className="button compact toggle-button" type="button" aria-pressed="false">Snap line</button>
             <button id="undoPoint" className="button compact" type="button" disabled>Undo point</button>
-            <button id="finishMeasure" className="button compact" type="button" disabled>Finish</button>
           </div>
 
           <div id="viewer" className="viewer">
@@ -246,8 +332,14 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
               </div>
               <h1>Open a drawing set</h1>
               <div className="empty-state-actions">
-                <button id="emptyUploadButton" className="button primary" type="button">Upload PDF</button>
-                <button id="emptySelectProjectPdfButton" className="button" type="button">Project PDF</button>
+                <button id="emptySelectProjectPdfButton" className="button button-with-icon" type="button">
+                  <Document24Regular aria-hidden="true" />
+                  <span>Project PDF</span>
+                </button>
+                <button id="emptyUploadButton" className="button primary button-with-icon" type="button">
+                  <ArrowUpload24Regular aria-hidden="true" />
+                  <span>Upload PDF</span>
+                </button>
               </div>
             </div>
 
@@ -274,7 +366,11 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
               aria-label={`${sidebarLayout.takeoffCollapsed ? "Expand" : "Collapse"} takeoff controls`}
               title={`${sidebarLayout.takeoffCollapsed ? "Expand" : "Collapse"} takeoff controls`}
               onClick={() => toggleSidebar("takeoff")}
-            >{sidebarLayout.takeoffCollapsed ? "‹" : "›"}</button>
+            >
+              {sidebarLayout.takeoffCollapsed
+                ? <ChevronLeft24Regular aria-hidden="true" />
+                : <ChevronRight24Regular aria-hidden="true" />}
+            </button>
           </div>
           <div id="takeoffPaneContent" className="takeoff-pane-content">
           <section className="panel-section">

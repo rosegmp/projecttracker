@@ -559,6 +559,7 @@ async function saveTakeoffProjectWithOptions(options = {}) {
     const result = await dataService.saveProject(project, existingId);
     state.savedProjectId = result?.id || state.savedProjectId;
     markSessionSaved();
+    renderChrome();
     refreshProjectBrowser().catch(() => {});
     if (result?.storageMode === "supabase") {
       setStatus("Takeoff saved to Supabase.");
@@ -2138,12 +2139,12 @@ function renderChrome() {
   els.nextPage.disabled = !state.pdfDoc || state.pageNumber >= pageTotal;
   els.zoomOut.disabled = !state.pdfDoc || state.zoom <= 0.5;
   els.zoomIn.disabled = !state.pdfDoc || state.zoom >= 2.5;
-  els.undoAction.disabled = !state.undoStack.length;
-  els.redoAction.disabled = !state.redoStack.length;
-  els.saveProjectButton.disabled = !state.pdfDoc || !state.pdfDataBase64;
-  els.saveAsProjectButton.disabled = !state.pdfDoc || !state.pdfDataBase64;
-  els.undoPoint.disabled = !state.draft.length;
-  els.finishMeasure.disabled = !canFinishDraft();
+  els.undoAction.disabled = readOnly || !state.undoStack.length;
+  els.redoAction.disabled = readOnly || !state.redoStack.length;
+  els.saveProjectButton.disabled = readOnly || !state.pdfDoc || !state.pdfDataBase64 || !state.savedProjectId;
+  els.saveAsProjectButton.disabled = readOnly || !state.pdfDoc || !state.pdfDataBase64;
+  els.undoPoint.disabled = readOnly || !state.draft.length;
+  els.finishMeasure.disabled = readOnly || !canFinishDraft();
   els.clearMeasurements.disabled = !state.measurements.length;
   els.clearMarkups.disabled = !state.markups.length;
   els.exportCsv.disabled = !state.measurements.length;

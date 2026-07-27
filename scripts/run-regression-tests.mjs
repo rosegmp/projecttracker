@@ -2839,6 +2839,27 @@ const tests = [
       assert.match(takeoffWorkspaceSource, /Project PDF/);
       assert.match(takeoffEditorSource, /Replace this drawing\? Unsaved Takeoff changes will be discarded\./);
       assert.match(takeoffWorkspaceSource, /project-tracker:takeoff-sidebar-layout:v1/);
+      assert.match(takeoffWorkspaceSource, /takeoff-full-window-open/);
+      assert.match(takeoffWorkspaceSource, /is-full-window/);
+      assert.match(takeoffWorkspaceSource, /Expand Takeoff to full browser window/);
+      assert.match(takeoffWorkspaceSource, /className="header-edit-actions"/);
+      assert.match(takeoffWorkspaceSource, /FolderOpen24Regular/);
+      assert.match(takeoffWorkspaceSource, /FullScreenMaximize24Regular/);
+      assert.match(takeoffWorkspaceSource, /ZoomIn24Regular/);
+      assert.match(takeoffWorkspaceSource, /<span>Open<\/span>/);
+      assert.doesNotMatch(takeoffWorkspaceSource, /Saved Takeoffs/);
+      assert.ok(
+        takeoffWorkspaceSource.indexOf('id="uploadButton"') > takeoffWorkspaceSource.indexOf('className="button compact button-with-icon full-window-toggle"'),
+        'Upload PDF should be the last Takeoff header action',
+      );
+      assert.ok(
+        takeoffWorkspaceSource.indexOf('id="emptyUploadButton"') > takeoffWorkspaceSource.indexOf('id="emptySelectProjectPdfButton"'),
+        'Upload PDF should be the last Takeoff empty-state action',
+      );
+      assert.match(takeoffEditorSource, /!state\.savedProjectId/);
+      assert.match(takeoffEditorSource, /state\.savedProjectId = result\?\.id/);
+      const toolStripSource = takeoffWorkspaceSource.match(/<div className="tool-strip"[\s\S]*?<div id="viewer"/)?.[0] || '';
+      assert.doesNotMatch(toolStripSource, /id="undoAction"|id="redoAction"|id="snapToggle"|id="finishMeasure"/);
       assert.match(takeoffStyleSource, /\.workspace\.pages-collapsed/);
       assert.match(takeoffStyleSource, /\.workspace\.takeoff-collapsed/);
       assert.match(takeoffServiceSource, /fetchAuthorizedSupabase/);
