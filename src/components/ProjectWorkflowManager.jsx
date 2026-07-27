@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
-import { createPerson, deleteProjectFileFromStorage, downloadProjectFileFromStorage, uploadProjectFileToStorage } from '../services/trackerData.js';
+import { createPerson, deleteProjectFileFromStorage, downloadProjectFileFromStorage, getStoredAuthSession, uploadProjectFileToStorage } from '../services/trackerData.js';
+import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { formatCurrentWeather, loadCurrentWeatherConditions } from '../utils/weather.js';
 import { openPreview } from '../platform/platformAdapter.js';
@@ -116,6 +117,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
   const [personDraft, setPersonDraft] = useState(null);
   const [personSaving, setPersonSaving] = useState(false);
   const [weatherPrefilling, setWeatherPrefilling] = useState(false);
+  const [offlineRevision, setOfflineRevision] = useState(0);
   const subcontractorOptions = useMemo(() => (subcontractors || [])
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
@@ -133,7 +135,18 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { void loadRecords(); }, [service, workflowType]);
+  useEffect(() => { void loadRecords(); }, [offlineRevision, service, workflowType]);
+
+  useEffect(() => {
+    if (!daily) return undefined;
+    const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+    return subscribeToOfflineOperations(userId, () => setOfflineRevision((current) => current + 1));
+  }, [daily]);
+
+  const offlineOperations = daily
+    ? getOfflineOperations(String(getStoredAuthSession()?.user?.id || ''), { kind: 'daily-log.save', projectId: project.id })
+    : [];
+  const offlineAttentionCount = offlineOperations.filter((operation) => operation.status === 'needs-attention').length;
 
   function change(field, value) { setDraft((current) => ({ ...current, [field]: value })); }
 
@@ -297,6 +310,14 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     const uploadedPhotos = [];
     let uploadedAttachments = [];
     try {
+      if (
+        daily
+        && typeof navigator !== 'undefined'
+        && navigator.onLine === false
+        && contractorPhotos(draft).some((photo) => photo?.file)
+      ) {
+        throw new Error('New daily-log photos require a connection in this milestone. Remove them to queue the text log, or reconnect to upload them.');
+      }
       let preparedDraft;
       if (daily) preparedDraft = await prepareDailyLogForSave(draft, uploadedPhotos);
       else {
@@ -308,6 +329,9 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
       if (daily) await Promise.allSettled((draft.deletedPhotos || []).map((photo) => deleteProjectFileFromStorage(photo)));
       else await deleteWorkflowAttachments(draft.deletedAttachments);
       setSetupRequired(result.setupRequired === true);
+      if (result.queued) {
+        setMessage('Saved on this device. It will sync automatically when the connection returns.');
+      }
       setDraft(null);
       await loadRecords();
     } catch (error) {
@@ -345,6 +369,16 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
       </header>
 
       {setupRequired ? <div className="project-workflow-notice"><FluentIcon name="warning" size={18} /><span>Using device-only draft storage until the included construction-workflows migration is applied.</span></div> : null}
+      {daily && offlineOperations.length ? (
+        <div className={`project-workflow-notice${offlineAttentionCount ? ' error' : ''}`} role="status">
+          <FluentIcon name={offlineAttentionCount ? 'warning' : 'replace'} size={18} />
+          <span>
+            {offlineAttentionCount
+              ? `${offlineAttentionCount} device-saved daily log${offlineAttentionCount === 1 ? '' : 's'} need review before syncing.`
+              : `${offlineOperations.length} daily log${offlineOperations.length === 1 ? '' : 's'} saved on this device and waiting to sync.`}
+          </span>
+        </div>
+      ) : null}
       {message ? <div className="audit-trail-message error" role="alert">{message}</div> : null}
 
       {draft ? (
@@ -408,7 +442,7 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
           {records.map((record) => (
             <article className="project-workflow-card" key={record.id}>
               <div className="project-workflow-card-heading">
-                <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span><h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
+                <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
                 {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
               </div>
               {daily ? (

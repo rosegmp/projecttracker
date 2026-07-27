@@ -205,6 +205,7 @@ a {
 .status-card,
 .panel,
 .storage-banner,
+.offline-sync-banner,
 .error-banner {
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
@@ -505,6 +506,32 @@ a {
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.offline-sync-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid rgba(37, 99, 235, 0.24);
+  border-radius: var(--panel-radius);
+  color: #1e3a8a;
+  background: #eff6ff;
+}
+
+.offline-sync-banner.error {
+  border-color: rgba(176, 59, 59, 0.24);
+  color: #7d2525;
+  background: var(--danger-surface);
+}
+
+.offline-sync-banner > div {
+  display: grid;
+  gap: 2px;
+}
+
+.offline-sync-banner span {
+  font-size: var(--font-size-sm);
 }
 
 .workspace-shell-bar {
@@ -5100,6 +5127,19 @@ button.calendar-chip {
   text-transform: capitalize;
 }
 
+.offline-pending,
+.offline-syncing {
+  margin-left: var(--space-2);
+  color: #1e3a8a;
+  background: #dbeafe;
+}
+
+.offline-needs-attention {
+  margin-left: var(--space-2);
+  color: #991b1b;
+  background: #fee2e2;
+}
+
 .status-active {
   background: rgba(29, 158, 117, 0.14);
   color: var(--success);
@@ -7319,6 +7359,12 @@ textarea:focus-visible {
   color: #92400e;
   background: #fffbeb;
   font-size: var(--font-size-sm);
+}
+
+.project-workflow-notice.error {
+  border-left-color: var(--danger);
+  color: #7d2525;
+  background: var(--danger-surface);
 }
 
 .project-document-workflow-switch {

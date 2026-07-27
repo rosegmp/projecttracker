@@ -89,6 +89,15 @@ import {
   hydrateNormalizedTakeoff,
   splitTakeoffSnapshot,
 } from '../src/features/takeoff/services/takeoffNormalization.js';
+import {
+  applyQueuedInspectionOperations,
+  enqueueOfflineOperation,
+  getOfflineOperations,
+  getOfflineOperationSummary,
+  isOfflineNetworkError,
+  mergeQueuedDailyLogs,
+  removeOfflineOperation,
+} from '../src/services/offlineOperations.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -96,6 +105,94 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'offline field queue coalesces edits and preserves conflict versions',
+    run() {
+      const originalWindow = globalThis.window;
+      const originalCustomEvent = globalThis.CustomEvent;
+      const values = new Map();
+      const eventTarget = new EventTarget();
+      const localStorage = {
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => values.set(key, String(value)),
+        removeItem: (key) => values.delete(key),
+      };
+      globalThis.window = Object.assign(eventTarget, { localStorage });
+      globalThis.CustomEvent = class CustomEvent extends Event {
+        constructor(type, options = {}) {
+          super(type);
+          this.detail = options.detail;
+        }
+      };
+      try {
+        const first = enqueueOfflineOperation('user-1', {
+          kind: 'daily-log.save',
+          projectId: 'project-1',
+          entityId: 'log-1',
+          payload: { id: 'log-1', version: 4, notes: 'First device edit' },
+          expected: { version: 4 },
+        });
+        const second = enqueueOfflineOperation('user-1', {
+          kind: 'daily-log.save',
+          projectId: 'project-1',
+          entityId: 'log-1',
+          payload: { id: 'log-1', version: 4, notes: 'Latest device edit' },
+          expected: { version: 99 },
+        });
+        assert.equal(second.id, first.id);
+        assert.equal(getOfflineOperations('user-1').length, 1);
+        assert.equal(getOfflineOperations('user-1')[0].payload.notes, 'Latest device edit');
+        assert.equal(getOfflineOperations('user-1')[0].expected.version, 4);
+        assert.deepEqual(getOfflineOperationSummary('user-1'), {
+          total: 1,
+          pending: 1,
+          syncing: 0,
+          needsAttention: 0,
+        });
+        assert.equal(removeOfflineOperation('user-1', first.id), true);
+        assert.equal(getOfflineOperations('user-1').length, 0);
+      } finally {
+        globalThis.window = originalWindow;
+        globalThis.CustomEvent = originalCustomEvent;
+      }
+    },
+  },
+  {
+    name: 'offline field overlays remain visible until synchronization completes',
+    run() {
+      const operations = [
+        {
+          kind: 'daily-log.save',
+          projectId: 'project-1',
+          entityId: 'log-1',
+          status: 'pending',
+          queuedAt: '2026-07-27T12:00:00.000Z',
+          payload: { id: 'log-1', date: '2026-07-27', title: 'Daily log', notes: 'Device notes' },
+        },
+        {
+          kind: 'inspection.save',
+          projectId: 'project-1',
+          entityId: 'inspection-1',
+          status: 'needs-attention',
+          queuedAt: '2026-07-27T12:01:00.000Z',
+          payload: { id: 'inspection-1', status: 'failed', notes: 'Corrected offline' },
+        },
+      ];
+      const logs = mergeQueuedDailyLogs(
+        [{ id: 'log-1', date: '2026-07-27', title: 'Daily log', notes: 'Server notes' }],
+        operations,
+      );
+      assert.equal(logs[0].notes, 'Device notes');
+      assert.equal(logs[0]._offlineStatus, 'pending');
+      const state = applyQueuedInspectionOperations({
+        projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', status: 'scheduled' }] }],
+      }, operations);
+      assert.equal(state.projects[0].inspections[0].status, 'failed');
+      assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
+      assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
+      assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
+    },
+  },
   {
     name: 'top-level tab visibility preserves required navigation and safe defaults',
     run() {

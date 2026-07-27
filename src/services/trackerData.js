@@ -8,6 +8,11 @@ import {
   createRequestId,
   getResponseRequestId,
 } from '../utils/requestCorrelation.js';
+import {
+  enqueueOfflineOperation,
+  isOfflineNetworkError,
+  removeOfflineOperationsForEntity,
+} from './offlineOperations.js';
 
 const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
@@ -3049,13 +3054,50 @@ export async function saveProjectInspection(currentState, projectId, inspection)
     });
   }
 
-  const result = await callPortalVisibilityRpc('save_project_inspection', {
-    p_project_id: projectId,
-    p_inspection: stripRecordMetadata(inspection),
-    p_expected_version: expectedVersion,
-    p_expected_file_versions: expectedFileVersions,
-  }, 'Inspection save');
+  let result;
+  try {
+    result = await callPortalVisibilityRpc('save_project_inspection', {
+      p_project_id: projectId,
+      p_inspection: stripRecordMetadata(inspection),
+      p_expected_version: expectedVersion,
+      p_expected_file_versions: expectedFileVersions,
+    }, 'Inspection save');
+  } catch (error) {
+    if (!isOfflineNetworkError(error)) throw error;
+    const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+    const queued = enqueueOfflineOperation(userId, {
+      kind: 'inspection.save',
+      projectId,
+      entityId: inspection.id,
+      payload: stripRecordMetadata(inspection),
+      expected: {
+        version: expectedVersion,
+        fileVersions: expectedFileVersions,
+      },
+    });
+    const queuedInspection = {
+      ...inspection,
+      _offlineStatus: queued.status,
+      _offlineQueuedAt: queued.queuedAt,
+    };
+    return {
+      ...currentState,
+      projects: currentState.projects.map((item) => item.id === projectId
+        ? {
+            ...item,
+            inspections: (item.inspections || []).some((existing) => existing.id === inspection.id)
+              ? item.inspections.map((existing) => existing.id === inspection.id ? queuedInspection : existing)
+              : [...(item.inspections || []), queuedInspection],
+          }
+        : item),
+    };
+  }
   const nextInspectionVersion = Number(result?.inspectionVersion) || expectedVersion + 1;
+  removeOfflineOperationsForEntity(String(getStoredAuthSession()?.user?.id || ''), {
+    kind: 'inspection.save',
+    projectId,
+    entityId: inspection.id,
+  });
   const nextFileVersions = { ...project._normalizedVersions.inspectionFiles };
   for (const kind of ['sticker', 'report']) {
     const key = `${inspection.id}:${kind}`;
@@ -3082,6 +3124,21 @@ export async function saveProjectInspection(currentState, projectId, inspection)
     ...currentState,
     projects: currentState.projects.map((item) => (item.id === projectId ? nextProject : item)),
   };
+}
+
+export async function syncQueuedProjectInspection(operation) {
+  if (!operation?.projectId || !operation?.payload?.id) {
+    throw new Error('Queued inspection is missing its project or inspection identifier.');
+  }
+  return callPortalVisibilityRpc('save_project_inspection', {
+    p_project_id: operation.projectId,
+    p_inspection: stripRecordMetadata(operation.payload),
+    p_expected_version: Number(operation.expected?.version) || 0,
+    p_expected_file_versions: {
+      sticker: Number(operation.expected?.fileVersions?.sticker) || 0,
+      report: Number(operation.expected?.fileVersions?.report) || 0,
+    },
+  }, 'Queued inspection sync');
 }
 
 export async function updateProjects(currentState, projectUpdates) {

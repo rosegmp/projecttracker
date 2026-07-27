@@ -8,6 +8,13 @@ import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS } from './utils/projectTabs.js';
 import { reportError } from './services/observability.js';
+import {
+  applyQueuedInspectionOperations,
+  getOfflineOperations,
+  getOfflineOperationSummary,
+  subscribeToOfflineOperations,
+} from './services/offlineOperations.js';
+import { flushOfflineOperations } from './services/offlineSync.js';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -216,6 +223,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
+  const [offlineSyncSummary, setOfflineSyncSummary] = useState({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
   const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
@@ -258,13 +266,19 @@ export default function App() {
         });
         if (requestId !== refreshRequestIdRef.current) return;
         initialWorkspaceLoadedRef.current = true;
-        setTrackerState(startup.data);
+        setTrackerState(applyQueuedInspectionOperations(
+          startup.data,
+          getOfflineOperations(authSession?.user?.id),
+        ));
         if (!startup.complete) {
           setLoading(false);
           void loadTrackerData({ force: true })
             .then((completeState) => {
               if (requestId !== refreshRequestIdRef.current) return;
-              setTrackerState({ ...completeState, deferredDataStatus: 'ready' });
+              setTrackerState(applyQueuedInspectionOperations(
+                { ...completeState, deferredDataStatus: 'ready' },
+                getOfflineOperations(authSession?.user?.id),
+              ));
             })
             .catch((deferredError) => {
               if (requestId !== refreshRequestIdRef.current) return;
@@ -283,7 +297,10 @@ export default function App() {
         ? await loadPortalTrackerData({ profile, force: options?.force !== false })
         : await loadTrackerData({ force: options?.force !== false });
       if (requestId === refreshRequestIdRef.current) {
-        setTrackerState({ ...next, deferredDataStatus: 'ready' });
+        setTrackerState(applyQueuedInspectionOperations(
+          { ...next, deferredDataStatus: 'ready' },
+          getOfflineOperations(authSession?.user?.id),
+        ));
       }
     } catch (err) {
       if (requestId === refreshRequestIdRef.current) {
@@ -331,6 +348,35 @@ export default function App() {
       setLoading(false);
     }
   }, [authLoading, authSession]);
+
+  useEffect(() => {
+    const userId = String(authSession?.user?.id || '').trim();
+    if (!userId) {
+      setOfflineSyncSummary({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
+      return undefined;
+    }
+    const updateSummary = () => setOfflineSyncSummary(getOfflineOperationSummary(userId));
+    const syncNow = () => {
+      updateSummary();
+      void flushOfflineOperations(userId)
+        .then((result) => {
+          updateSummary();
+          if (result.synced > 0) void refreshData({ force: true });
+        })
+        .catch((syncError) => {
+          reportError(syncError, { operation: 'offline.sync' });
+          updateSummary();
+        });
+    };
+    updateSummary();
+    const unsubscribe = subscribeToOfflineOperations(userId, updateSummary);
+    window.addEventListener('online', syncNow);
+    if (navigator.onLine !== false) syncNow();
+    return () => {
+      unsubscribe();
+      window.removeEventListener('online', syncNow);
+    };
+  }, [authSession?.user?.id]);
 
   useEffect(() => {
     const previousTab = previousActiveTabRef.current;
@@ -1205,6 +1251,26 @@ export default function App() {
           Projects
           <span>{sharedScopeProject?.name || (railActiveProjectId ? visibleProjects.find((project) => project.id === railActiveProjectId)?.name : 'All Projects')}</span>
         </button>
+      ) : null}
+
+      {offlineSyncSummary.total ? (
+        <section className={`offline-sync-banner${offlineSyncSummary.needsAttention ? ' error' : ''}`} role="status">
+          <FluentIcon name={offlineSyncSummary.needsAttention ? 'warning' : 'replace'} size={18} />
+          <div>
+            <strong>
+              {offlineSyncSummary.needsAttention
+                ? `${offlineSyncSummary.needsAttention} device-saved change${offlineSyncSummary.needsAttention === 1 ? '' : 's'} need attention`
+                : offlineSyncSummary.syncing
+                  ? 'Syncing device-saved changes'
+                  : 'Changes saved on this device'}
+            </strong>
+            <span>
+              {offlineSyncSummary.needsAttention
+                ? 'Open the marked daily log or inspection while online and review it before saving.'
+                : `${offlineSyncSummary.total} change${offlineSyncSummary.total === 1 ? '' : 's'} will sync automatically when a connection is available.`}
+            </span>
+          </div>
+        </section>
       ) : null}
       {projectDrawerOpen ? (
         <button className="project-drawer-backdrop" type="button" onClick={() => setProjectDrawerOpen(false)} aria-label="Close projects drawer" />

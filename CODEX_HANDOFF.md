@@ -159,7 +159,7 @@ Updated: 2026-07-27
 - Milestone 2.3 is complete as of 2026-07-27.
 - Optional milestone 2.4 is deferred. Production observability is no longer the active implementation priority.
 
-## Current priority: Recommendation roadmap #3 — backup and recovery
+## Pending verification priority: Recommendation roadmap #3 — backup and recovery
 
 ### Milestone 3.1 complete: recovery inventory and target design
 
@@ -177,6 +177,26 @@ Updated: 2026-07-27
 - GitHub environment `production-backup` is configured. Manual runs `30300098932` and `30300422870` failed closed on a missing database URL and then invalid pooler authentication, respectively; both stopped before Storage export or B2 upload.
 - Manual run `30300685312` passed on 2026-07-27 in 3 minutes 38 seconds. It completed all five logical dumps, exported both Storage buckets with 96 aggregate objects, encrypted the complete working set, uploaded a 317,835,231-byte recovery point, downloaded and SHA-256-verified the B2 copy, and verified 30-day `GOVERNANCE` Object Lock.
 - Repository variable `PRODUCTION_BACKUPS_ENABLED=true` is active, enabling the daily 07:17 UTC schedule. Milestone 3.2 remains open until a second scheduled recovery point passes; no lifecycle deletion should be enabled yet. The RPO/RTO remain proposed rather than proven until the isolated restore drill passes.
+
+## Current priority: Recommendation roadmap #4 — offline-first field operations
+
+### Milestone 4.1 implementation checkpoint: queued daily logs and inspections
+
+- A user-scoped, persistent device queue now accepts text-based daily-log and inspection saves when the browser reports offline or a request fails because connectivity was lost. Repeated edits to the same record coalesce into one operation while preserving the original expected server version.
+- Daily-log lists cache the most recent server records on the device and overlay queued changes, so device-saved records remain visible while offline and after reopening the workspace. Inspection hydration applies the same queued overlay after startup and full refresh.
+- Reconnect processing runs automatically for the authenticated user. Successful operations leave the queue and force a fresh tracker read; network failures remain pending; authorization, validation, and optimistic-version conflicts become **Needs attention** rather than overwriting server data.
+- The application and record cards show explicit **Saved on device**, syncing, and **Needs attention** states. Queue data is isolated by Supabase Auth user id and is never sent to observability.
+- This first slice intentionally excludes new binary uploads, inspection moves between projects, offline deletes, and other workflows. Daily-log photos and inspection sticker/report uploads show an actionable reconnect message instead of pretending they were queued. Existing stored attachment references can remain on a queued record.
+- Focused regression coverage verifies queue coalescing, original-version preservation, record overlays, summaries, removal, and network-error classification. `npm test` passes all 129 regression tests, the 681-module production build passes, JavaScript syntax checks pass, and `git diff --check` passes.
+- `tests/e2e/offline-field-sync.spec.js` adds a browser journey that saves a daily log offline, verifies the durable device copy, reconnects, and verifies server synchronization plus queue cleanup. The focused journey passes locally in Chromium.
+- Commit-checkpoint Playwright passes all 10 browser journeys, including the new offline/reconnect path plus the existing authentication, administrator-tab, staff mutation/conflict, Customer, and Subcontractor boundaries. The first focused run used the obsolete **Open project** selector; the captured page showed the current project-name button, the fixture selector was corrected, and both the focused rerun and full suite passed.
+- Milestone 4.1 is complete locally. Supabase authorization, Capacitor sync, Gradle, and APK work remain deferred because this slice changes no migration, RLS policy, native plugin, or Android configuration. No database migration is required.
+
+### Next offline milestones
+
+1. Add IndexedDB-backed binary queuing for daily-log photos and inspection sticker/report files, with storage cleanup after successful metadata synchronization.
+2. Add review controls for conflicted device copies, plus queued deletes and same-record retry/discard actions.
+3. Extend the proven queue to task updates and warranty/punch items; keep administration, access control, budgets, and destructive bulk operations online-only.
 
 ## Completed priority: Takeoff integration
 

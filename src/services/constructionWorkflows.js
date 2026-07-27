@@ -1,4 +1,11 @@
-import { fetchAuthorizedSupabase, getSupabaseDiagnosticsInfo } from './trackerData.js';
+import { fetchAuthorizedSupabase, getStoredAuthSession, getSupabaseDiagnosticsInfo } from './trackerData.js';
+import {
+  enqueueOfflineOperation,
+  getOfflineOperations,
+  isOfflineNetworkError,
+  mergeQueuedDailyLogs,
+  removeOfflineOperationsForEntity,
+} from './offlineOperations.js';
 
 const CONFIG = {
   dailyLogs: { table: 'project_daily_logs', order: 'log_date.desc,updated_at.desc' },
@@ -57,6 +64,8 @@ function remoteBody(type, projectId, record) {
   const config = CONFIG[type];
   const serializableRecord = { ...record };
   delete serializableRecord.deletedPhotos;
+  delete serializableRecord._offlineStatus;
+  delete serializableRecord._offlineQueuedAt;
   const shared = { id: record.id, project_id: projectId, title: record.title, data: { ...serializableRecord, projectId, id: record.id } };
   delete shared.data.version;
   if (type === 'dailyLogs') return { ...shared, log_date: record.date };
@@ -71,9 +80,10 @@ function remoteBody(type, projectId, record) {
   return { ...shared, [config.numberColumn]: record.number, status: record.status || 'proposed' };
 }
 
-export function createConstructionWorkflowService({ projectId, canEdit = true }) {
+export function createConstructionWorkflowService({ projectId, canEdit = true, offlineQueueEnabled = true }) {
   const scopedProjectId = String(projectId || '').trim();
   const configured = getSupabaseDiagnosticsInfo().configured;
+  const userId = String(getStoredAuthSession()?.user?.id || '').trim();
   if (!scopedProjectId) throw new Error('A project is required.');
   const assertEdit = () => { if (!canEdit) throw new Error('You do not have edit access to this project.'); };
 
@@ -93,9 +103,24 @@ export function createConstructionWorkflowService({ projectId, canEdit = true })
       if (!configured) return { records: readLocal(type, scopedProjectId), local: true };
       try {
         const response = await fetchAuthorizedSupabase(`/rest/v1/${config.table}?project_id=eq.${encodeURIComponent(scopedProjectId)}&select=*&order=${config.order}`, { method: 'GET' }, 'Project workflow load');
-        return { records: (await responseJson(response, 'Unable to load project workflow.')).map((row) => normalize(type, row)), local: false };
+        const remoteRecords = (await responseJson(response, 'Unable to load project workflow.')).map((row) => normalize(type, row));
+        writeLocal(type, scopedProjectId, remoteRecords);
+        const records = type === 'dailyLogs'
+          ? mergeQueuedDailyLogs(remoteRecords, getOfflineOperations(userId, { kind: 'daily-log.save', projectId: scopedProjectId }))
+          : remoteRecords;
+        return { records, local: false };
       } catch (error) {
         if (missingTable(error)) return { records: readLocal(type, scopedProjectId), local: true, setupRequired: true };
+        if (type === 'dailyLogs' && isOfflineNetworkError(error)) {
+          return {
+            records: mergeQueuedDailyLogs(
+              readLocal(type, scopedProjectId),
+              getOfflineOperations(userId, { kind: 'daily-log.save', projectId: scopedProjectId }),
+            ),
+            local: true,
+            offline: true,
+          };
+        }
         throw error;
       }
     },
@@ -119,9 +144,41 @@ export function createConstructionWorkflowService({ projectId, canEdit = true })
         }, 'Project workflow save');
         const payload = await responseJson(response, 'Unable to save project workflow.');
         if (!Array.isArray(payload) || !payload[0]) throw new Error('This record changed elsewhere. Reopen it before saving.');
-        return { record: normalize(type, payload[0]), local: false };
+        const savedRecord = normalize(type, payload[0]);
+        if (type === 'dailyLogs') {
+          removeOfflineOperationsForEntity(userId, {
+            kind: 'daily-log.save',
+            projectId: scopedProjectId,
+            entityId: savedRecord.id,
+          });
+        }
+        writeLocal(type, scopedProjectId, [
+          savedRecord,
+          ...readLocal(type, scopedProjectId).filter((item) => item.id !== savedRecord.id),
+        ]);
+        return { record: savedRecord, local: false };
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal(type, record), local: true, setupRequired: true };
+        if (type === 'dailyLogs' && offlineQueueEnabled && isOfflineNetworkError(error)) {
+          const queued = enqueueOfflineOperation(userId, {
+            kind: 'daily-log.save',
+            projectId: scopedProjectId,
+            entityId: record.id,
+            payload: record,
+            expected: { version: Number(record.version) || 0 },
+          });
+          const queuedRecord = {
+            ...record,
+            projectId: scopedProjectId,
+            _offlineStatus: queued.status,
+            _offlineQueuedAt: queued.queuedAt,
+          };
+          writeLocal(type, scopedProjectId, [
+            queuedRecord,
+            ...readLocal(type, scopedProjectId).filter((item) => item.id !== record.id),
+          ]);
+          return { record: queuedRecord, local: true, offline: true, queued: true };
+        }
         throw error;
       }
     },

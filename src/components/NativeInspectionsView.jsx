@@ -2,8 +2,9 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
+  getStoredAuthSession, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
+import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
@@ -32,8 +33,20 @@ export default function NativeInspectionsView({
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
   const [subcodeDraft, setSubcodeDraft] = useState(null);
   const [previewUrls, setPreviewUrls] = useState({});
+  const [, setOfflineRevision] = useState(0);
   const previewUrlsRef = useRef({});
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
+  const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
+  const offlineOperations = getOfflineOperations(offlineUserId, { kind: 'inspection.save' });
+  const offlineOperationByRecord = new Map(
+    offlineOperations.map((operation) => [`${operation.projectId}:${operation.entityId}`, operation]),
+  );
+  const offlineAttentionCount = offlineOperations.filter((operation) => operation.status === 'needs-attention').length;
+
+  useEffect(
+    () => subscribeToOfflineOperations(offlineUserId, () => setOfflineRevision((current) => current + 1)),
+    [offlineUserId],
+  );
 
   const visibleProjects = useMemo(
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
@@ -202,11 +215,12 @@ export default function NativeInspectionsView({
   }
 
   function startEdit(inspection) {
+    const inspectionProjectId = selectedProject?.id || inspection.projectId || '';
     setInspectionDraft({
       mode: 'edit',
       id: inspection.id,
-      projectId: selectedProject?.id || '',
-      originalProjectId: selectedProject?.id || '',
+      projectId: inspectionProjectId,
+      originalProjectId: inspectionProjectId,
       subcode: inspection.subcode || '',
       inspectionType: inspection.inspectionType || '',
       status: inspection.status || 'requested',
@@ -364,6 +378,18 @@ export default function NativeInspectionsView({
     const mutationKey = ['inspection', inspectionDraft.id || 'create'];
     beginMutation(mutationKey);
     try {
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      if (offline && (inspectionDraft.stickerPendingFile || inspectionDraft.reportPendingFile)) {
+        throw new Error('New inspection attachments require a connection in this milestone. Remove them to queue the inspection details, or reconnect to upload them.');
+      }
+      if (
+        offline
+        && inspectionDraft.mode === 'edit'
+        && inspectionDraft.originalProjectId
+        && inspectionDraft.originalProjectId !== inspectionDraft.projectId
+      ) {
+        throw new Error('Moving an inspection to another project requires a connection. Reconnect and save again.');
+      }
       const project = data.projects.find((item) => item.id === inspectionDraft.projectId);
       if (!project) return;
       const sourceProjectId = inspectionDraft.originalProjectId || inspectionDraft.projectId;
@@ -480,16 +506,30 @@ export default function NativeInspectionsView({
         </div>
       ) : null}
 
+      {offlineOperations.length ? (
+        <div className={`project-workflow-notice${offlineAttentionCount ? ' error' : ''}`} role="status">
+          <FluentIcon name={offlineAttentionCount ? 'warning' : 'replace'} size={18} />
+          <span>
+            {offlineAttentionCount
+              ? `${offlineAttentionCount} device-saved inspection${offlineAttentionCount === 1 ? '' : 's'} need review before syncing.`
+              : `${offlineOperations.length} inspection change${offlineOperations.length === 1 ? '' : 's'} saved on this device and waiting to sync.`}
+          </span>
+        </div>
+      ) : null}
+
       {visibleProjects.length ? (
         <>
           <section className={embedded ? 'project-inspection-list' : 'workspace-section'}>
             {inspections.length ? (
                 <div className="inspection-grid">
-                  {inspections.map((inspection) => (
+                  {inspections.map((inspection) => {
+                    const operation = offlineOperationByRecord.get(`${selectedProject?.id || inspection.projectId}:${inspection.id}`);
+                    return (
                     <article key={inspection.id} className={`inspection-card inspection-${inspection.status}`}>
                       <div className="inspection-card-header">
                         <div>
                           <p className="project-status">{inspection.status}</p>
+                          {operation ? <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : 'Saved on device'}</span> : null}
                           <h3>{inspection.subcode || 'No subcode'}</h3>
                           <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
                         </div>
@@ -609,7 +649,8 @@ export default function NativeInspectionsView({
                       ) : null}
                       {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
             ) : (
                 <div className="empty-state compact">
