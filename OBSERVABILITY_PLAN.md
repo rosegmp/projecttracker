@@ -151,7 +151,7 @@ Replace the sample request id before running the first query. Supabase documents
 
 Repository implementation passed its bounded checkpoint on 2026-07-26.
 
-- `OBSERVABILITY_RUNBOOK.md` defines three production-only, hourly-throttled alert rules: first-seen/regressed issues; 3 fatal occurrences in 5 minutes; and 10 occurrences of one issue in 15 minutes.
+- `OBSERVABILITY_RUNBOOK.md` defines three production-only rules: an hourly-throttled first-seen/regressed email alert; a fatal-error metric monitor above 2 events in 5 minutes; and an unresolved-error metric monitor above 9 events in 15 minutes.
 - The sustained threshold is report volume rather than a percentage failure rate because sessions, tracing, analytics, and stable user identifiers remain disabled.
 - Only React render-boundary failures receive Sentry level `fatal`.
 - Trusted Netlify/Sentry builds create a deploy record tied to the release commit, environment, context, and HTTPS deploy URL.
@@ -159,9 +159,10 @@ Repository implementation passed its bounded checkpoint on 2026-07-26.
 - All 126 focused regression tests passed, the production build transformed 678 modules successfully, and syntax/whitespace checks passed. Playwright, Capacitor sync, and APK builds were intentionally deferred at this checkpoint.
 - Checkpoint commit `f9bdd79` is on `origin/main`. GitHub Actions run `30221519191` passed browser, Supabase authorization, audit, Capacitor, and Android APK jobs; Netlify completed the production deploy and the live URL returned HTTP 200.
 - Releases `f9bdd79` and `7f17471` uploaded 104 source-map artifacts but their deploy records were skipped when both automatic and explicit commit association traversed an older object missing from Netlify's shallow checkout. Disable the optional bundler-plugin commit-association step so it cannot block finalization and deployment creation. The release version remains the full deploy commit SHA and its deployment record links to Netlify; the Sentry **Commits** tab remains optional and empty until repository integration can associate commits without local traversal.
-- Production release `b7be67e` verified the correction on 2026-07-27: it is finalized, contains 104 source-map artifacts, and shows both **Last Deploy: production** and a production deploy entry. GitHub Actions run `30277446358` and the Netlify production deployment passed. Deployment health is complete; alert-rule activation remains.
-- Confirm release `f9bdd79` has a production deploy record in Sentry after the trusted build, then activate the three documented alert rules.
-- External alert rules remain inactive until the repository checkpoint passes and the Sentry email recipient is selected.
+- Production release `b7be67e` verified the correction on 2026-07-27: it is finalized, contains 104 source-map artifacts, and shows both **Last Deploy: production** and a production deploy entry. GitHub Actions run `30277446358` and the Netlify production deployment passed.
+- All three production rules were activated on 2026-07-27. `Production - new or regressed issue` emails Aaron Engelman and throttles repeated actions to one hour. The two production metric monitors are assigned to Aaron and create high-priority issues at their documented thresholds; those issues inherit the project-wide production alert.
+- Sentry's original all-environment `Send a notification for high priority issues` alert was disabled after it notified on both staging validation events and would have duplicated production monitor notifications.
+- Milestone 2.3 is complete as of 2026-07-27.
 
 ## Later milestones
 

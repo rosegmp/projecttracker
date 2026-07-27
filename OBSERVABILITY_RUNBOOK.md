@@ -1,6 +1,6 @@
 # Project Tracker observability runbook
 
-Updated: 2026-07-26
+Updated: 2026-07-27
 
 ## Scope
 
@@ -10,7 +10,7 @@ Because the privacy-safe SDK does not collect sessions or request traces, Projec
 
 ## Signal ownership
 
-- The Project Tracker repository owner is the primary Sentry and production-deployment responder.
+- Aaron Engelman is the primary Sentry and production-deployment responder.
 - The Netlify project owner owns failed production builds and rollback decisions.
 - The repository owner owns failed GitHub Actions checks and must not treat a deployment as healthy while required checks are failing.
 - A backup responder is not currently documented. Add one Sentry organization member before representing this as 24/7 coverage.
@@ -18,20 +18,20 @@ Because the privacy-safe SDK does not collect sessions or request traces, Projec
 
 ## Production Sentry alert rules
 
-All rules must be limited to the `project-tracker` project and `production` environment. Email the Project Tracker Sentry project owner. Set the action interval to one hour so a continuing incident does not send a message for every event.
+All active rules are limited to the `project-tracker` project and `production` environment. They notify Aaron Engelman by email, with a one-hour action throttle so a continuing incident does not send a message for every event. Sentry's original all-environment, every-trigger high-priority alert is disabled.
 
 ### 1. New or regressed production issue
 
 - Name: `Production - new or regressed issue`
 - Trigger when an issue is first seen or changes from resolved to unresolved.
-- Notify immediately.
+- Notify Aaron Engelman, with repeated actions throttled to one hour per issue.
 - Purpose: catch a new release regression without waiting for a volume threshold.
 
 ### 2. Repeated fatal render failure
 
 - Name: `Production - repeated fatal render failure`
-- Filter to event level `fatal`.
-- Trigger when the same issue occurs at least 3 times in 5 minutes.
+- Metric monitor: count unresolved error events filtered to `level:fatal`.
+- Create a high-priority issue when the production count is above 2 in 5 minutes.
 - Purpose: identify a workspace render failure that repeatedly leaves a screen unusable.
 
 Only `AppErrorBoundary` reports at `fatal`. Background queries, mutations, notification delivery, and startup degradation remain `error`; expected validation, authentication, authorization, offline, cancellation, not-found, and concurrency outcomes remain suppressed.
@@ -39,14 +39,15 @@ Only `AppErrorBoundary` reports at `fatal`. Background queries, mutations, notif
 ### 3. Sustained issue volume
 
 - Name: `Production - sustained issue volume`
-- Trigger when the same issue occurs at least 10 times in 15 minutes.
-- Purpose: catch a repeated production defect without enabling tracing or stable user/session identifiers.
+- Metric monitor: count unresolved production error events.
+- Create a high-priority issue when the count is above 9 in 15 minutes.
+- Purpose: catch sustained production error volume without enabling tracing or stable user/session identifiers.
 
-The rule measures reports for one grouped issue, not unique users and not a request failure percentage.
+These metric monitors measure project-level report volume, not unique users and not a request failure percentage. Their high-priority monitor issues flow through the production new/regressed notification rule.
 
 ## Release and deployment health
 
-- Trusted builds use the deploy commit as the Sentry release name and attach commits automatically.
+- Trusted builds use the full deploy commit SHA as the Sentry release name. Optional Sentry commit-list association is disabled because Netlify's shallow checkout caused Sentry CLI to fail before creating deploy records.
 - When Sentry upload credentials and `VITE_SENTRY_ENVIRONMENT` are present, the trusted build creates a Sentry deploy record for that release and environment.
 - The deploy record uses the Netlify context as its name and the HTTPS deploy URL when Netlify supplies one.
 - Local and untrusted builds do not upload source maps or create Sentry releases/deploys.
