@@ -192,10 +192,20 @@ Updated: 2026-07-27
 - Commit-checkpoint Playwright passes all 10 browser journeys, including the new offline/reconnect path plus the existing authentication, administrator-tab, staff mutation/conflict, Customer, and Subcontractor boundaries. The first focused run used the obsolete **Open project** selector; the captured page showed the current project-name button, the fixture selector was corrected, and both the focused rerun and full suite passed.
 - Milestone 4.1 is complete locally. Supabase authorization, Capacitor sync, Gradle, and APK work remain deferred because this slice changes no migration, RLS policy, native plugin, or Android configuration. No database migration is required.
 
+### Milestone 4.2 implementation checkpoint: offline field attachments
+
+- Daily-log photos and inspection sticker/report files can now be saved while offline. Binary data is stored in the user device's IndexedDB and the existing local operation queue carries only serializable attachment references and metadata.
+- Repeated offline edits reconcile IndexedDB records against each coalesced operation. Stable operation and attachment identifiers let reconnect retries reuse the same storage paths instead of creating duplicate uploads.
+- Reconnect synchronization uploads attachment blobs before saving the daily-log or inspection metadata. Old remote files and on-device blobs are removed only after the version-checked server save succeeds; partial uploads are removed if connectivity drops during an online save.
+- Queued daily-log photos and inspection images can be previewed from the device, and queued inspection files can be opened or downloaded before synchronization. Image editing remains disabled for a device-only inspection attachment until it has synchronized.
+- The focused Chromium journey now covers a daily-log photo plus an inspection sticker and failed-inspection PDF: it verifies no Storage POST while offline, IndexedDB persistence, upload-before-metadata after reconnect, correct storage categories, visible synchronization state, queue cleanup, and IndexedDB cleanup.
+- Checkpoint verification passes all 130 regression tests, the 682-module production build, all 10 Playwright journeys, JavaScript syntax checks, and `git diff --check`. One focused browser run initially tried to lazy-load the inspection dialog after network isolation; the fixture was corrected to load that application chunk before going offline, matching a field session that has opened the workflow while connected.
+- Milestone 4.2 is complete locally. It changes no database migration, RLS policy, native plugin, or Android configuration, so Supabase authorization tests, Capacitor sync, Gradle, and APK generation remain deferred. No production push or deployment has been performed for this checkpoint.
+
 ### Next offline milestones
 
-1. Add IndexedDB-backed binary queuing for daily-log photos and inspection sticker/report files, with storage cleanup after successful metadata synchronization.
-2. Add review controls for conflicted device copies, plus queued deletes and same-record retry/discard actions.
+1. Add review controls for conflicted device copies, plus queued deletes and same-record retry/discard actions.
+2. Extend the offline queue to the next highest-value field workflows after conflict handling is proven.
 3. Extend the proven queue to task updates and warranty/punch items; keep administration, access control, budgets, and destructive bulk operations online-only.
 
 ## Completed priority: Takeoff integration

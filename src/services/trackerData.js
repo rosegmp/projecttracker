@@ -9,10 +9,16 @@ import {
   getResponseRequestId,
 } from '../utils/requestCorrelation.js';
 import {
+  createOfflineOperationId,
   enqueueOfflineOperation,
+  getOfflineOperations,
   isOfflineNetworkError,
   removeOfflineOperationsForEntity,
 } from './offlineOperations.js';
+import {
+  reconcileOfflineAttachments,
+  removeOfflineAttachments,
+} from './offlineAttachmentStore.js';
 
 const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
@@ -3036,7 +3042,100 @@ export async function updateProjectSelectionVisibility(currentState, projectId, 
   };
 }
 
-export async function saveProjectInspection(currentState, projectId, inspection) {
+export async function queueProjectInspectionOffline(
+  currentState,
+  projectId,
+  inspection,
+  pendingAttachments = {},
+  cleanupFiles = [],
+) {
+  const project = currentState.projects.find((item) => item.id === projectId);
+  if (!project || !inspection?.id) throw new Error('Project inspection was not found.');
+  const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+  if (!userId) throw new Error('Sign in before saving inspection attachments on this device.');
+  const existingOperation = getOfflineOperations(userId, {
+    kind: 'inspection.save',
+    projectId,
+  }).find((operation) => operation.entityId === inspection.id);
+  const operationId = existingOperation?.id || createOfflineOperationId();
+  const expectedVersion = Number(project._normalizedVersions?.inspections?.[inspection.id]) || 0;
+  const expectedFileVersions = {
+    sticker: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:sticker`]) || 0,
+    report: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:report`]) || 0,
+  };
+  const payload = stripRecordMetadata(inspection);
+  const attachments = [];
+  const keepAttachmentIds = [];
+  for (const [kind, field] of [['sticker', 'stickerFile'], ['report', 'reportFile']]) {
+    const file = pendingAttachments?.[kind];
+    if (file instanceof Blob) {
+      const fileId = `inspection-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const offlineAttachmentId = `${operationId}:inspection-${kind}:${fileId}`;
+      attachments.push({
+        id: offlineAttachmentId,
+        slot: kind,
+        file,
+        name: file.name || `${kind}-attachment`,
+        type: file.type,
+        size: file.size,
+        metadata: { fileId, kind },
+      });
+      payload[field] = {
+        id: fileId,
+        name: '',
+        originalName: file.name || `${kind}-attachment`,
+        size: Number(file.size) || 0,
+        type: file.type || 'application/octet-stream',
+        uploadedAt: '',
+        storageProvider: 'device',
+        storageBucket: '',
+        storagePath: '',
+        dataUrl: '',
+        _offlineAttachmentId: offlineAttachmentId,
+      };
+    } else if (payload[field]?._offlineAttachmentId) {
+      keepAttachmentIds.push(payload[field]._offlineAttachmentId);
+    }
+  }
+  const mergedCleanup = [
+    ...(existingOperation?.cleanupFiles || []),
+    ...(cleanupFiles || []),
+  ].filter((file, index, files) =>
+    file?.storagePath && files.findIndex((item) => item?.storagePath === file.storagePath) === index);
+  const operation = {
+    id: operationId,
+    userId,
+    kind: 'inspection.save',
+    projectId,
+    entityId: inspection.id,
+    payload,
+    expected: existingOperation?.expected || {
+      version: expectedVersion,
+      fileVersions: expectedFileVersions,
+    },
+    cleanupFiles: mergedCleanup,
+  };
+  const attachmentIds = await reconcileOfflineAttachments(operation, attachments, keepAttachmentIds);
+  const queued = enqueueOfflineOperation(userId, { ...operation, attachmentIds });
+  const queuedInspection = {
+    ...payload,
+    _offlineStatus: queued.status,
+    _offlineQueuedAt: queued.queuedAt,
+  };
+  return {
+    ...currentState,
+    projects: currentState.projects.map((item) => item.id === projectId
+      ? {
+          ...item,
+          inspections: (item.inspections || []).some((existing) => existing.id === inspection.id)
+            ? item.inspections.map((existing) => existing.id === inspection.id ? queuedInspection : existing)
+            : [...(item.inspections || []), queuedInspection],
+        }
+      : item),
+  };
+}
+
+export async function saveProjectInspection(currentState, projectId, inspection, options = {}) {
   const project = currentState.projects.find((item) => item.id === projectId);
   if (!project || !inspection?.id) throw new Error('Project inspection was not found.');
   const expectedVersion = Number(project._normalizedVersions?.inspections?.[inspection.id]) || 0;
@@ -3064,36 +3163,22 @@ export async function saveProjectInspection(currentState, projectId, inspection)
     }, 'Inspection save');
   } catch (error) {
     if (!isOfflineNetworkError(error)) throw error;
-    const userId = String(getStoredAuthSession()?.user?.id || '').trim();
-    const queued = enqueueOfflineOperation(userId, {
-      kind: 'inspection.save',
+    return queueProjectInspectionOffline(
+      currentState,
       projectId,
-      entityId: inspection.id,
-      payload: stripRecordMetadata(inspection),
-      expected: {
-        version: expectedVersion,
-        fileVersions: expectedFileVersions,
-      },
-    });
-    const queuedInspection = {
-      ...inspection,
-      _offlineStatus: queued.status,
-      _offlineQueuedAt: queued.queuedAt,
-    };
-    return {
-      ...currentState,
-      projects: currentState.projects.map((item) => item.id === projectId
-        ? {
-            ...item,
-            inspections: (item.inspections || []).some((existing) => existing.id === inspection.id)
-              ? item.inspections.map((existing) => existing.id === inspection.id ? queuedInspection : existing)
-              : [...(item.inspections || []), queuedInspection],
-          }
-        : item),
-    };
+      inspection,
+      {},
+      options.cleanupFiles || [],
+    );
   }
   const nextInspectionVersion = Number(result?.inspectionVersion) || expectedVersion + 1;
-  removeOfflineOperationsForEntity(String(getStoredAuthSession()?.user?.id || ''), {
+  const userId = String(getStoredAuthSession()?.user?.id || '');
+  const queuedOperations = getOfflineOperations(userId, {
+    kind: 'inspection.save',
+    projectId,
+  }).filter((operation) => operation.entityId === inspection.id);
+  await Promise.all(queuedOperations.map((operation) => removeOfflineAttachments(operation.id)));
+  removeOfflineOperationsForEntity(userId, {
     kind: 'inspection.save',
     projectId,
     entityId: inspection.id,

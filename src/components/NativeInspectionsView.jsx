@@ -2,15 +2,16 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  getStoredAuthSession, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
+  getStoredAuthSession, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
-import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
+import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
+import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
-import { openPreview } from '../platform/platformAdapter.js';
+import { deliverBlob, openPreview } from '../platform/platformAdapter.js';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 
@@ -138,14 +139,18 @@ export default function NativeInspectionsView({
   useEffect(() => {
     let cancelled = false;
     const imageFiles = inspections.flatMap((inspection) =>
-      [inspection.stickerFile, inspection.reportFile].filter((file) => file?.storagePath && isImageFile(file)),
+      [inspection.stickerFile, inspection.reportFile]
+        .filter((file) => (file?.storagePath || file?._offlineAttachmentId) && isImageFile(file)),
     );
 
     async function loadPreviews() {
       for (const file of imageFiles) {
         if (previewUrls[file.id]) continue;
         try {
-          const blob = await downloadProjectFileFromStorage(file);
+          const blob = file._offlineAttachmentId
+            ? (await getOfflineAttachment(file._offlineAttachmentId))?.file
+            : await downloadProjectFileFromStorage(file);
+          if (!blob) continue;
           const url = URL.createObjectURL(blob);
           if (cancelled) {
             URL.revokeObjectURL(url);
@@ -276,6 +281,13 @@ export default function NativeInspectionsView({
     try {
       let src = attachment.dataUrl || previewUrls[attachment.id] || '';
       let revokeOnClose = false;
+      if (!src && attachment._offlineAttachmentId) {
+        const record = await getOfflineAttachment(attachment._offlineAttachmentId);
+        if (record?.file) {
+          src = URL.createObjectURL(record.file);
+          revokeOnClose = true;
+        }
+      }
       if (!src && attachment.storagePath) {
         const blob = await downloadProjectFileFromStorage(attachment);
         src = URL.createObjectURL(blob);
@@ -306,6 +318,9 @@ export default function NativeInspectionsView({
     beginMutation(mutationKey);
     try {
       let previewSource = attachment.dataUrl || previewUrls[attachment.id] || '';
+      if (!previewSource && attachment._offlineAttachmentId) {
+        previewSource = (await getOfflineAttachment(attachment._offlineAttachmentId))?.file || '';
+      }
       if (!previewSource && attachment.storagePath) {
         previewSource = await downloadProjectFileFromStorage(attachment);
       }
@@ -318,9 +333,18 @@ export default function NativeInspectionsView({
     }
   }
 
-  function downloadInspectionAttachment(inspection, field) {
+  async function downloadInspectionAttachment(inspection, field) {
     const attachment = inspection?.[field];
     if (!attachment) return;
+    if (attachment._offlineAttachmentId) {
+      const record = await getOfflineAttachment(attachment._offlineAttachmentId);
+      if (!record?.file) {
+        await showAppAlert('This device copy is no longer available.', 'Download failed');
+        return;
+      }
+      await deliverBlob(record.file, attachment.originalName || record.name || 'inspection-attachment');
+      return;
+    }
     void downloadFileWithUi(attachment, { failureMessage: 'Unable to download attachment.' });
   }
 
@@ -376,12 +400,11 @@ export default function NativeInspectionsView({
   async function saveInspection() {
     if (!inspectionDraft?.projectId) return;
     const mutationKey = ['inspection', inspectionDraft.id || 'create'];
+    let offlineFallback = null;
+    const uploadedDuringSave = [];
     beginMutation(mutationKey);
     try {
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      if (offline && (inspectionDraft.stickerPendingFile || inspectionDraft.reportPendingFile)) {
-        throw new Error('New inspection attachments require a connection in this milestone. Remove them to queue the inspection details, or reconnect to upload them.');
-      }
       if (
         offline
         && inspectionDraft.mode === 'edit'
@@ -399,27 +422,14 @@ export default function NativeInspectionsView({
       let reportFile = inspectionDraft.reportFile || null;
       if (inspectionDraft.stickerPendingFile) {
         if (stickerFile?.storagePath) filesToDeleteAfterSave.push(stickerFile);
-        stickerFile = await createInspectionAttachmentRecord(
-          project.id,
-          'sticker',
-          inspectionDraft.stickerPendingFile,
-        );
       }
       if (inspectionDraft.reportPendingFile) {
         if (reportFile?.storagePath) filesToDeleteAfterSave.push(reportFile);
-        reportFile = await createInspectionAttachmentRecord(
-          project.id,
-          'report',
-          inspectionDraft.reportPendingFile,
-        );
       }
       if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
         filesToDeleteAfterSave.push(reportFile);
-        reportFile = null;
-      } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
-        reportFile = null;
       }
-      const nextInspection = {
+      const buildInspection = (nextStickerFile, nextReportFile) => ({
         id: inspectionDraft.id || `inspection-${Date.now()}`,
         subcode: inspectionDraft.subcode.trim(),
         inspectionType: inspectionDraft.inspectionType.trim(),
@@ -427,9 +437,52 @@ export default function NativeInspectionsView({
         date: inspectionDraft.date,
         agency: inspectionDraft.agency.trim(),
         notes: inspectionDraft.notes.trim(),
-        stickerFile,
-        reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? reportFile : null,
+        stickerFile: nextStickerFile,
+        reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? nextReportFile : null,
+      });
+      offlineFallback = {
+        project,
+        inspection: buildInspection(stickerFile, reportFile),
+        pendingAttachments: {
+          sticker: inspectionDraft.stickerPendingFile,
+          report: ['failed', 'follow-up'].includes(inspectionDraft.status) ? inspectionDraft.reportPendingFile : null,
+        },
+        cleanupFiles: filesToDeleteAfterSave,
       };
+      if (offline) {
+        const nextState = await queueProjectInspectionOffline(
+          data,
+          project.id,
+          offlineFallback.inspection,
+          offlineFallback.pendingAttachments,
+          filesToDeleteAfterSave,
+        );
+        onStateChange(nextState);
+        setInspectionDraft(null);
+        return;
+      }
+      if (inspectionDraft.stickerPendingFile) {
+        stickerFile = await createInspectionAttachmentRecord(
+          project.id,
+          'sticker',
+          inspectionDraft.stickerPendingFile,
+        );
+        uploadedDuringSave.push(stickerFile);
+      }
+      if (inspectionDraft.reportPendingFile) {
+        reportFile = await createInspectionAttachmentRecord(
+          project.id,
+          'report',
+          inspectionDraft.reportPendingFile,
+        );
+        uploadedDuringSave.push(reportFile);
+      }
+      if (!['failed', 'follow-up'].includes(inspectionDraft.status) && reportFile?.storagePath) {
+        reportFile = null;
+      } else if (!['failed', 'follow-up'].includes(inspectionDraft.status)) {
+        reportFile = null;
+      }
+      const nextInspection = buildInspection(stickerFile, reportFile);
       let nextState = data;
       if (inspectionDraft.mode === 'edit' && sourceProject && sourceProject.id !== project.id) {
         const nextSourceProject = {
@@ -451,14 +504,43 @@ export default function NativeInspectionsView({
                 )
               : [...(project.inspections || []), nextInspection],
         };
-        nextState = await saveProjectInspection(nextState, project.id, nextInspection);
+        nextState = await saveProjectInspection(nextState, project.id, nextInspection, {
+          cleanupFiles: filesToDeleteAfterSave,
+        });
       }
       onStateChange(nextState);
-      await Promise.allSettled(
-        filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
-      );
+      const queuedSave = nextState.projects
+        .find((item) => item.id === project.id)
+        ?.inspections?.find((item) => item.id === nextInspection.id)
+        ?._offlineStatus;
+      if (!queuedSave) {
+        await Promise.allSettled(
+          filesToDeleteAfterSave.map((file) => deleteProjectFileFromStorage(file)),
+        );
+      }
       setInspectionDraft(null);
     } catch (error) {
+      if (isOfflineNetworkError(error) && offlineFallback) {
+        await Promise.allSettled(uploadedDuringSave.map((file) => deleteProjectFileFromStorage(file)));
+        try {
+          const nextState = await queueProjectInspectionOffline(
+            data,
+            offlineFallback.project.id,
+            offlineFallback.inspection,
+            offlineFallback.pendingAttachments,
+            offlineFallback.cleanupFiles,
+          );
+          onStateChange(nextState);
+          setInspectionDraft(null);
+          return;
+        } catch (queueError) {
+          await showAppAlert(
+            queueError instanceof Error ? queueError.message : 'Failed to store inspection attachments on this device.',
+            'Device save failed',
+          );
+          return;
+        }
+      }
       await showAppAlert(error instanceof Error ? error.message : 'Failed to save inspection.', 'Save failed');
     } finally {
       endMutation(mutationKey);
@@ -592,8 +674,8 @@ export default function NativeInspectionsView({
                                   className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                                  disabled={isMutating(['inspection-preview', inspection.id, 'stickerFile']) || isMutating(['inspection', inspection.id]) || readOnly}
-                                  title="Edit sticker image"
+                                  disabled={!!inspection.stickerFile?._offlineAttachmentId || isMutating(['inspection-preview', inspection.id, 'stickerFile']) || isMutating(['inspection', inspection.id]) || readOnly}
+                                  title={inspection.stickerFile?._offlineAttachmentId ? 'Sync this inspection before editing its sticker image' : 'Edit sticker image'}
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
                                   aria-busy={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
                                 >
@@ -635,8 +717,8 @@ export default function NativeInspectionsView({
                                   className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
                                   type="button"
                                   onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                                  disabled={isMutating(['inspection-preview', inspection.id, 'reportFile']) || isMutating(['inspection', inspection.id]) || readOnly}
-                                  title="Edit report image"
+                                  disabled={!!inspection.reportFile?._offlineAttachmentId || isMutating(['inspection-preview', inspection.id, 'reportFile']) || isMutating(['inspection', inspection.id]) || readOnly}
+                                  title={inspection.reportFile?._offlineAttachmentId ? 'Sync this inspection before editing its report image' : 'Edit report image'}
                                   aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
                                   aria-busy={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
                                 >

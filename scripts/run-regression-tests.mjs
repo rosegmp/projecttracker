@@ -126,12 +126,14 @@ const tests = [
       };
       try {
         const first = enqueueOfflineOperation('user-1', {
+          id: 'offline-operation-1',
           kind: 'daily-log.save',
           projectId: 'project-1',
           entityId: 'log-1',
           payload: { id: 'log-1', version: 4, notes: 'First device edit' },
           expected: { version: 4 },
         });
+        assert.equal(first.id, 'offline-operation-1');
         const second = enqueueOfflineOperation('user-1', {
           kind: 'daily-log.save',
           projectId: 'project-1',
@@ -191,6 +193,27 @@ const tests = [
       assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
       assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
       assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
+    },
+  },
+  {
+    name: 'offline field attachments persist before metadata and clean up after sync',
+    async run() {
+      const [storeSource, syncSource, workflowSource, inspectionSource] = await Promise.all([
+        readFile(new URL('../src/services/offlineAttachmentStore.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/offlineSync.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+      ]);
+      assert.match(storeSource, /indexedDB\.open\(DATABASE_NAME, DATABASE_VERSION\)/);
+      assert.match(storeSource, /createObjectStore\(STORE_NAME, \{ keyPath: 'id' \}\)/);
+      assert.match(storeSource, /reconcileOfflineAttachments/);
+      assert.match(syncSource, /await getOfflineAttachments\(operation\.id\)/);
+      assert.match(syncSource, /await uploadStoredAttachment\(operation, record, 'daily-log-photos'/);
+      assert.match(syncSource, /await removeOfflineAttachments\(operation\.id\)/);
+      assert.match(workflowSource, /queueDailyLog: queueDailyLogRecord/);
+      assert.match(workflowSource, /_offlineAttachmentId: offlineAttachmentId/);
+      assert.match(inspectionSource, /export async function queueProjectInspectionOffline/);
+      assert.match(inspectionSource, /storageProvider: 'device'/);
     },
   },
   {
@@ -1286,7 +1309,7 @@ const tests = [
       assert.match(focusedSaveSource, /public\.app_user_can_edit_project\(p_project_id\)/);
       assert.match(focusedSaveSource, /NORMALIZED_VERSION_CONFLICT:inspections/);
       assert.match(focusedSaveSource, /grant execute on function public\.save_project_inspection/);
-      assert.match(inspectionsViewSource, /saveProjectInspection\(nextState, project\.id, nextInspection\)/);
+      assert.match(inspectionsViewSource, /saveProjectInspection\(nextState, project\.id, nextInspection, \{/);
       assert.match(scheduleSource, /saveProjectInspection\(nextState, project\.id, nextInspection\)/);
       assert.match(inspectionsViewSource, /Failed to save inspection\./);
       assert.match(scheduleSource, /Failed to save inspection\./);

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { createPerson, deleteProjectFileFromStorage, downloadProjectFileFromStorage, getStoredAuthSession, uploadProjectFileToStorage } from '../services/trackerData.js';
-import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
+import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
+import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { formatCurrentWeather, loadCurrentWeatherConditions } from '../utils/weather.js';
 import { openPreview } from '../platform/platformAdapter.js';
@@ -64,12 +65,19 @@ function dailyDraftFromRecord(record) {
 function WorkflowPhoto({ photo, onRemove = null, disabled = false }) {
   const [previewUrl, setPreviewUrl] = useState('');
 
+  async function loadPhotoSource() {
+    if (photo?.file) return photo.file;
+    if (photo?._offlineAttachmentId) return (await getOfflineAttachment(photo._offlineAttachmentId))?.file || null;
+    if (photo?.storagePath) return downloadProjectFileFromStorage(photo);
+    return photo?.dataUrl || '';
+  }
+
   useEffect(() => {
     let cancelled = false;
     let objectUrl = '';
     void (async () => {
       try {
-        const source = photo?.file || (photo?.storagePath ? await downloadProjectFileFromStorage(photo) : photo?.dataUrl || '');
+        const source = await loadPhotoSource();
         if (!source || cancelled) return;
         objectUrl = typeof source === 'string' ? source : URL.createObjectURL(source);
         setPreviewUrl(objectUrl);
@@ -84,7 +92,7 @@ function WorkflowPhoto({ photo, onRemove = null, disabled = false }) {
   }, [photo]);
 
   async function openPhoto() {
-    const source = photo?.file || (photo?.storagePath ? await downloadProjectFileFromStorage(photo) : photo?.dataUrl || '');
+    const source = await loadPhotoSource();
     if (source) openPreview(source, { features: 'noopener' });
   }
 
@@ -310,24 +318,26 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     const uploadedPhotos = [];
     let uploadedAttachments = [];
     try {
-      if (
-        daily
-        && typeof navigator !== 'undefined'
-        && navigator.onLine === false
-        && contractorPhotos(draft).some((photo) => photo?.file)
-      ) {
-        throw new Error('New daily-log photos require a connection in this milestone. Remove them to queue the text log, or reconnect to upload them.');
-      }
       let preparedDraft;
-      if (daily) preparedDraft = await prepareDailyLogForSave(draft, uploadedPhotos);
+      let result;
+      if (daily && typeof navigator !== 'undefined' && navigator.onLine === false) {
+        result = await service.queueDailyLog(draft);
+      } else if (daily) {
+        preparedDraft = await prepareDailyLogForSave(draft, uploadedPhotos);
+        preparedDraft.deletedPhotos = draft.deletedPhotos || [];
+        result = await service.save(workflowType, preparedDraft);
+      }
       else {
         const preparedResult = await prepareWorkflowAttachments(project.id, 'change-order-attachments', draft);
         preparedDraft = preparedResult.prepared;
         uploadedAttachments = preparedResult.uploaded;
+        result = await service.save(workflowType, preparedDraft);
       }
-      const result = await service.save(workflowType, preparedDraft);
-      if (daily) await Promise.allSettled((draft.deletedPhotos || []).map((photo) => deleteProjectFileFromStorage(photo)));
-      else await deleteWorkflowAttachments(draft.deletedAttachments);
+      if (daily) {
+        if (!result.queued) await Promise.allSettled((draft.deletedPhotos || []).map((photo) => deleteProjectFileFromStorage(photo)));
+      } else {
+        await deleteWorkflowAttachments(draft.deletedAttachments);
+      }
       setSetupRequired(result.setupRequired === true);
       if (result.queued) {
         setMessage('Saved on this device. It will sync automatically when the connection returns.');
@@ -337,6 +347,18 @@ export default function ProjectWorkflowManager({ data, project, canEdit = true, 
     } catch (error) {
       await Promise.allSettled(uploadedPhotos.map((photo) => deleteProjectFileFromStorage(photo)));
       await deleteWorkflowAttachments(uploadedAttachments);
+      if (daily && isOfflineNetworkError(error)) {
+        try {
+          const result = await service.queueDailyLog(draft);
+          setSetupRequired(result.setupRequired === true);
+          setDraft(null);
+          await loadRecords();
+          return;
+        } catch (queueError) {
+          setMessage(queueError instanceof Error ? queueError.message : 'Unable to store this daily log on the device.');
+          return;
+        }
+      }
       setMessage(error instanceof Error ? error.message : 'Unable to save record.');
     }
     finally { setSaving(false); }

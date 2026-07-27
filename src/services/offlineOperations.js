@@ -30,7 +30,7 @@ function writeStoredOperations(userId, operations) {
   notify(userId);
 }
 
-function createOperationId() {
+export function createOfflineOperationId() {
   return globalThis.crypto?.randomUUID?.()
     || `offline-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -65,7 +65,7 @@ export function enqueueOfflineOperation(userId, operation) {
   const next = {
     ...existing,
     ...operation,
-    id: existing?.id || createOperationId(),
+    id: existing?.id || operation.id || createOfflineOperationId(),
     userId: scopedUserId,
     kind,
     projectId,

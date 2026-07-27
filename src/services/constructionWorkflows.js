@@ -1,11 +1,16 @@
 import { fetchAuthorizedSupabase, getStoredAuthSession, getSupabaseDiagnosticsInfo } from './trackerData.js';
 import {
+  createOfflineOperationId,
   enqueueOfflineOperation,
   getOfflineOperations,
   isOfflineNetworkError,
   mergeQueuedDailyLogs,
   removeOfflineOperationsForEntity,
 } from './offlineOperations.js';
+import {
+  reconcileOfflineAttachments,
+  removeOfflineAttachments,
+} from './offlineAttachmentStore.js';
 
 const CONFIG = {
   dailyLogs: { table: 'project_daily_logs', order: 'log_date.desc,updated_at.desc' },
@@ -32,6 +37,10 @@ function readLocal(type, projectId) {
 }
 function writeLocal(type, projectId, rows) {
   window.localStorage.setItem(localKey(type, projectId), JSON.stringify(rows));
+}
+
+function contractorEntries(record) {
+  return Array.isArray(record?.subcontractorWork) ? record.subcontractorWork : [];
 }
 
 function normalize(type, row) {
@@ -96,7 +105,83 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
     return saved;
   }
 
+  async function queueDailyLogRecord(draft) {
+    assertEdit();
+    if (!configured || !userId) {
+      throw new Error('Sign in to the configured project before saving offline attachments.');
+    }
+    const record = { ...draft, id: draft.id || createId('log') };
+    const existingOperation = getOfflineOperations(userId, {
+      kind: 'daily-log.save',
+      projectId: scopedProjectId,
+    }).find((operation) => operation.entityId === record.id);
+    const operationId = existingOperation?.id || createOfflineOperationId();
+    const attachments = [];
+    const keepAttachmentIds = [];
+    const entries = contractorEntries(record).map((entry) => ({
+      ...entry,
+      photos: (entry.photos || []).map((photo) => {
+        if (photo?.file instanceof Blob) {
+          const photoId = photo.id || createId('work-photo');
+          const offlineAttachmentId = `${operationId}:daily-log-photo:${photoId}`;
+          attachments.push({
+            id: offlineAttachmentId,
+            slot: `contractor:${entry.id}:photo:${photoId}`,
+            file: photo.file,
+            name: photo.name || photo.file.name,
+            type: photo.type || photo.file.type,
+            size: Number(photo.size || photo.file.size) || 0,
+            metadata: { photoId, contractorEntryId: entry.id },
+          });
+          return {
+            id: photoId,
+            name: photo.name || photo.file.name,
+            originalName: photo.originalName || photo.file.name,
+            type: photo.type || photo.file.type,
+            size: Number(photo.size || photo.file.size) || 0,
+            _offlineAttachmentId: offlineAttachmentId,
+          };
+        }
+        if (photo?._offlineAttachmentId) keepAttachmentIds.push(photo._offlineAttachmentId);
+        return photo;
+      }),
+    }));
+    const prepared = { ...record, subcontractorWork: entries };
+    delete prepared.deletedPhotos;
+    delete prepared.workPerformed;
+    delete prepared.labor;
+    const cleanupFiles = [
+      ...(existingOperation?.cleanupFiles || []),
+      ...(record.deletedPhotos || []),
+    ].filter((file, index, files) =>
+      file?.storagePath && files.findIndex((item) => item?.storagePath === file.storagePath) === index);
+    const operation = {
+      id: operationId,
+      userId,
+      kind: 'daily-log.save',
+      projectId: scopedProjectId,
+      entityId: record.id,
+      payload: prepared,
+      expected: existingOperation?.expected || { version: Number(record.version) || 0 },
+      cleanupFiles,
+    };
+    const attachmentIds = await reconcileOfflineAttachments(operation, attachments, keepAttachmentIds);
+    const queued = enqueueOfflineOperation(userId, { ...operation, attachmentIds });
+    const queuedRecord = {
+      ...prepared,
+      projectId: scopedProjectId,
+      _offlineStatus: queued.status,
+      _offlineQueuedAt: queued.queuedAt,
+    };
+    writeLocal('dailyLogs', scopedProjectId, [
+      queuedRecord,
+      ...readLocal('dailyLogs', scopedProjectId).filter((item) => item.id !== record.id),
+    ]);
+    return { record: queuedRecord, local: true, offline: true, queued: true };
+  }
+
   return {
+    queueDailyLog: queueDailyLogRecord,
     async list(type) {
       const config = CONFIG[type];
       if (!config) throw new Error('Unknown project workflow.');
@@ -146,6 +231,11 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         if (!Array.isArray(payload) || !payload[0]) throw new Error('This record changed elsewhere. Reopen it before saving.');
         const savedRecord = normalize(type, payload[0]);
         if (type === 'dailyLogs') {
+          const queuedOperations = getOfflineOperations(userId, {
+            kind: 'daily-log.save',
+            projectId: scopedProjectId,
+          }).filter((operation) => operation.entityId === savedRecord.id);
+          await Promise.all(queuedOperations.map((operation) => removeOfflineAttachments(operation.id)));
           removeOfflineOperationsForEntity(userId, {
             kind: 'daily-log.save',
             projectId: scopedProjectId,
@@ -160,24 +250,7 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal(type, record), local: true, setupRequired: true };
         if (type === 'dailyLogs' && offlineQueueEnabled && isOfflineNetworkError(error)) {
-          const queued = enqueueOfflineOperation(userId, {
-            kind: 'daily-log.save',
-            projectId: scopedProjectId,
-            entityId: record.id,
-            payload: record,
-            expected: { version: Number(record.version) || 0 },
-          });
-          const queuedRecord = {
-            ...record,
-            projectId: scopedProjectId,
-            _offlineStatus: queued.status,
-            _offlineQueuedAt: queued.queuedAt,
-          };
-          writeLocal(type, scopedProjectId, [
-            queuedRecord,
-            ...readLocal(type, scopedProjectId).filter((item) => item.id !== record.id),
-          ]);
-          return { record: queuedRecord, local: true, offline: true, queued: true };
+          return queueDailyLogRecord(record);
         }
         throw error;
       }

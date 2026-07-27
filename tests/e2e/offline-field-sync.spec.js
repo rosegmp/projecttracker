@@ -12,6 +12,7 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   const settings = {
     users: [{ id: appUserId, name: 'Offline Editor', email, role: 'Edit' }],
     currentUserId: appUserId,
+    inspectionSubcodes: ['FOOT-101'],
   };
   const project = {
     id: projectId,
@@ -36,6 +37,8 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   };
   const access = { project_id: projectId, user_id: appUserId, position: 0, version: 1 };
   let savedDailyLog = null;
+  let savedInspectionPayload = null;
+  const uploadedStoragePaths = [];
 
   await page.addInitScript((session) => {
     window.localStorage.setItem('cx_auth_session', JSON.stringify(session));
@@ -97,6 +100,15 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
       return;
     }
     if (url.pathname.includes('/rpc/')) {
+      if (url.pathname.endsWith('/rpc/save_project_inspection')) {
+        savedInspectionPayload = request.postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ inspectionVersion: 1, fileVersions: { sticker: 1, report: 1 } }),
+        });
+        return;
+      }
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
       return;
     }
@@ -107,6 +119,12 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
     else if (url.pathname.endsWith('/project_core_records') || url.pathname.endsWith('/projects')) body = [project];
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
+  await page.route(`${SUPABASE_ORIGIN}/storage/v1/object/**`, async (route) => {
+    if (route.request().method() === 'POST') {
+      uploadedStoragePaths.push(new URL(route.request().url()).pathname);
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
 
   await page.goto('/?tab=projects');
   await page.getByRole('button', { name: 'Offline Field Project', exact: true }).click();
@@ -116,17 +134,103 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await context.setOffline(true);
   await page.getByRole('button', { name: 'New daily log' }).click();
   await page.getByLabel('Notes').fill('Framing continued while the field device was offline.');
+  await page.getByRole('button', { name: 'Add subcontractor' }).click();
+  await page.locator('.project-workflow-photo-picker input[type="file"]').setInputFiles({
+    name: 'offline-framing.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('offline-photo-content'),
+  });
   await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   await expect(page.getByText('Framing continued while the field device was offline.')).toBeVisible();
+  await expect(page.getByText('offline-framing.jpg')).toBeVisible();
   await expect(page.getByText('Saved on device').first()).toBeVisible();
+  expect(uploadedStoragePaths).toHaveLength(0);
   await expect.poll(() => page.evaluate(() =>
     Object.keys(window.localStorage).some((key) => key.startsWith('project-tracker:offline-operations:v1:')))).toBe(true);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(1);
 
   await context.setOffline(false);
   await expect.poll(() => savedDailyLog?.data?.notes || '', { timeout: 20_000 })
     .toBe('Framing continued while the field device was offline.');
+  await expect.poll(() => uploadedStoragePaths.length).toBe(1);
+  expect(savedDailyLog?.data?.subcontractorWork?.[0]?.photos?.[0]?.storagePath)
+    .toContain('daily-log-photos');
   await expect(page.getByText('Saved on device')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() =>
     Object.keys(window.localStorage).some((key) => key.startsWith('project-tracker:offline-operations:v1:')))).toBe(false);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(0);
+
+  uploadedStoragePaths.length = 0;
+  await page.getByRole('tab', { name: 'Inspections' }).click();
+  await page.getByRole('button', { name: 'Add inspection' }).click();
+  await page.getByRole('dialog', { name: 'Add inspection' }).getByRole('button', { name: 'Cancel' }).click();
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Add inspection' }).click();
+  const inspectionDialog = page.getByRole('dialog', { name: 'Add inspection' });
+  await inspectionDialog.getByLabel('Subcode').selectOption('FOOT-101');
+  await inspectionDialog.getByLabel('Inspection type').fill('Footing inspection');
+  await inspectionDialog.getByLabel('Status').selectOption('failed');
+  await inspectionDialog.getByLabel('Inspection sticker photo').setInputFiles({
+    name: 'offline-sticker.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('offline-sticker-content'),
+  });
+  await inspectionDialog.getByLabel('Failed inspection report').setInputFiles({
+    name: 'offline-report.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('offline-report-content'),
+  });
+  await inspectionDialog.getByRole('button', { name: 'Save inspection' }).click();
+
+  await expect(page.getByText('offline-sticker.jpg')).toBeVisible();
+  await expect(page.getByText('offline-report.pdf')).toBeVisible();
+  await expect(page.getByText('Saved on device').first()).toBeVisible();
+  expect(uploadedStoragePaths).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(2);
+
+  await context.setOffline(false);
+  await expect.poll(() => savedInspectionPayload?.p_inspection?.inspectionType || '', { timeout: 20_000 })
+    .toBe('Footing inspection');
+  await expect.poll(() => uploadedStoragePaths.length).toBe(2);
+  expect(savedInspectionPayload.p_inspection.stickerFile.storagePath).toContain('inspection-sticker');
+  expect(savedInspectionPayload.p_inspection.reportFile.storagePath).toContain('inspection-report');
+  await expect(page.getByText('Saved on device')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(0);
 });
