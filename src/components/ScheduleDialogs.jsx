@@ -119,7 +119,11 @@ export function ScheduleItemModal({
           {type === 'step' ? (
             <>
               <label>
-                <span>Start date</span>
+                <span>
+                  {(draft.predecessorOptions || []).some((option) => option.selected)
+                    ? 'No-sooner-than date'
+                    : 'Start date'}
+                </span>
                 <input
                   type="date"
                   value={draft.start}

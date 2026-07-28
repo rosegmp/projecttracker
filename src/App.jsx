@@ -172,14 +172,22 @@ function syncTabToLocation(tab, { push = false } = {}) {
   if (!validTabIds.has(tab)) return;
   updateCurrentUrl((url) => {
     url.searchParams.set('tab', tab);
-    if (tab !== 'projects') url.searchParams.delete('project');
+    if (tab !== 'projects') {
+      url.searchParams.delete('project');
+      url.searchParams.delete('projectTab');
+    }
   }, { push });
 }
 
 function syncProjectToLocation(projectId, { push = false } = {}) {
   updateCurrentUrl((url) => {
-    if (String(projectId || '').trim()) url.searchParams.set('project', String(projectId).trim());
+    const normalizedProjectId = String(projectId || '').trim();
+    const currentProjectId = String(url.searchParams.get('project') || '').trim();
+    if (normalizedProjectId) url.searchParams.set('project', normalizedProjectId);
     else url.searchParams.delete('project');
+    if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
+      url.searchParams.delete('projectTab');
+    }
   }, { push });
 }
 

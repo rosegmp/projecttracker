@@ -2726,6 +2726,7 @@ button.calendar-chip {
 }
 
 .settings-order-row {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -2733,6 +2734,47 @@ button.calendar-chip {
   padding: 14px 16px;
   border-radius: 16px;
   background: rgba(61, 66, 120, 0.04);
+}
+
+.settings-order-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 32px;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.settings-drag-handle:not([draggable='true']) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.settings-drag-handle:active {
+  cursor: grabbing;
+}
+
+.settings-order-row.is-dragging {
+  opacity: 0.55;
+}
+
+.settings-order-row.is-drag-over-before {
+  box-shadow: inset 0 3px 0 var(--brand);
+}
+
+.settings-order-row.is-drag-over-after {
+  box-shadow: inset 0 -3px 0 var(--brand);
 }
 
 .settings-order-actions {
@@ -6898,6 +6940,14 @@ button.calendar-chip {
   padding: 10px 0;
   border: 0;
   border-bottom: 1px solid var(--border);
+}
+
+.top-level-settings-page .settings-order-row.is-drag-over-before {
+  box-shadow: inset 0 3px 0 var(--brand);
+}
+
+.top-level-settings-page .settings-order-row.is-drag-over-after {
+  box-shadow: inset 0 -3px 0 var(--brand);
 }
 
 .top-level-tasks-page > .panel-actions,

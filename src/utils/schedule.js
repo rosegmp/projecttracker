@@ -391,10 +391,15 @@ export function cascadeStepDates(phase, settings, skipId = null) {
     const step = steps.find((item) => item.id === stepId);
     if (!step) return;
     const predecessors = normalizePreds(step.predecessors);
-    if (!predecessors.length) return;
+    if (!predecessors.length) {
+      step.notBefore = '';
+      return;
+    }
     const requiredStart = calcStepFirstAvailable(phase, predecessors, settings);
-    step.start = requiredStart;
-    step.end = computeStepEndDate(requiredStart, step.duration || 1, settings);
+    const noSoonerThan = normalizeStartDate(step.notBefore || '', settings);
+    const scheduledStart = noSoonerThan && noSoonerThan > requiredStart ? noSoonerThan : requiredStart;
+    step.start = scheduledStart;
+    step.end = computeStepEndDate(scheduledStart, step.duration || 1, settings);
   });
 }
 

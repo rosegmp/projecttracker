@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-07-27
+Updated: 2026-07-28
 
 ## Working copy
 
@@ -225,6 +225,26 @@ Updated: 2026-07-27
 - Netlify production deploy `6a67d519f5fe5e0007491134` is ready for exact commit `605edb5a9065a7a1523329cf9a349e396343aed3`. The deploy published to `https://projecthub.destinyhomesnj.com`, and Netlify's enhanced secret scan found no matches.
 - A direct production request returned HTTP 200 and served release assets `assets/index-OVdxd-0-.js` and `assets/index-DMp8Fw3w.css`.
 - No database migration or Edge Function deployment was required for this release. The remaining release validation is the physical Android-device smoke test for the launcher shortcuts, camera intents, inbound photo sharing, and Project Files Open/Share actions.
+
+### Schedule-step no-sooner-than date checkpoint
+
+- When a schedule step uses predecessors, a date explicitly set by the user is now persisted separately as `notBefore`. Recalculation schedules the step on the later of that date or the predecessor-derived first available workday.
+- The constraint remains stable when a predecessor moves later and then earlier, avoiding both premature scheduling and a calculated date becoming unintentionally sticky. Steps without predecessors retain normal Start date behavior, and legacy dependent steps do not gain a constraint merely because they were opened and saved.
+- Both the top-level Schedule editor and the project-detail schedule editor support the behavior. The date label changes to **No-sooner-than date** while a predecessor is selected.
+- Verification passes within the combined 133-test local checkpoint below. No database migration is required because normalized schedule-step records already persist their extensible JSON data.
+- This checkpoint is local and not yet committed or deployed. Capacitor sync, Gradle, and APK generation remain deferred.
+
+### Administrator-controlled project tab order checkpoint
+
+- **Settings → Display preferences → Project workspace navigation** now lists visible tabs in their saved order and provides accessible up/down controls. Hidden tabs remain listed after visible tabs and are appended to the visible order when enabled.
+- **Overview is permanently pinned in position 1**. Normalization repairs legacy or malformed settings that place it elsewhere, and the Settings controls cannot move another tab ahead of it. All other visible tabs, including required Portal, can be reordered.
+- Customer and Subcontractor allowlists filter the administrator-defined sequence without reverting to the application default order. Visibility and ordering continue to persist together in the existing `visibleProjectTabs` settings array, so no database migration is required.
+- Visible project tabs and People list columns can now also be reordered by dragging the Fluent drag handle. The insertion marker follows the pointer above or below each valid destination; hidden items do not participate until enabled.
+- The existing up/down controls remain available as the keyboard, touch, and accessibility fallback. Dragging Overview is disabled, and the shared reorder utility independently prevents Overview from leaving position 1.
+- Project-detail tab buttons now render directly from that filtered ordered sequence, so the saved order controls both visual and keyboard navigation order rather than only the settings data.
+- The active project tab is stored in the URL as `projectTab` and restored after a page refresh when the tab remains authorized and visible. Hidden, invalid, or role-disallowed values safely fall back to Overview (or Portal for a Subcontractor); leaving Projects or switching projects clears the stale parameter.
+- Combined checkpoint verification passes all 135 regression tests, the 683-module production build, JavaScript syntax checks, and `git diff --check`.
+- This checkpoint is local and not yet committed or deployed. Capacitor sync, Gradle, and APK generation remain deferred.
 
 ## Completed priority: Takeoff integration
 

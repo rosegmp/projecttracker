@@ -85,6 +85,7 @@ import {
   getVisibleProjectTabs,
   normalizeVisibleProjectTabs,
 } from '../src/utils/projectTabs.js';
+import { reorderSettingIds } from '../src/utils/settingsOrder.js';
 import {
   hydrateNormalizedTakeoff,
   splitTakeoffSnapshot,
@@ -232,6 +233,10 @@ const tests = [
       assert.deepEqual(normalizeVisibleProjectTabs(['tasks', 'files']), ['overview', 'portal', 'tasks', 'files']);
       assert.deepEqual(normalizeVisibleProjectTabs(['unknown', 'photos', 'photos']), ['overview', 'portal', 'photos']);
       assert.deepEqual(
+        normalizeVisibleProjectTabs(['files', 'overview', 'tasks', 'portal']),
+        ['overview', 'files', 'tasks', 'portal'],
+      );
+      assert.deepEqual(
         getVisibleProjectTabs(['overview', 'portal', 'tasks', 'calendar', 'files'], 'Customer').map((tab) => tab.id),
         ['overview', 'portal', 'calendar', 'files'],
       );
@@ -239,6 +244,75 @@ const tests = [
         getVisibleProjectTabs(['overview', 'portal', 'tasks', 'files'], 'Subcontractor').map((tab) => tab.id),
         ['portal', 'files'],
       );
+      assert.deepEqual(
+        getVisibleProjectTabs(['files', 'calendar', 'portal', 'overview', 'tasks'], 'Customer').map((tab) => tab.id),
+        ['overview', 'files', 'calendar', 'portal'],
+      );
+    },
+  },
+  {
+    name: 'administrator project navigation settings expose ordered tab controls',
+    async run() {
+      const settingsSource = await readFile(
+        new URL('../src/components/NativeSettingsView.jsx', import.meta.url),
+        'utf8',
+      );
+      assert.match(settingsSource, /function moveProjectTab\(tabId, direction\)/);
+      assert.match(settingsSource, /if \(index < 0 \|\| tabId === 'overview'\) return/);
+      assert.match(settingsSource, /settings\.visibleProjectTabs[\s\S]*PROJECT_TAB_DEFS\.filter/);
+      assert.match(settingsSource, /Move \$\{tab\.label\} up/);
+      assert.match(settingsSource, /Move \$\{tab\.label\} down/);
+      assert.match(settingsSource, /Position \$\{orderIndex \+ 1\}/);
+    },
+  },
+  {
+    name: 'settings drag reorder preserves pinned items and supports columns',
+    async run() {
+      assert.deepEqual(
+        reorderSettingIds(['overview', 'tasks', 'files', 'photos'], 'photos', 'tasks', 'before', { pinnedFirstId: 'overview' }),
+        ['overview', 'photos', 'tasks', 'files'],
+      );
+      assert.deepEqual(
+        reorderSettingIds(['overview', 'tasks', 'files'], 'files', 'overview', 'before', { pinnedFirstId: 'overview' }),
+        ['overview', 'files', 'tasks'],
+      );
+      assert.deepEqual(
+        reorderSettingIds(['overview', 'tasks', 'files'], 'overview', 'files', 'after', { pinnedFirstId: 'overview' }),
+        ['overview', 'tasks', 'files'],
+      );
+      assert.deepEqual(
+        reorderSettingIds(['name', 'company', 'email'], 'name', 'email', 'after'),
+        ['company', 'email', 'name'],
+      );
+
+      const settingsSource = await readFile(
+        new URL('../src/components/NativeSettingsView.jsx', import.meta.url),
+        'utf8',
+      );
+      const stylesSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+      assert.match(settingsSource, /function startSettingsDrag\(event, kind, itemId, enabled\)/);
+      assert.match(settingsSource, /dropSettingsItem\(event, 'project-tab'/);
+      assert.match(settingsSource, /dropSettingsItem\(event, 'people-column'/);
+      assert.match(settingsSource, /draggable=\{visible && !projectTabsSaving && tab\.id !== 'overview'\}/);
+      assert.match(settingsSource, /className="settings-drag-handle"/);
+      assert.match(stylesSource, /\.settings-order-row\.is-drag-over-before/);
+      assert.match(stylesSource, /\.settings-order-row\.is-drag-over-after/);
+    },
+  },
+  {
+    name: 'project tabs render in configured order and survive page refresh',
+    async run() {
+      const [detailSource, appSource, projectsSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(detailSource, /getSearchParam\('projectTab'\)/);
+      assert.match(detailSource, /url\.searchParams\.set\('projectTab', activeDetailTab\)/);
+      assert.match(detailSource, /visibleProjectTabs\.map\(\(tab\) =>/);
+      assert.match(detailSource, /id=\{`project-tab-\$\{tab\.id\}`\}/);
+      assert.match(appSource, /url\.searchParams\.delete\('projectTab'\)/);
+      assert.match(projectsSource, /url\.searchParams\.delete\('projectTab'\)/);
     },
   },
   {
@@ -2221,6 +2295,44 @@ const tests = [
     },
   },
   {
+    name: 'cascadeStepDates treats a dependent step date as a no-sooner-than constraint',
+    run() {
+      const phase = {
+        start: '2026-05-18',
+        steps: [
+          { id: 'a', name: 'Layout', start: '2026-05-18', duration: 2, end: '2026-05-19', predecessors: [] },
+          {
+            id: 'b',
+            name: 'Framing',
+            start: '2026-06-01',
+            notBefore: '2026-06-01',
+            duration: 2,
+            end: '2026-06-02',
+            predecessors: [{ id: 'a', lag: 0 }],
+          },
+        ],
+      };
+
+      cascadeStepDates(phase, weekdaySettings);
+      assert.equal(phase.steps[1].start, '2026-06-01');
+      assert.equal(phase.steps[1].end, '2026-06-02');
+
+      phase.steps[0].end = '2026-06-03';
+      cascadeStepDates(phase, weekdaySettings);
+      assert.equal(phase.steps[1].start, '2026-06-04');
+      assert.equal(phase.steps[1].end, '2026-06-05');
+
+      phase.steps[0].end = '2026-05-19';
+      cascadeStepDates(phase, weekdaySettings);
+      assert.equal(phase.steps[1].start, '2026-06-01');
+      assert.equal(phase.steps[1].end, '2026-06-02');
+
+      phase.steps[1].predecessors = [];
+      cascadeStepDates(phase, weekdaySettings);
+      assert.equal(phase.steps[1].notBefore, '');
+    },
+  },
+  {
     name: 'applyDelayToStep extends duration and recomputes end date',
     run() {
       const step = {
@@ -3101,15 +3213,16 @@ const tests = [
   {
     name: 'RFIs and submittals are project-scoped construction workflows',
     async run() {
-      const [detailSource, managerSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+      const [detailSource, managerSource, serviceSource, migrationSource, styleSource, projectTabsSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectRfiSubmittalsManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260720140000_add_rfis_and_submittals.sql', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/projectTabs.js', import.meta.url), 'utf8'),
       ]);
       assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectRfiSubmittalsManager\.jsx'\)\)/);
-      assert.match(detailSource, /RFIs &amp; Submittals/);
+      assert.match(projectTabsSource, /label: 'RFIs & Submittals'/);
       assert.match(detailSource, /activeDetailTab === 'rfis-submittals'/);
       assert.match(managerSource, /service\.list\('rfis'\)/);
       assert.match(managerSource, /service\.list\('submittals'\)/);
@@ -3135,15 +3248,16 @@ const tests = [
   {
     name: 'budget items and commitments are project-scoped financial workflows',
     async run() {
-      const [detailSource, managerSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+      const [detailSource, managerSource, serviceSource, migrationSource, styleSource, projectTabsSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260720170000_add_budget_and_commitments.sql', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/projectTabs.js', import.meta.url), 'utf8'),
       ]);
       assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectBudgetCommitmentsManager\.jsx'\)\)/);
-      assert.match(detailSource, /Budget &amp; Commitments/);
+      assert.match(projectTabsSource, /label: 'Budget & Commitments'/);
       assert.match(detailSource, /activeDetailTab === 'budget-commitments'/);
       assert.match(managerSource, /service\.list\('budgetItems'\)/);
       assert.match(managerSource, /service\.list\('commitments'\)/);
@@ -3168,15 +3282,16 @@ const tests = [
   {
     name: 'warranty and closeout are project-scoped completion workflows',
     async run() {
-      const [detailSource, managerSource, serviceSource, migrationSource, customerMigrationSource] = await Promise.all([
+      const [detailSource, managerSource, serviceSource, migrationSource, customerMigrationSource, projectTabsSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectWarrantyCloseoutManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260721000000_add_warranty_and_closeout.sql', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260721120000_allow_customer_warranty_requests.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/projectTabs.js', import.meta.url), 'utf8'),
       ]);
       assert.match(detailSource, /lazy\(\(\) => import\('\.\/ProjectWarrantyCloseoutManager\.jsx'\)\)/);
-      assert.match(detailSource, /Warranty &amp; Closeout/);
+      assert.match(projectTabsSource, /label: 'Warranty & Closeout'/);
       assert.match(detailSource, /activeDetailTab === 'warranty-closeout'/);
       assert.match(managerSource, /service\.list\('warrantyItems'\)/);
       assert.match(managerSource, /service\.list\('closeoutItems'\)/);

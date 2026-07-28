@@ -3,6 +3,7 @@ import { downloadProjectFileFromStorage, loadAuditEvents } from '../services/tra
 import { buildAuditTrailEntries } from '../utils/auditTrail.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
+import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
 import FluentIcon from './FluentIcon.jsx';
 
 const NativeInspectionsView = lazy(() => import('./NativeInspectionsView.jsx'));
@@ -137,7 +138,10 @@ export default function ProjectDetailView({
     [visibleProjectTabs],
   );
   const defaultProjectTabId = visibleProjectTabs[0]?.id || (subcontractorReadOnly ? 'portal' : 'overview');
-  const [activeDetailTab, setActiveDetailTab] = useState(defaultProjectTabId);
+  const [activeDetailTab, setActiveDetailTab] = useState(() => {
+    const requestedTab = String(getSearchParam('projectTab') || '').trim();
+    return visibleProjectTabs.some((tab) => tab.id === requestedTab) ? requestedTab : defaultProjectTabId;
+  });
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
   const [lastActivity, setLastActivity] = useState(null);
@@ -148,12 +152,26 @@ export default function ProjectDetailView({
       : 'Not set';
 
   useEffect(() => {
-    setActiveDetailTab(subcontractorReadOnly ? 'portal' : 'overview');
-  }, [subcontractorReadOnly, project.id]);
+    const requestedTab = String(getSearchParam('projectTab') || '').trim();
+    const fallbackTab = subcontractorReadOnly && visibleProjectTabIds.has('portal')
+      ? 'portal'
+      : visibleProjectTabIds.has('overview')
+        ? 'overview'
+        : defaultProjectTabId;
+    setActiveDetailTab(visibleProjectTabIds.has(requestedTab) ? requestedTab : fallbackTab);
+  }, [defaultProjectTabId, project.id, subcontractorReadOnly, visibleProjectTabIds]);
 
   useEffect(() => {
     if (!visibleProjectTabIds.has(activeDetailTab)) setActiveDetailTab(defaultProjectTabId);
   }, [activeDetailTab, defaultProjectTabId, visibleProjectTabIds]);
+
+  useEffect(() => {
+    if (!visibleProjectTabIds.has(activeDetailTab)) return;
+    updateCurrentUrl((url) => {
+      if (String(url.searchParams.get('project') || '').trim() !== String(project.id || '').trim()) return;
+      url.searchParams.set('projectTab', activeDetailTab);
+    });
+  }, [activeDetailTab, project.id, visibleProjectTabIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,188 +279,24 @@ export default function ProjectDetailView({
           tabs[nextIndex]?.click();
         }}
       >
-        <button
-          id="project-tab-overview"
-          hidden={!visibleProjectTabIds.has('overview')}
-          className={`react-tab${activeDetailTab === 'overview' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'overview' ? 'true' : 'false'}
-          aria-controls="project-panel-overview"
-          tabIndex={activeDetailTab === 'overview' ? 0 : -1}
-          onClick={() => setActiveDetailTab('overview')}
-        >
-          Overview
-        </button>
-        <button
-          id="project-tab-portal"
-          hidden={!visibleProjectTabIds.has('portal')}
-          className={`react-tab${activeDetailTab === 'portal' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'portal' ? 'true' : 'false'}
-          aria-controls="project-panel-portal"
-          tabIndex={activeDetailTab === 'portal' ? 0 : -1}
-          onClick={() => setActiveDetailTab('portal')}
-        >
-          Portal
-        </button>
-        <button
-          id="project-tab-tasks"
-          hidden={!visibleProjectTabIds.has('tasks')}
-          className={`react-tab${activeDetailTab === 'tasks' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'tasks' ? 'true' : 'false'}
-          aria-controls="project-panel-tasks"
-          tabIndex={activeDetailTab === 'tasks' ? 0 : -1}
-          onClick={() => setActiveDetailTab('tasks')}
-        >
-          Tasks
-        </button>
-        <button
-          id="project-tab-calendar"
-          hidden={!visibleProjectTabIds.has('calendar')}
-          className={`react-tab${activeDetailTab === 'calendar' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'calendar' ? 'true' : 'false'}
-          aria-controls="project-panel-calendar"
-          tabIndex={activeDetailTab === 'calendar' ? 0 : -1}
-          onClick={() => setActiveDetailTab('calendar')}
-        >
-          Calendar
-        </button>
-        <button
-          id="project-tab-inspections"
-          hidden={!visibleProjectTabIds.has('inspections')}
-          className={`react-tab${activeDetailTab === 'inspections' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'inspections' ? 'true' : 'false'}
-          aria-controls="project-panel-inspections"
-          tabIndex={activeDetailTab === 'inspections' ? 0 : -1}
-          onClick={() => setActiveDetailTab('inspections')}
-        >
-          Inspections
-        </button>
-        <button
-          id="project-tab-selections"
-          hidden={!visibleProjectTabIds.has('selections')}
-          className={`react-tab${activeDetailTab === 'selections' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'selections' ? 'true' : 'false'}
-          aria-controls="project-panel-selections"
-          tabIndex={activeDetailTab === 'selections' ? 0 : -1}
-          onClick={() => setActiveDetailTab('selections')}
-        >
-          Selections
-        </button>
-        <button
-          id="project-tab-daily-logs"
-          hidden={!visibleProjectTabIds.has('daily-logs')}
-          className={`react-tab${activeDetailTab === 'daily-logs' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'daily-logs' ? 'true' : 'false'}
-          aria-controls="project-panel-daily-logs"
-          tabIndex={activeDetailTab === 'daily-logs' ? 0 : -1}
-          onClick={() => setActiveDetailTab('daily-logs')}
-        >
-          Daily Logs
-        </button>
-        <button
-          id="project-tab-change-orders"
-          hidden={!visibleProjectTabIds.has('change-orders')}
-          className={`react-tab${activeDetailTab === 'change-orders' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'change-orders' ? 'true' : 'false'}
-          aria-controls="project-panel-change-orders"
-          tabIndex={activeDetailTab === 'change-orders' ? 0 : -1}
-          onClick={() => setActiveDetailTab('change-orders')}
-        >
-          Change Orders
-        </button>
-        <button
-          id="project-tab-rfis-submittals"
-          hidden={!visibleProjectTabIds.has('rfis-submittals')}
-          className={`react-tab${activeDetailTab === 'rfis-submittals' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'rfis-submittals' ? 'true' : 'false'}
-          aria-controls="project-panel-rfis-submittals"
-          tabIndex={activeDetailTab === 'rfis-submittals' ? 0 : -1}
-          onClick={() => setActiveDetailTab('rfis-submittals')}
-        >
-          RFIs &amp; Submittals
-        </button>
-        <button
-          id="project-tab-budget-commitments"
-          hidden={!visibleProjectTabIds.has('budget-commitments')}
-          className={`react-tab${activeDetailTab === 'budget-commitments' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'budget-commitments' ? 'true' : 'false'}
-          aria-controls="project-panel-budget-commitments"
-          tabIndex={activeDetailTab === 'budget-commitments' ? 0 : -1}
-          onClick={() => setActiveDetailTab('budget-commitments')}
-        >
-          Budget &amp; Commitments
-        </button>
-        <button
-          id="project-tab-warranty-closeout"
-          hidden={!visibleProjectTabIds.has('warranty-closeout')}
-          className={`react-tab${activeDetailTab === 'warranty-closeout' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'warranty-closeout' ? 'true' : 'false'}
-          aria-controls="project-panel-warranty-closeout"
-          tabIndex={activeDetailTab === 'warranty-closeout' ? 0 : -1}
-          onClick={() => setActiveDetailTab('warranty-closeout')}
-        >
-          {customerReadOnly ? 'Warranty' : <>Warranty &amp; Closeout</>}
-        </button>
-        <button
-          id="project-tab-takeoff"
-          hidden={!visibleProjectTabIds.has('takeoff')}
-          className={`react-tab${activeDetailTab === 'takeoff' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'takeoff' ? 'true' : 'false'}
-          aria-controls="project-panel-takeoff"
-          tabIndex={activeDetailTab === 'takeoff' ? 0 : -1}
-          onClick={() => setActiveDetailTab('takeoff')}
-        >
-          Takeoff
-        </button>
-        <button
-          id="project-tab-files"
-          hidden={!visibleProjectTabIds.has('files')}
-          className={`react-tab${activeDetailTab === 'files' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'files' ? 'true' : 'false'}
-          aria-controls="project-panel-files"
-          tabIndex={activeDetailTab === 'files' ? 0 : -1}
-          onClick={() => setActiveDetailTab('files')}
-        >
-          Files
-        </button>
-        <button
-          id="project-tab-photos"
-          hidden={!visibleProjectTabIds.has('photos')}
-          className={`react-tab${activeDetailTab === 'photos' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeDetailTab === 'photos' ? 'true' : 'false'}
-          aria-controls="project-panel-photos"
-          tabIndex={activeDetailTab === 'photos' ? 0 : -1}
-          onClick={() => setActiveDetailTab('photos')}
-        >
-          Photos
-        </button>
+        {visibleProjectTabs.map((tab) => {
+          const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
+          return (
+            <button
+              key={tab.id}
+              id={`project-tab-${tab.id}`}
+              className={`react-tab${activeDetailTab === tab.id ? ' active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={activeDetailTab === tab.id ? 'true' : 'false'}
+              aria-controls={`project-panel-${tab.id}`}
+              tabIndex={activeDetailTab === tab.id ? 0 : -1}
+              onClick={() => setActiveDetailTab(tab.id)}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {activeDetailTab === 'overview' ? (

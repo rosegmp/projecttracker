@@ -29,19 +29,31 @@ const CUSTOMER_PROJECT_TABS = new Set([
 const SUBCONTRACTOR_PROJECT_TABS = new Set(['portal', 'selections', 'files']);
 
 export function normalizeVisibleProjectTabs(value) {
-  const requested = Array.isArray(value) ? new Set(value.map((tabId) => String(tabId || '').trim())) : null;
-  return PROJECT_TAB_DEFS
-    .filter((tab) => tab.required || !requested || requested.has(tab.id))
+  if (!Array.isArray(value)) return [...DEFAULT_VISIBLE_PROJECT_TABS];
+
+  const knownIds = new Set(PROJECT_TAB_DEFS.map((tab) => tab.id));
+  const requested = [];
+  value.forEach((tabId) => {
+    const normalizedId = String(tabId || '').trim();
+    if (normalizedId === 'overview' || !knownIds.has(normalizedId) || requested.includes(normalizedId)) return;
+    requested.push(normalizedId);
+  });
+
+  const missingRequired = PROJECT_TAB_DEFS
+    .filter((tab) => tab.required && tab.id !== 'overview' && !requested.includes(tab.id))
     .map((tab) => tab.id);
+  return ['overview', ...missingRequired, ...requested];
 }
 
 export function getVisibleProjectTabs(value, role = '') {
-  const configured = new Set(normalizeVisibleProjectTabs(value));
+  const definitions = new Map(PROJECT_TAB_DEFS.map((tab) => [tab.id, tab]));
   const roleAllowlist =
     role === 'Customer'
       ? CUSTOMER_PROJECT_TABS
       : role === 'Subcontractor'
         ? SUBCONTRACTOR_PROJECT_TABS
         : null;
-  return PROJECT_TAB_DEFS.filter((tab) => configured.has(tab.id) && (!roleAllowlist || roleAllowlist.has(tab.id)));
+  return normalizeVisibleProjectTabs(value)
+    .map((tabId) => definitions.get(tabId))
+    .filter((tab) => tab && (!roleAllowlist || roleAllowlist.has(tab.id)));
 }

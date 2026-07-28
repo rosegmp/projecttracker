@@ -769,10 +769,12 @@ export default function NativeScheduleView({
       name: row.label,
       assignees: getScheduleAssignees(row),
       status: row.status || 'planning',
-      start: row.start || '',
+      start: step?.notBefore || row.start || '',
+      notBefore: step?.notBefore || '',
+      startEdited: false,
       duration: row.duration || 1,
-      endPreview: row.start
-        ? computeStepEndDate(row.start, row.duration || 1, data.settings)
+      endPreview: (step?.notBefore || row.start)
+        ? computeStepEndDate(step?.notBefore || row.start, row.duration || 1, data.settings)
         : row.end || '',
       predecessorOptions: buildStepDependencyOptions(
         row.parentProjectId,
@@ -854,6 +856,8 @@ export default function NativeScheduleView({
       status: 'planning',
       color: getNextTaskColor(state.projects),
       start,
+      notBefore: '',
+      startEdited: Boolean(startOverride),
       duration: 1,
       endPreview: start ? computeStepEndDate(start, 1, state.settings) : '',
       predecessorOptions: buildStepDependencyOptions(projectId, phaseId, '', [], state.projects),
@@ -1542,6 +1546,9 @@ export default function NativeScheduleView({
       if (next.type === 'step' && (field === 'start' || field === 'duration')) {
         next.autoStart = false;
       }
+      if (next.type === 'step' && field === 'start') {
+        next.startEdited = true;
+      }
       if (
         next.type === 'step' &&
         ((field === 'start' || field === 'duration') || (next.mode === 'create' && next.autoStart && (field === 'projectId' || field === 'phaseId')))
@@ -1800,6 +1807,15 @@ export default function NativeScheduleView({
           : null;
       const isMovingStep =
         editorDraft.mode === 'edit' && (targetProjectId !== sourceProjectId || targetPhaseId !== sourcePhaseId);
+      const nextPredecessors = (editorDraft.predecessorOptions || [])
+        .filter((option) => option.selected)
+        .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+      const noSoonerThan = nextPredecessors.length
+        ? normalizeStartDate(
+            editorDraft.startEdited ? editorDraft.start : editorDraft.notBefore || '',
+            data.settings,
+          )
+        : '';
       const nextStep = {
         ...(existingStep || {}),
         id: editorDraft.mode === 'create' ? `s${Date.now()}` : editorDraft.stepId,
@@ -1809,11 +1825,10 @@ export default function NativeScheduleView({
         color: editorDraft.color || TASK_COLOR_PALETTE[0],
         done: editorDraft.status === 'done',
         start: editorDraft.start || '',
+        notBefore: noSoonerThan,
         duration: Math.max(1, Number(editorDraft.duration) || 1),
         end: editorDraft.start ? editorDraft.endPreview || '' : '',
-        predecessors: (editorDraft.predecessorOptions || [])
-          .filter((option) => option.selected)
-          .map((option) => ({ id: option.id, lag: option.lag || 0 })),
+        predecessors: nextPredecessors,
       };
       if (isMovingStep) {
         nextStep.successors = [];

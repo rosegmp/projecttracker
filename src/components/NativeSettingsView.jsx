@@ -17,6 +17,7 @@ import { buildProjectAccessUpdates } from '../utils/accessUi.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { normalizeVisibleTopLevelTabs, TOP_LEVEL_TAB_DEFS } from '../utils/navigationTabs.js';
 import { normalizeVisibleProjectTabs, PROJECT_TAB_DEFS } from '../utils/projectTabs.js';
+import { reorderSettingIds } from '../utils/settingsOrder.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
@@ -222,6 +223,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [auditHasMore, setAuditHasMore] = useState(false);
   const [auditProjectFilter, setAuditProjectFilter] = useState('');
   const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
+  const [settingsDrag, setSettingsDrag] = useState(null);
   const [schedulingDraft, setSchedulingDraft] = useState(() => ({
     weekdaysOnly: !!data.settings?.weekdaysOnly,
     showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (data.settings?.showTaskDueDates !== false),
@@ -643,6 +645,17 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     runSettingsMutation({ visibleProjectTabs: normalizeVisibleProjectTabs(next) });
   }
 
+  function moveProjectTab(tabId, direction) {
+    const current = normalizeVisibleProjectTabs(settings.visibleProjectTabs);
+    const index = current.indexOf(tabId);
+    if (index < 0 || tabId === 'overview') return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 1 || targetIndex >= current.length) return;
+    const next = [...current];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    runSettingsMutation({ visibleProjectTabs: next });
+  }
+
   function movePeopleColumn(columnId, direction) {
     const current = [...settings.peopleListColumns];
     const index = current.indexOf(columnId);
@@ -652,6 +665,49 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     const next = [...current];
     [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
     runSettingsMutation({ peopleListColumns: next });
+  }
+
+  function startSettingsDrag(event, kind, itemId, enabled) {
+    if (!enabled) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', itemId);
+    setSettingsDrag({ kind, sourceId: itemId, targetId: '', position: 'before' });
+  }
+
+  function updateSettingsDropTarget(event, kind, targetId, enabled) {
+    if (!enabled || !settingsDrag || settingsDrag.kind !== kind || settingsDrag.sourceId === targetId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const bounds = event.currentTarget.getBoundingClientRect();
+    let position = event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
+    if (kind === 'project-tab' && targetId === 'overview') position = 'after';
+    if (settingsDrag.targetId === targetId && settingsDrag.position === position) return;
+    setSettingsDrag((current) => current ? { ...current, targetId, position } : current);
+  }
+
+  function dropSettingsItem(event, kind, targetId, enabled) {
+    if (!enabled || !settingsDrag || settingsDrag.kind !== kind || settingsDrag.sourceId === targetId) return;
+    event.preventDefault();
+    const { sourceId, position } = settingsDrag;
+    setSettingsDrag(null);
+    if (kind === 'project-tab') {
+      const current = normalizeVisibleProjectTabs(settings.visibleProjectTabs);
+      const next = reorderSettingIds(current, sourceId, targetId, position, { pinnedFirstId: 'overview' });
+      if (next.join('|') !== current.join('|')) runSettingsMutation({ visibleProjectTabs: next });
+      return;
+    }
+    const current = settings.peopleListColumns.filter((item) =>
+      PEOPLE_LIST_COLUMN_DEFS.some((column) => column.id === item),
+    );
+    const next = reorderSettingIds(current, sourceId, targetId, position);
+    if (next.join('|') !== current.join('|')) runSettingsMutation({ peopleListColumns: next });
+  }
+
+  function endSettingsDrag() {
+    setSettingsDrag(null);
   }
 
   function handleTogglePeopleBold(columnId, enabled) {
@@ -1798,26 +1854,76 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               <div className="settings-card-header">
                 <div>
                   <h3>Project workspace navigation</h3>
-                  <p>Choose sections shown inside each project. Customer and Subcontractor role restrictions still apply.</p>
+                  <p>Choose sections shown inside each project and arrange their tab order. Overview always remains first. Customer and Subcontractor role restrictions still apply.</p>
                 </div>
               </div>
               {projectTabsSaving ? <div className="mutation-status" role="status">Saving project navigation settings...</div> : null}
               <div className="settings-order-list">
-                {PROJECT_TAB_DEFS.map((tab) => {
+                {[
+                  ...settings.visibleProjectTabs
+                    .map((tabId) => PROJECT_TAB_DEFS.find((tab) => tab.id === tabId))
+                    .filter(Boolean),
+                  ...PROJECT_TAB_DEFS.filter((tab) => !settings.visibleProjectTabs.includes(tab.id)),
+                ].map((tab) => {
                   const visible = settings.visibleProjectTabs.includes(tab.id);
+                  const orderIndex = settings.visibleProjectTabs.indexOf(tab.id);
                   return (
-                    <label key={tab.id} className="settings-toggle">
-                      <input
-                        type="checkbox"
-                        checked={visible}
-                        onChange={(event) => handleToggleProjectTab(tab.id, event.target.checked)}
-                        disabled={projectTabsSaving || tab.required}
-                      />
-                      <span>
-                        <strong>{tab.label}</strong>
-                        <small>{tab.required ? `${tab.description} This tab is required.` : tab.description}</small>
-                      </span>
-                    </label>
+                    <div
+                      key={tab.id}
+                      className={`settings-order-row${settingsDrag?.kind === 'project-tab' && settingsDrag.sourceId === tab.id ? ' is-dragging' : ''}${settingsDrag?.kind === 'project-tab' && settingsDrag.targetId === tab.id ? ` is-drag-over-${settingsDrag.position}` : ''}`}
+                      onDragOver={(event) => updateSettingsDropTarget(event, 'project-tab', tab.id, visible && !projectTabsSaving)}
+                      onDrop={(event) => dropSettingsItem(event, 'project-tab', tab.id, visible && !projectTabsSaving)}
+                    >
+                      <div className="settings-order-main">
+                        <span
+                          className="settings-drag-handle"
+                          draggable={visible && !projectTabsSaving && tab.id !== 'overview'}
+                          onDragStart={(event) => startSettingsDrag(event, 'project-tab', tab.id, visible && !projectTabsSaving && tab.id !== 'overview')}
+                          onDragEnd={endSettingsDrag}
+                          title={tab.id === 'overview' ? 'Overview always remains first' : visible ? `Drag ${tab.label} to reorder` : 'Enable this tab before reordering it'}
+                          aria-hidden="true"
+                        >
+                          <FluentIcon name="drag" />
+                        </span>
+                        <label className="settings-toggle compact">
+                          <input
+                            type="checkbox"
+                            checked={visible}
+                            onChange={(event) => handleToggleProjectTab(tab.id, event.target.checked)}
+                            disabled={projectTabsSaving || tab.required}
+                          />
+                          <span>
+                            <strong>{tab.label}</strong>
+                            <small>
+                              {visible ? `Position ${orderIndex + 1}. ` : 'Hidden. '}
+                              {tab.required ? `${tab.description} This tab is required.` : tab.description}
+                            </small>
+                          </span>
+                        </label>
+                      </div>
+                      <div className="settings-order-actions">
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => moveProjectTab(tab.id, 'up')}
+                          disabled={projectTabsSaving || !visible || tab.id === 'overview' || orderIndex <= 1}
+                          title={`Move ${tab.label} up`}
+                          aria-label={`Move ${tab.label} up`}
+                        >
+                          <FluentIcon name="arrowUp" />
+                        </button>
+                        <button
+                          className="button secondary gantt-icon-button"
+                          type="button"
+                          onClick={() => moveProjectTab(tab.id, 'down')}
+                          disabled={projectTabsSaving || !visible || tab.id === 'overview' || orderIndex < 0 || orderIndex >= settings.visibleProjectTabs.length - 1}
+                          title={`Move ${tab.label} down`}
+                          aria-label={`Move ${tab.label} down`}
+                        >
+                          <FluentIcon name="arrowDown" />
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -1845,19 +1951,36 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   const visible = settings.peopleListColumns.includes(column.id);
                   const orderIndex = settings.peopleListColumns.indexOf(column.id);
                   return (
-                    <div key={column.id} className="settings-order-row">
-                      <label className="settings-toggle compact">
-                        <input
-                          type="checkbox"
-                          checked={visible}
-                          onChange={(event) => handleTogglePeopleColumn(column.id, event.target.checked)}
-                          disabled={peopleColumnsSaving}
-                        />
-                        <span>
-                          <strong>{column.label}</strong>
-                          <small>{visible ? `Position ${orderIndex + 1}` : 'Hidden'}</small>
+                    <div
+                      key={column.id}
+                      className={`settings-order-row${settingsDrag?.kind === 'people-column' && settingsDrag.sourceId === column.id ? ' is-dragging' : ''}${settingsDrag?.kind === 'people-column' && settingsDrag.targetId === column.id ? ` is-drag-over-${settingsDrag.position}` : ''}`}
+                      onDragOver={(event) => updateSettingsDropTarget(event, 'people-column', column.id, visible && !peopleColumnsSaving)}
+                      onDrop={(event) => dropSettingsItem(event, 'people-column', column.id, visible && !peopleColumnsSaving)}
+                    >
+                      <div className="settings-order-main">
+                        <span
+                          className="settings-drag-handle"
+                          draggable={visible && !peopleColumnsSaving}
+                          onDragStart={(event) => startSettingsDrag(event, 'people-column', column.id, visible && !peopleColumnsSaving)}
+                          onDragEnd={endSettingsDrag}
+                          title={visible ? `Drag ${column.label} to reorder` : 'Enable this column before reordering it'}
+                          aria-hidden="true"
+                        >
+                          <FluentIcon name="drag" />
                         </span>
-                      </label>
+                        <label className="settings-toggle compact">
+                          <input
+                            type="checkbox"
+                            checked={visible}
+                            onChange={(event) => handleTogglePeopleColumn(column.id, event.target.checked)}
+                            disabled={peopleColumnsSaving}
+                          />
+                          <span>
+                            <strong>{column.label}</strong>
+                            <small>{visible ? `Position ${orderIndex + 1}` : 'Hidden'}</small>
+                          </span>
+                        </label>
+                      </div>
                       <label className="settings-toggle compact settings-inline-checkbox">
                         <input
                           type="checkbox"

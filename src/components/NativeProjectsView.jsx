@@ -28,8 +28,13 @@ function getNextTaskColor(projects = []) { const count = projects.reduce((total,
 function getProjectIdFromLocation() { return String(getSearchParam('project') || '').trim(); }
 function syncProjectToLocation(projectId, { push = false } = {}) {
   updateCurrentUrl((url) => {
-    if (String(projectId || '').trim()) url.searchParams.set('project', String(projectId).trim());
+    const normalizedProjectId = String(projectId || '').trim();
+    const currentProjectId = String(url.searchParams.get('project') || '').trim();
+    if (normalizedProjectId) url.searchParams.set('project', normalizedProjectId);
     else url.searchParams.delete('project');
+    if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
+      url.searchParams.delete('projectTab');
+    }
   }, { push });
 }
 
@@ -366,6 +371,8 @@ export default function NativeProjectsView({
       status: 'planning',
       color: getNextTaskColor(state.projects),
       start,
+      notBefore: '',
+      startEdited: Boolean(startOverride),
       duration: 1,
       endPreview: start ? computeStepEndDate(start, 1, state.settings) : '',
       predecessorOptions: buildProjectStepDependencyOptions(projectId, phaseId, [], state.projects),
@@ -387,9 +394,13 @@ export default function NativeProjectsView({
       assignees: getScheduleAssignees(step),
       status: step.status || (step.done ? 'done' : 'planning'),
       color: step.color || TASK_COLOR_PALETTE[0],
-      start: step.start || '',
+      start: step.notBefore || step.start || '',
+      notBefore: step.notBefore || '',
+      startEdited: false,
       duration,
-      endPreview: step.start ? computeStepEndDate(step.start, duration, state.settings) : '',
+      endPreview: (step.notBefore || step.start)
+        ? computeStepEndDate(step.notBefore || step.start, duration, state.settings)
+        : '',
       predecessorOptions: buildProjectStepDependencyOptions(projectId, phaseId, step.predecessors, state.projects),
       autoStart: false,
     };
@@ -443,6 +454,7 @@ export default function NativeProjectsView({
       }
       if (field === 'start') {
         next.autoStart = false;
+        next.startEdited = true;
       }
       if (field === 'duration') {
         next.duration = Math.max(1, Number(value) || 1);
@@ -597,6 +609,15 @@ export default function NativeProjectsView({
       const sourceProject = data.projects.find((item) => item.id === sourceProjectId) || null;
       const isMovingStep =
         stepDraft.mode === 'edit' && (stepDraft.projectId !== sourceProjectId || stepDraft.phaseId !== sourcePhaseId);
+      const nextPredecessors = (stepDraft.predecessorOptions || [])
+        .filter((option) => option.selected)
+        .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+      const noSoonerThan = nextPredecessors.length
+        ? normalizeStartDate(
+            stepDraft.startEdited ? stepDraft.start : stepDraft.notBefore || '',
+            data.settings,
+          )
+        : '';
       const nextStep = {
         ...(existingStep || {}),
         id: stepDraft.mode === 'create' ? `s${Date.now()}` : stepDraft.stepId,
@@ -606,11 +627,10 @@ export default function NativeProjectsView({
         color: stepDraft.color || TASK_COLOR_PALETTE[0],
         done: stepDraft.status === 'done',
         start: stepDraft.start || '',
+        notBefore: noSoonerThan,
         duration: Math.max(1, Number(stepDraft.duration) || 1),
         end: stepDraft.start ? stepDraft.endPreview || '' : '',
-        predecessors: (stepDraft.predecessorOptions || [])
-          .filter((option) => option.selected)
-          .map((option) => ({ id: option.id, lag: option.lag || 0 })),
+        predecessors: nextPredecessors,
       };
       if (isMovingStep) {
         nextStep.successors = [];
