@@ -231,8 +231,8 @@ Updated: 2026-07-28
 - When a schedule step uses predecessors, a date explicitly set by the user is now persisted separately as `notBefore`. Recalculation schedules the step on the later of that date or the predecessor-derived first available workday.
 - The constraint remains stable when a predecessor moves later and then earlier, avoiding both premature scheduling and a calculated date becoming unintentionally sticky. Steps without predecessors retain normal Start date behavior, and legacy dependent steps do not gain a constraint merely because they were opened and saved.
 - Both the top-level Schedule editor and the project-detail schedule editor support the behavior. The date label changes to **No-sooner-than date** while a predecessor is selected.
-- Verification passes within the combined 133-test local checkpoint below. No database migration is required because normalized schedule-step records already persist their extensible JSON data.
-- This checkpoint is local and not yet committed or deployed. Capacitor sync, Gradle, and APK generation remain deferred.
+- Verification passes within the combined 135-test checkpoint below. No database migration is required because normalized schedule-step records already persist their extensible JSON data.
+- This checkpoint's original local-only state is superseded by the production release below.
 
 ### Administrator-controlled project tab order checkpoint
 
@@ -244,7 +244,15 @@ Updated: 2026-07-28
 - Project-detail tab buttons now render directly from that filtered ordered sequence, so the saved order controls both visual and keyboard navigation order rather than only the settings data.
 - The active project tab is stored in the URL as `projectTab` and restored after a page refresh when the tab remains authorized and visible. Hidden, invalid, or role-disallowed values safely fall back to Overview (or Portal for a Subcontractor); leaving Projects or switching projects clears the stale parameter.
 - Combined checkpoint verification passes all 135 regression tests, the 683-module production build, JavaScript syntax checks, and `git diff --check`.
-- This checkpoint is local and not yet committed or deployed. Capacitor sync, Gradle, and APK generation remain deferred.
+- This checkpoint's original local-only state is superseded by the production release below.
+
+### Schedule constraints and project navigation deployed
+
+- Commit `c19b5fd` (**Improve schedule constraints and project navigation**) was pushed to `origin/main` on 2026-07-28.
+- GitHub Actions run `30375090987` passed all three required jobs: Web build, tests, and audit; Supabase authorization tests; and Android sync and debug build. The Android job uploaded the current debug APK artifact.
+- Netlify production deploy `6a68cf0f11cf030008e197ed` is ready for exact commit `c19b5fdd974a28c98945880acee1458f7d38358d`. It published to `https://projecthub.destinyhomesnj.com` in 25 seconds, and enhanced secret scanning found no matches.
+- A direct production request returned HTTP 200 and served release assets `assets/index-DQCTdoy_.js` and `assets/index-rpXjAGvH.css`.
+- No Supabase migration or Edge Function deployment was required for this release.
 
 ## Completed priority: Takeoff integration
 
