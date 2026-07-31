@@ -81,11 +81,16 @@ import {
 } from '../src/utils/requestCorrelation.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../src/utils/navigationTabs.js';
 import {
+  findClosestSubcontractor,
+  normalizeSubcontractorName,
+} from '../src/utils/certificateMatching.js';
+import {
   DEFAULT_VISIBLE_PROJECT_TABS,
   getVisibleProjectTabs,
   normalizeVisibleProjectTabs,
 } from '../src/utils/projectTabs.js';
 import { reorderSettingIds } from '../src/utils/settingsOrder.js';
+import { buildTaskShareContent } from '../src/utils/taskSharing.js';
 import {
   hydrateNormalizedTakeoff,
   splitTakeoffSnapshot,
@@ -427,6 +432,39 @@ const tests = [
             { id: 'step-1', name: 'Frame walls', start: '2026-07-16', end: '2026-07-17' },
             { id: 'step-2', name: 'Set trusses', start: '2026-07-18', end: '2026-07-18' },
           ],
+        }],
+      }, {
+        id: 'p2',
+        name: 'Completed phase project',
+        status: 'active',
+        inspections: [],
+        phases: [{
+          id: 'phase-done',
+          name: 'Framing',
+          status: 'Done',
+          steps: [{ id: 'step-phase-done', name: 'Frame floors', start: '2026-05-01', status: 'delayed' }],
+        }],
+      }, {
+        id: 'p3',
+        name: 'Completed project',
+        status: 'completed',
+        inspections: [],
+        phases: [{
+          id: 'phase-open',
+          name: 'Closeout',
+          status: 'active',
+          steps: [{ id: 'step-project-done', name: 'Final item', start: '2026-05-01', status: 'delayed' }],
+        }],
+      }, {
+        id: 'p4',
+        name: 'Completed step project',
+        status: 'active',
+        inspections: [],
+        phases: [{
+          id: 'phase-active',
+          name: 'Punch',
+          status: 'active',
+          steps: [{ id: 'step-done', name: 'Done item', start: '2026-05-01', status: 'Done', predecessors: [{ id: 'missing' }] }],
         }],
       }];
       const tasks = [
@@ -877,6 +915,85 @@ const tests = [
     },
   },
   {
+    name: 'tasks support native sharing and reviewed multi-task share or email',
+    async run() {
+      const [tasksSource, rowSource, platformSource, dialogSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskRow.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/platform/platformAdapter.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/FormDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      const content = buildTaskShareContent(
+        [
+          { id: 'task-1', label: 'Frame walls', projectId: 'project-1', due: '2026-08-05', assignees: ['Alex Smith'], done: false },
+          { id: 'task-2', label: 'Close permit', projectId: 'project-2', due: '', assignees: [], done: true },
+        ],
+        [{ id: 'project-1', name: 'Lake House' }, { id: 'project-2', name: 'Hill House' }],
+      );
+      assert.equal(content.title, '2 Project Tracker tasks');
+      assert.match(content.body, /1\. Frame walls/);
+      assert.match(content.body, /Project: Lake House/);
+      assert.match(content.body, /Due date: Aug 5, 2026/);
+      assert.match(content.body, /2\. Close permit/);
+      assert.match(content.body, /Status: Completed/);
+      assert.equal((content.body.match(/Due date:/g) || []).length, 1);
+      assert.doesNotMatch(content.body, /No due date/);
+      const commonContent = buildTaskShareContent(
+        [
+          { id: 'task-3', label: 'Install trim', projectId: 'project-1', due: '2026-08-06', assignees: ['Alex Smith'], done: false },
+          { id: 'task-4', label: 'Install doors', projectId: 'project-1', due: '', assignees: ['Alex Smith'], done: false },
+        ],
+        [{ id: 'project-1', name: 'Lake House' }],
+      );
+      assert.equal((commonContent.body.match(/Project: Lake House/g) || []).length, 1);
+      assert.equal((commonContent.body.match(/Assignee: Alex Smith/g) || []).length, 1);
+      assert.equal((commonContent.body.match(/Status: Open/g) || []).length, 1);
+      assert.equal((commonContent.body.match(/Due date:/g) || []).length, 1);
+      assert.match(commonContent.body, /Project: Lake House\nAssignee: Alex Smith\nStatus: Open\n\nTasks:/);
+      const groupedContent = buildTaskShareContent(
+        [
+          { id: 'task-5', label: 'First task', projectId: 'project-1', due: '', assignees: ['Alex Smith', 'Jamie Reed'], done: false },
+          { id: 'task-6', label: 'Second task', projectId: 'project-1', due: '', assignees: ['Jamie Reed', 'Alex Smith'], done: false },
+          { id: 'task-7', label: 'Third task', projectId: 'project-2', due: '', assignees: ['Taylor Jones'], done: false },
+          { id: 'task-8', label: 'Fourth task', projectId: 'project-2', due: '', assignees: ['Taylor Jones'], done: false },
+        ],
+        [{ id: 'project-1', name: 'Lake House' }, { id: 'project-2', name: 'Hill House' }],
+      );
+      assert.equal((groupedContent.body.match(/Project: Lake House/g) || []).length, 1);
+      assert.equal((groupedContent.body.match(/Project: Hill House/g) || []).length, 1);
+      assert.equal((groupedContent.body.match(/Assignees: Alex Smith, Jamie Reed/g) || []).length, 1);
+      assert.equal((groupedContent.body.match(/Assignee: Taylor Jones/g) || []).length, 1);
+      assert.equal((groupedContent.body.match(/Status: Open/g) || []).length, 1);
+      assert.doesNotMatch(groupedContent.body, /No due date/);
+      const mixedStatusContent = buildTaskShareContent(
+        [
+          { id: 'task-9', label: 'Open one', projectId: 'project-1', due: '', assignees: ['Alex Smith'], done: false },
+          { id: 'task-10', label: 'Done one', projectId: 'project-1', due: '', assignees: ['Alex Smith'], done: true },
+          { id: 'task-11', label: 'Open two', projectId: 'project-1', due: '', assignees: ['Alex Smith'], done: false },
+        ],
+        [{ id: 'project-1', name: 'Lake House' }],
+      );
+      assert.equal((mixedStatusContent.body.match(/Status: Open/g) || []).length, 1);
+      assert.equal((mixedStatusContent.body.match(/Status: Completed/g) || []).length, 1);
+      assert.match(mixedStatusContent.body, /Status: Open\n1\. Open one\n\n2\. Open two\n\nStatus: Completed\n3\. Done one/);
+      assert.match(tasksSource, /buildTaskShareContent\(openTasks, visibleProjects\)\.body/);
+      assert.match(tasksSource, /const \[selectedTaskIds, setSelectedTaskIds\] = useState/);
+      assert.match(tasksSource, /Select all visible/);
+      assert.match(tasksSource, /handleShareTasks\(selectedTasks\)/);
+      assert.match(tasksSource, /handleEmailSelectedTasks/);
+      assert.match(tasksSource, /showShare=\{nativeAndroid\}/);
+      assert.match(rowSource, /aria-label=\{`Share \$\{task\.label\}`\}/);
+      assert.match(rowSource, /aria-pressed=\{selected\}/);
+      assert.match(platformSource, /export async function shareText/);
+      assert.match(platformSource, /await Share\.share\(\{ title, text, dialogTitle \}\)/);
+      assert.match(platformSource, /navigator\.clipboard\.writeText/);
+      assert.match(dialogSource, /multiple=\{draft\.allowMultiple === true\}/);
+      assert.match(styleSource, /\.task-bulk-toolbar/);
+      assert.match(styleSource, /\.task-row-card\.selected-for-sharing/);
+    },
+  },
+  {
     name: 'Android quick actions sharing file actions and camera capture stay connected',
     async run() {
       const [
@@ -908,18 +1025,26 @@ const tests = [
       assert.match(manifestSource, /android\.intent\.action\.SEND/);
       assert.match(manifestSource, /android:mimeType="image\/\*"/);
       assert.match(manifestSource, /android\.app\.shortcuts/);
+      assert.match(manifestSource, /android:launchMode="singleTask"/);
       assert.match(shortcutsSource, /CREATE_TASK/);
       assert.match(shortcutsSource, /CREATE_INSPECTION/);
       assert.match(shortcutsSource, /CREATE_DAILY_LOG/);
       assert.match(activitySource, /registerPlugin\(AndroidIntentsPlugin\.class\)/);
       assert.match(activitySource, /onNewIntent\(Intent intent\)/);
+      assert.match(activitySource, /getOnBackPressedDispatcher\(\)\.addCallback/);
+      assert.match(activitySource, /bridge\.getWebView\(\)\.canGoBack\(\)/);
+      assert.match(activitySource, /bridge\.getWebView\(\)\.goBack\(\)/);
+      assert.match(activitySource, /moveTaskToBack\(true\)/);
       assert.match(intentPluginSource, /Intent\.ACTION_SEND/);
+      assert.doesNotMatch(intentPluginSource, /actionPayload\("open-home"\)/);
       assert.match(intentPluginSource, /cacheSharedPhoto/);
       assert.match(intentPluginSource, /removeSharedFile/);
       assert.match(platformSource, /export async function addAndroidIntentListener/);
       assert.match(platformSource, /export async function readAndroidSharedPhoto/);
       assert.match(appSource, /detailAction: androidProjectPrompt\.type/);
       assert.match(appSource, /createRequest=\{androidTaskCreateRequest\}/);
+      assert.match(appSource, /nativeAndroid \? 'home' : getTabFromLocation\(\)/);
+      assert.match(appSource, /handlingPopStateRef/);
       assert.match(filesSource, /runAndroidFileAction\(file, 'open'\)/);
       assert.match(filesSource, /runAndroidFileAction\(file, 'share'\)/);
       assert.match(photosSource, /capture="environment"/);
@@ -1866,6 +1991,54 @@ const tests = [
       assert.match(agendaSource, /aria-label="Schedule agenda"/);
       assert.match(styleSource, /\.top-level-schedule-page \.desktop-schedule-gantt/);
       assert.match(styleSource, /\.mobile-schedule-agenda \{\s+display: grid;/);
+    },
+  },
+  {
+    name: 'schedule steps expose a shared desktop and Android status picker',
+    async run() {
+      const [scheduleSource, agendaSource, buttonSource, dialogSource, styleSource, statusModule] = await Promise.all([
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/MobileScheduleAgenda.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/StepStatusButton.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ScheduleDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        import('../src/utils/stepStatus.js'),
+      ]);
+      assert.match(scheduleSource, /<StepStatusButton row=\{row\} onClick=\{openStepStatus\}/);
+      assert.match(scheduleSource, /<StepStatusModal/);
+      assert.match(scheduleSource, /status: stepStatusDraft\.status/);
+      assert.match(scheduleSource, /done: stepStatusDraft\.status === 'done'/);
+      assert.match(scheduleSource, /updateProjectAndTasks\(currentData, project\.id, nextProject, nextTasks\)/);
+      assert.match(agendaSource, /<StepStatusButton row=\{row\} onClick=\{onStatus\}/);
+      assert.match(buttonSource, /Current status: \$\{status\.label\}/);
+      assert.match(dialogSource, /role="radiogroup"/);
+      assert.match(dialogSource, /Save status/);
+      assert.match(styleSource, /\.schedule-step-status-button/);
+      assert.match(styleSource, /\.step-status-modal-card/);
+      assert.deepEqual(
+        statusModule.STEP_STATUS_OPTIONS.map((option) => option.value),
+        ['planning', 'active', 'delayed', 'done'],
+      );
+      assert.equal(statusModule.normalizeStepStatus('unknown'), 'planning');
+      assert.equal(statusModule.normalizeStepStatus('active', true), 'done');
+      const statusRows = buildScheduleRows(
+        [{
+          id: 'project-status',
+          name: 'Status project',
+          status: 'active',
+          phases: [{
+            id: 'phase-status',
+            name: 'Status phase',
+            status: 'active',
+            steps: [{ id: 'step-status', name: 'Delayed step', status: 'delayed' }],
+          }],
+        }],
+        {},
+        false,
+        { 'project-status': true },
+        { 'phase-status': true },
+      );
+      assert.equal(statusRows.find((row) => row.id === 'step-step-status')?.status, 'delayed');
     },
   },
   {
@@ -3801,6 +3974,176 @@ const tests = [
       assert.doesNotMatch(`${workflowSource}\n${ciWorkflowSource}`, /supabase\/setup-cli@v1/);
       assert.doesNotMatch(workflowSource, /push:|pull_request:/);
       assert.match(packageSource, /"test:staging": "node scripts\/run-staging-application-tests\.mjs"/);
+    },
+  },
+  {
+    name: 'certificate extraction matches the closest subcontractor company or contact name',
+    run() {
+      const subcontractors = [
+        { id: 'sub-1', company: 'Bright Electric LLC', first: 'Jamie', last: 'Bright' },
+        { id: 'sub-2', company: 'Brighton Electrical Services', first: 'Taylor', last: 'Reed' },
+        { id: 'sub-3', company: 'Northstar Plumbing', first: 'Morgan', last: 'Lee' },
+      ];
+      assert.equal(normalizeSubcontractorName('Bright Electric, L.L.C.'), 'bright electric');
+      assert.equal(findClosestSubcontractor('Bright Electric, L.L.C.', subcontractors)?.subcontractor.id, 'sub-1');
+      assert.equal(findClosestSubcontractor('Morgan Lee', subcontractors)?.subcontractor.id, 'sub-3');
+      assert.equal(findClosestSubcontractor('', subcontractors), null);
+    },
+  },
+  {
+    name: 'insurance certificates are normalized around subcontractors without project relationships',
+    async run() {
+      const [migrationSource, coverageDatesMigrationSource, aggregateLimitMigrationSource] = await Promise.all([
+        readFile(
+          new URL('../supabase/migrations/20260728170000_add_subcontractor_insurance_certificates.sql', import.meta.url),
+          'utf8',
+        ),
+        readFile(
+          new URL('../supabase/migrations/20260728200000_add_insurance_coverage_policy_dates.sql', import.meta.url),
+          'utf8',
+        ),
+        readFile(
+          new URL('../supabase/migrations/20260728210000_add_insurance_coverage_aggregate_limit.sql', import.meta.url),
+          'utf8',
+        ),
+      ]);
+      assert.match(migrationSource, /create table if not exists public\.insurance_certificates/);
+      assert.match(migrationSource, /subcontractor_id text not null references public\.subs\(id\) on delete restrict/);
+      assert.match(migrationSource, /create table if not exists public\.insurance_certificate_coverages/);
+      assert.match(migrationSource, /coverage_amount[\s\S]+effective_date date,[\s\S]+expiration_date date/);
+      assert.doesNotMatch(
+        migrationSource.match(/create table if not exists public\.insurance_certificates[\s\S]+?\n\);/)?.[0] || '',
+        /project_id/,
+      );
+      assert.match(migrationSource, /coalesce\(public\.current_app_user_role\(\), ''\) in \('Admin', 'Edit', 'View Only'\)/);
+      assert.match(migrationSource, /create or replace function public\.save_insurance_certificate/);
+      assert.match(migrationSource, /VERSION_CONFLICT/);
+      assert.match(migrationSource, /'certificate-files'/);
+      assert.match(migrationSource, /file_size_limit = excluded\.file_size_limit/);
+      assert.match(migrationSource, /'insurance_certificate'/);
+      assert.match(coverageDatesMigrationSource, /add column if not exists effective_date date/);
+      assert.match(coverageDatesMigrationSource, /add column if not exists expiration_date date/);
+      assert.match(coverageDatesMigrationSource, /coverage->>'effectiveDate'/);
+      assert.match(coverageDatesMigrationSource, /coverage->>'expirationDate'/);
+      assert.match(aggregateLimitMigrationSource, /add column if not exists aggregate_amount/);
+      assert.match(aggregateLimitMigrationSource, /coverage->>'generalLimit'/);
+      assert.match(aggregateLimitMigrationSource, /coverage->>'aggregateLimit'/);
+    },
+  },
+  {
+    name: 'certificate workspace uses native navigation and subcontractor-only forms',
+    async run() {
+      const [appSource, navigationSource, componentSource, serviceSource, styleSource, trackerSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/navigationTabs.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/insuranceCertificates.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /lazy\(\(\) => import\('\.\/components\/NativeCertificatesView\.jsx'\)\)/);
+      assert.match(appSource, /activeTab === 'certificates'/);
+      assert.match(navigationSource, /\{ id: 'certificates', label: 'Certificates'/);
+      assert.match(componentSource, /Subcontractor compliance/);
+      assert.match(componentSource, /data\.subs/);
+      assert.match(componentSource, /All subcontractors/);
+      assert.match(componentSource, /No cert needed/);
+      assert.match(componentSource, /Mark inactive/);
+      assert.match(componentSource, /updatePerson\(data, 'sub'/);
+      assert.match(componentSource, /findClosestSubcontractor/);
+      assert.doesNotMatch(componentSource, /projectId|projectFilter|Project required/);
+      assert.match(serviceSource, /save_insurance_certificate/);
+      assert.match(serviceSource, /certificate-files/);
+      assert.match(serviceSource, /15 \* 1024 \* 1024/);
+      assert.match(serviceSource, /subcontractorName: cleanText\(payload\.subcontractorName\)/);
+      assert.match(serviceSource, /effectiveDate: cleanText\(row\.effective_date \?\? row\.effectiveDate\)/);
+      assert.match(componentSource, /Coverage effective date/);
+      assert.match(componentSource, /Coverage expiration date/);
+      assert.match(componentSource, /General limit/);
+      assert.match(componentSource, /Aggregate limit/);
+      assert.match(componentSource, /Liability dates/);
+      assert.match(componentSource, /Workers comp dates/);
+      assert.doesNotMatch(componentSource, /<span>Document<\/span>/);
+      assert.match(componentSource, /formatDisplayDate/);
+      assert.match(componentSource, /certificate-coverage-table/);
+      assert.match(componentSource, /additional-insured-missing/);
+      assert.match(componentSource, /Select certificate & extract/);
+      assert.match(componentSource, /Show coverage details/);
+      assert.match(componentSource, /aria-expanded=\{coverageExpanded\}/);
+      assert.doesNotMatch(componentSource, /findDuplicate|Duplicate certificate/);
+      assert.match(serviceSource, /aggregateLimit: Number\(row\.aggregate_amount/);
+      assert.match(trackerSource, /certificateRequirement: payload\.certificateRequirement === 'not_required'/);
+      assert.match(trackerSource, /inactive: payload\.inactive === true/);
+      assert.match(styleSource, /\.top-level-certificates-page/);
+      assert.match(styleSource, /\.certificate-card/);
+    },
+  },
+  {
+    name: 'certificate extraction is authenticated fixed-purpose and privacy bounded',
+    async run() {
+      const functionSource = await readFile(
+        new URL('../supabase/functions/extract-insurance-certificate/index.ts', import.meta.url),
+        'utf8',
+      );
+      assert.match(functionSource, /admin\.auth\.getUser\(callerToken\)/);
+      assert.match(functionSource, /\['Admin', 'Edit'\]\.includes/);
+      assert.match(functionSource, /CERTIFICATE_BUCKET = 'certificate-files'/);
+      assert.match(functionSource, /requiredPrefix = `certificates\/\$\{caller\.id\}\//);
+      assert.match(functionSource, /ANTHROPIC_CERTIFICATE_MODEL/);
+      assert.match(functionSource, /Extract insurance certificate data/);
+      assert.match(functionSource, /subcontractorName/);
+      assert.match(functionSource, /Commercial General Liability and Workers Compensation/);
+      assert.match(functionSource, /omit other sublimits/);
+      assert.match(functionSource, /General Aggregate and Products-Completed Operations Aggregate/);
+      assert.match(functionSource, /getRequestId\(request\)/);
+      assert.match(functionSource, /logEdgeFailure/);
+      assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(sourcePath|providerPayload|bytes)/);
+    },
+  },
+  {
+    name: 'certificate workspace supports bounded bulk upload extraction and reviewed saves',
+    async run() {
+      const [componentSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(componentSource, /const MAX_BULK_CERTIFICATES = 20/);
+      assert.match(componentSource, /Bulk upload &amp; extract/);
+      assert.match(componentSource, /multiple/);
+      assert.match(componentSource, /async function processBulkItems\(items\)/);
+      assert.match(componentSource, /for \(const item of items\)/);
+      assert.match(componentSource, /await uploadCertificateFile\(item\.file\)/);
+      assert.match(componentSource, /await extractInsuranceCertificate\(uploaded\)/);
+      assert.match(componentSource, /buildExtractedCertificate/);
+      assert.match(componentSource, /Confirm each subcontractor match before saving/);
+      assert.match(componentSource, /await saveInsuranceCertificate\(item\.draft\)/);
+      assert.match(componentSource, /Promise\.all\(uploads\.map\(\(uploaded\) => deleteCertificateFile/);
+      assert.match(styleSource, /\.certificate-bulk-modal-card/);
+      assert.match(styleSource, /\.certificate-bulk-result/);
+    },
+  },
+  {
+    name: 'workers compensation coverage variants preserve policy dates',
+    async run() {
+      const [componentSource, certificateService] = await Promise.all([
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        import('../src/services/insuranceCertificates.js'),
+      ]);
+      assert.equal(
+        certificateService.normalizeCoverageType("Workers' Compensation & Employers' Liability"),
+        'Workers Compensation',
+      );
+      assert.equal(
+        certificateService.normalizeCoverageType('Workers Comp / Employers Liability'),
+        'Workers Compensation',
+      );
+      assert.equal(
+        certificateService.normalizeCoverageType("Workman's Compensation"),
+        'Workers Compensation',
+      );
+      assert.match(componentSource, /function coverageTypeMatches/);
+      assert.match(componentSource, /normalized\.startsWith\(`\$\{type\} `\)/);
+      assert.match(componentSource, /'workmans compensation'/);
     },
   },
 ];

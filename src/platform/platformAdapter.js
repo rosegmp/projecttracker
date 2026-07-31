@@ -81,6 +81,23 @@ export function isShareDismissed(error) {
   return error?.name === 'AbortError' || message.includes('abort') || message.includes('cancel');
 }
 
+export async function shareText({ title = '', text = '', dialogTitle = 'Share' } = {}) {
+  if (isNativeAndroidApp()) {
+    const { Share } = await loadNativeFileModules();
+    await Share.share({ title, text, dialogTitle });
+    return { action: 'shared' };
+  }
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    await navigator.share({ title, text });
+    return { action: 'shared' };
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText([title, text].filter(Boolean).join('\n\n'));
+    return { action: 'copied' };
+  }
+  throw new Error('Sharing is not available on this device.');
+}
+
 function safeFileName(fileName) {
   return (String(fileName || 'download').trim() || 'download').replace(/[\\/:*?"<>|]+/g, '-');
 }

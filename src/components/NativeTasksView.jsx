@@ -17,9 +17,10 @@ import TaskRow from './TaskRow.jsx';
 import TaskCreateForm from './TaskCreateForm.jsx';
 import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useVirtualRange } from '../utils/virtualization.js';
-import { openMailComposer } from '../platform/platformAdapter.js';
+import { isNativeAndroidApp, isShareDismissed, openMailComposer, shareText } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { formatAssignees, getTaskAssignees, taskAssigneeFields } from '../utils/assignees.js';
+import { buildTaskShareContent } from '../utils/taskSharing.js';
 
 function VirtualTaskItem({ taskId, onSize, children }) {
   const itemRef = useRef(null);
@@ -94,6 +95,7 @@ export default function NativeTasksView({
   onCreateRequestHandled = () => {},
 }) {
   const defaultTaskProjectId = lockedProjectId || (projectFilter !== 'all' ? projectFilter : '');
+  const nativeAndroid = isNativeAndroidApp();
   const [statusFilter, setStatusFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
@@ -107,6 +109,7 @@ export default function NativeTasksView({
   const [editAttachmentInputKey, setEditAttachmentInputKey] = useState(0);
   const [personDraft, setPersonDraft] = useState(null);
   const [emailDraft, setEmailDraft] = useState(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState(() => new Set());
   const { runMutation, isMutating } = useEntityMutations();
   const [taskSaveMessage, setTaskSaveMessage] = useState('');
   const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
@@ -240,6 +243,19 @@ export default function NativeTasksView({
       return a.label.localeCompare(b.label);
     });
   }, [assigneeScopedTasks, projectMap, statusFilter]);
+  const selectedTasks = useMemo(
+    () => filteredTasks.filter((task) => selectedTaskIds.has(task.id)),
+    [filteredTasks, selectedTaskIds],
+  );
+  const allFilteredTasksSelected = filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length;
+
+  useEffect(() => {
+    const filteredIds = new Set(filteredTasks.map((task) => task.id));
+    setSelectedTaskIds((current) => {
+      const next = new Set([...current].filter((taskId) => filteredIds.has(taskId)));
+      return next.size === current.size && [...current].every((taskId) => next.has(taskId)) ? current : next;
+    });
+  }, [filteredTasks]);
 
   const statusCounts = useMemo(
     () => ({
@@ -333,7 +349,7 @@ export default function NativeTasksView({
     openMailComposer(email, subject, body);
   }
 
-  function startEmailDraft({ title, description, email = '', person = null, subject, body }) {
+  function startEmailDraft({ title, description, email = '', person = null, subject, body, allowMultiple = false }) {
     setEmailDraft({
       title,
       description,
@@ -345,6 +361,61 @@ export default function NativeTasksView({
       personId: person?.id || '',
       personType: person?.directoryType || person?.peopleType || 'emp',
       personLabel: person ? personAssignmentLabel(person) : '',
+      allowMultiple,
+    });
+  }
+
+  function toggleTaskSelection(task) {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(task.id)) next.delete(task.id);
+      else next.add(task.id);
+      return next;
+    });
+  }
+
+  function toggleAllFilteredTasks() {
+    setSelectedTaskIds(allFilteredTasksSelected ? new Set() : new Set(filteredTasks.map((task) => task.id)));
+  }
+
+  async function handleShareTasks(tasks) {
+    if (!tasks.length) return;
+    const content = buildTaskShareContent(tasks, visibleProjects);
+    try {
+      const result = await shareText({
+        title: content.title,
+        text: content.body,
+        dialogTitle: tasks.length === 1 ? 'Share task' : `Share ${tasks.length} tasks`,
+      });
+      if (result.action === 'copied') {
+        await showAppAlert('The selected task details were copied to the clipboard.', 'Ready to share');
+      }
+    } catch (error) {
+      if (isShareDismissed(error)) return;
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to share the selected tasks.', 'Share failed');
+    }
+  }
+
+  function handleEmailSelectedTasks() {
+    if (!selectedTasks.length) return;
+    const content = buildTaskShareContent(selectedTasks, visibleProjects);
+    const people = [...new Map(
+      selectedTasks
+        .flatMap((task) => getTaskAssignees(task))
+        .map((name) => assigneeDirectory.get(name))
+        .filter(Boolean)
+        .map((person) => [person.id || personAssignmentLabel(person), person]),
+    ).values()];
+    const emails = [...new Set(people.map((person) => String(person.email || '').trim()).filter(Boolean))];
+    startEmailDraft({
+      title: `Email ${selectedTasks.length} selected task${selectedTasks.length === 1 ? '' : 's'}`,
+      description: emails.length
+        ? 'Review the combined recipient list, then continue to your email app.'
+        : 'No assignee email is saved for these tasks. Add a recipient now, or continue without one.',
+      email: emails.join(', '),
+      subject: content.subject,
+      body: content.body,
+      allowMultiple: true,
     });
   }
 
@@ -609,15 +680,9 @@ export default function NativeTasksView({
     const taskAssignees = getTaskAssignees(task);
     const people = taskAssignees.map((name) => assigneeDirectory.get(name)).filter(Boolean);
     const emails = [...new Set(people.map((person) => person.email).filter(Boolean))];
-    const projectName = projectMap.get(task.projectId)?.name || 'Task details';
-    const subject = projectName;
-    const body = [
-      `Project: ${projectName}`,
-      `Task: ${task.label}`,
-      `Assignees: ${formatAssignees(taskAssignees)}`,
-      `Due date: ${task.due ? formatShortDate(task.due) : 'No due date'}`,
-      `Status: ${task.done ? 'Completed' : 'Open'}`,
-    ].join('\n');
+    const content = buildTaskShareContent([task], visibleProjects);
+    const subject = content.subject;
+    const body = content.body;
     if (emails.length) {
       openMailto(emails.join(','), subject, body);
       return;
@@ -643,16 +708,7 @@ export default function NativeTasksView({
       effectiveProjectFilter === 'all'
         ? `${assigneeLabel} open tasks`
         : `${projectMap.get(effectiveProjectFilter)?.name || 'Project'} open tasks`;
-    const body = [
-      `Assignee: ${assigneeLabel}`,
-      '',
-      'Open tasks:',
-      ...openTasks.map((task, index) => {
-        const projectName = projectMap.get(task.projectId)?.name || 'No project assigned';
-        const dueText = task.due ? formatShortDate(task.due) : 'No due date';
-        return `${index + 1}. [${projectName}] ${task.label} - ${dueText}`;
-      }),
-    ].join('\n');
+    const body = buildTaskShareContent(openTasks, visibleProjects).body;
     if (email) {
       openMailto(email, subject, body);
       return;
@@ -776,6 +832,29 @@ export default function NativeTasksView({
       </div>
 
       <section className="workspace-section">
+        {filteredTasks.length ? (
+          <div className="task-bulk-toolbar" aria-label="Task sharing actions">
+            <button className="button secondary" type="button" onClick={toggleAllFilteredTasks}>
+              {allFilteredTasksSelected ? 'Clear visible selection' : 'Select all visible'}
+            </button>
+            <span aria-live="polite">{selectedTasks.length} selected</span>
+            <div className="task-bulk-toolbar-actions">
+              <button className="button secondary" type="button" onClick={() => void handleShareTasks(selectedTasks)} disabled={!selectedTasks.length}>
+                <FluentIcon name="share" />
+                Share
+              </button>
+              <button className="button secondary" type="button" onClick={handleEmailSelectedTasks} disabled={!selectedTasks.length}>
+                <FluentIcon name="mail" />
+                Email
+              </button>
+              {selectedTasks.length ? (
+                <button className="button secondary" type="button" onClick={() => setSelectedTaskIds(new Set())}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         <div className="task-list">
           {filteredTasks.length ? (
             groupBy !== 'none' ? (
@@ -848,6 +927,10 @@ export default function NativeTasksView({
                       onEditSave={handleEditSave}
                       onToggle={handleToggle}
                       onEmail={handleEmailTask}
+                      onShare={(selectedTask) => void handleShareTasks([selectedTask])}
+                      onSelect={toggleTaskSelection}
+                      selected={selectedTaskIds.has(task.id)}
+                      showShare={nativeAndroid}
                       onAttachmentDownload={handleDownloadTaskAttachment}
                       onOpenSelection={handleOpenTaskSelection}
                       onDelete={handleDelete}
@@ -904,6 +987,10 @@ export default function NativeTasksView({
                   onEditSave={handleEditSave}
                   onToggle={handleToggle}
                   onEmail={handleEmailTask}
+                  onShare={(selectedTask) => void handleShareTasks([selectedTask])}
+                  onSelect={toggleTaskSelection}
+                  selected={selectedTaskIds.has(task.id)}
+                  showShare={nativeAndroid}
                   onAttachmentDownload={handleDownloadTaskAttachment}
                   onOpenSelection={handleOpenTaskSelection}
                   onDelete={handleDelete}

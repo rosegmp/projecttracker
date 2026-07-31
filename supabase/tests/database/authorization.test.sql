@@ -1,6 +1,6 @@
 begin;
 
-select plan(10);
+select plan(16);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -21,6 +21,9 @@ insert into public.project_user_access (project_id, user_id, position) values
 insert into public.tasks (id, data) values
   ('auth-task-a', '{"name":"Authorized task","projectId":"auth-project-a"}'),
   ('auth-task-b', '{"name":"Restricted task","projectId":"auth-project-b"}');
+
+insert into public.subs (id, data) values
+  ('auth-sub-a', '{"company":"Authorized Subcontractor","peopleType":"sub"}');
 
 set local role authenticated;
 
@@ -58,9 +61,37 @@ select throws_ok(
   'You do not have access to this project.',
   'assigned editors cannot update another project through the write RPC'
 );
+select lives_ok(
+  $$select public.save_insurance_certificate(
+    '{"id":"20000000-0000-4000-8000-000000000001","subcontractorId":"auth-sub-a","insured":"Authorized Subcontractor","policyNumber":"TEST-001","effectiveDate":"2026-01-01","expirationDate":"2027-01-01"}'::jsonb,
+    '[{"id":"30000000-0000-4000-8000-000000000001","type":"General Liability","amount":1000000}]'::jsonb,
+    null
+  )$$,
+  'editors can create subcontractor insurance certificates'
+);
+select results_eq(
+  'select subcontractor_id from public.insurance_certificates',
+  array['auth-sub-a'::text],
+  'editors can read subcontractor insurance certificates without project scope'
+);
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000003","email":"viewer@test.local","role":"authenticated"}';
 select ok(not public.app_user_can_edit(), 'view-only users do not receive edit capability');
+select results_eq(
+  'select subcontractor_id from public.insurance_certificates',
+  array['auth-sub-a'::text],
+  'view-only users can read subcontractor insurance certificates'
+);
+select throws_ok(
+  $$select public.save_insurance_certificate(
+    '{"id":"20000000-0000-4000-8000-000000000002","subcontractorId":"auth-sub-a"}'::jsonb,
+    '[]'::jsonb,
+    null
+  )$$,
+  '42501',
+  'You do not have permission to edit insurance certificates.',
+  'view-only users cannot edit subcontractor insurance certificates'
+);
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000004","email":"customer@test.local","role":"authenticated"}';
 select results_eq(
@@ -72,6 +103,22 @@ select is(
   public.get_project_portal_bootstrap()->'projects'->0->>'id',
   'auth-project-a',
   'the portal bootstrap returns only an assigned project through its filtered security boundary'
+);
+select results_eq(
+  'select count(*)::bigint from public.insurance_certificates',
+  array[0::bigint],
+  'portal users cannot read internal insurance certificates'
+);
+
+reset role;
+select results_eq(
+  $$select count(*)::bigint
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name in ('insurance_certificates', 'insurance_certificate_coverages')
+      and column_name = 'project_id'$$,
+  array[0::bigint],
+  'insurance certificate schema has no project relationship'
 );
 
 select * from finish();

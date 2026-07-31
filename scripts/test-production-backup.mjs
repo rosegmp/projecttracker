@@ -39,10 +39,11 @@ async function close(server) {
   }));
 }
 
-test('Storage export recursively downloads both approved buckets without logging object names', async () => {
+test('Storage export recursively downloads every approved bucket without logging object names', async () => {
   const secret = 'test-service-role-secret';
   const projectFile = Buffer.from('project bytes');
   const takeoffFile = Buffer.from('takeoff bytes');
+  const certificateFile = Buffer.from('certificate bytes');
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.apikey, secret);
     assert.equal(request.headers.authorization, `Bearer ${secret}`);
@@ -65,6 +66,10 @@ test('Storage export recursively downloads both approved buckets without logging
         response.end(JSON.stringify([{ name: 'takeoff.pdf', id: '2', metadata: {} }]));
         return;
       }
+      if (url.pathname.endsWith('/certificate-files') && prefix === '') {
+        response.end(JSON.stringify([{ name: 'certificate.pdf', id: '3', metadata: {} }]));
+        return;
+      }
     }
 
     if (
@@ -78,6 +83,11 @@ test('Storage export recursively downloads both approved buckets without logging
     if (request.method === 'GET' && url.pathname.endsWith('/takeoff-files/takeoff.pdf')) {
       response.setHeader('content-length', takeoffFile.length);
       response.end(takeoffFile);
+      return;
+    }
+    if (request.method === 'GET' && url.pathname.endsWith('/certificate-files/certificate.pdf')) {
+      response.setHeader('content-length', certificateFile.length);
+      response.end(certificateFile);
       return;
     }
 
@@ -100,7 +110,7 @@ test('Storage export recursively downloads both approved buckets without logging
     );
 
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /2 buckets, 2 objects/);
+    assert.match(result.stdout, /3 buckets, 3 objects/);
     assert.doesNotMatch(result.stdout + result.stderr, /private-document|takeoff\.pdf|test-service/);
     assert.deepEqual(
       await readFile(path.join(outputRoot, 'project-files', 'projects', 'private-document.pdf')),
@@ -110,9 +120,14 @@ test('Storage export recursively downloads both approved buckets without logging
       await readFile(path.join(outputRoot, 'takeoff-files', 'takeoff.pdf')),
       takeoffFile,
     );
+    assert.deepEqual(
+      await readFile(path.join(outputRoot, 'certificate-files', 'certificate.pdf')),
+      certificateFile,
+    );
     const summary = JSON.parse(await readFile(summaryPath, 'utf8'));
     assert.equal(summary.buckets[0].objectCount, 1);
     assert.equal(summary.buckets[1].objectCount, 1);
+    assert.equal(summary.buckets[2].objectCount, 1);
   } finally {
     await close(server);
     await rm(temporaryRoot, { recursive: true, force: true });
@@ -142,6 +157,7 @@ test('Manifest reports aggregate COPY counts and hashes without row content', as
       buckets: [
         { bucket: 'project-files', objectCount: 1, contentLengthBytes: 12, unknownSizeObjects: 0 },
         { bucket: 'takeoff-files', objectCount: 1, contentLengthBytes: 13, unknownSizeObjects: 0 },
+        { bucket: 'certificate-files', objectCount: 1, contentLengthBytes: 17, unknownSizeObjects: 0 },
       ],
     }));
     const manifestPath = path.join(plainRoot, 'manifest.json');

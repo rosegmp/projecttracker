@@ -1,9 +1,60 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import { formatShortDate, formatTooltipDate } from '../utils/calendarUi.js';
+import { STEP_STATUS_OPTIONS } from '../utils/stepStatus.js';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
+import FluentIcon from './FluentIcon.jsx';
 
 const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7', '#2f8c83', '#9a554f', '#4f6fb2'];
+
+export function StepStatusModal({ draft, saving, onChange, onClose, onSave }) {
+  if (!draft) return null;
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-card step-status-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="step-status-modal-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Schedule step</p>
+            <h2 id="step-status-modal-title">Change status</h2>
+            <p className="panel-copy">{draft.name}</p>
+          </div>
+        </div>
+
+        <div className="step-status-options" role="radiogroup" aria-label="Step status">
+          {STEP_STATUS_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              className={`step-status-option status-${option.value}${draft.status === option.value ? ' selected' : ''}`}
+              type="button"
+              role="radio"
+              aria-checked={draft.status === option.value}
+              onClick={() => onChange(option.value)}
+              disabled={saving}
+            >
+              <FluentIcon name={option.icon} />
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="modal-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save status'}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
 
 export function ScheduleItemModal({
   draft,

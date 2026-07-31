@@ -5,6 +5,7 @@ export const TOP_LEVEL_TAB_DEFS = [
   { id: 'calendar', label: 'Calendar', description: 'Calendar events, milestones, and inspections.' },
   { id: 'tasks', label: 'Tasks', description: 'Tasks across visible projects.' },
   { id: 'people', label: 'People', description: 'Customers, subcontractors, employees, and contacts.' },
+  { id: 'certificates', label: 'Certificates', description: 'Subcontractor insurance coverage and expiration tracking.' },
   { id: 'settings', label: 'Settings', description: 'Administration and workspace configuration.', required: true },
 ];
 

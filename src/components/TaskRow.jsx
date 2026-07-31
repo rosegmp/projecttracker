@@ -1,5 +1,12 @@
 import React from 'react';
-import { Delete24Regular, Edit24Regular, Mail24Regular } from '@fluentui/react-icons';
+import {
+  CheckboxChecked24Regular,
+  CheckboxUnchecked24Regular,
+  Delete24Regular,
+  Edit24Regular,
+  Mail24Regular,
+  ShareAndroid24Regular,
+} from '@fluentui/react-icons';
 import { isOverdue } from '../utils/schedule.js';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 
@@ -61,11 +68,15 @@ export default function TaskRow({
   onEditPendingAttachmentRemove,
   onToggle,
   onEmail,
+  onShare,
+  onSelect,
   onAttachmentDownload,
   onOpenSelection,
   onDelete,
   saving,
   deleting = false,
+  selected = false,
+  showShare = false,
 }) {
   const overdue = isOverdue(task.due, task.done);
   const isEditing = editingTaskId === task.id;
@@ -178,7 +189,7 @@ export default function TaskRow({
   return (
     <article
       ref={rowRef}
-      className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}${highlighted ? ' highlighted' : ''}${deleting ? ' deleting' : ''}`}
+      className={`task-row-card${task.done ? ' done' : ''}${overdue ? ' overdue' : ''}${highlighted ? ' highlighted' : ''}${deleting ? ' deleting' : ''}${selected ? ' selected-for-sharing' : ''}`}
       aria-busy={deleting}
     >
       <div className="task-main">
@@ -229,6 +240,29 @@ export default function TaskRow({
       ) : null}
 
       <div className="task-row-actions">
+        <button
+          className={`button secondary gantt-icon-button task-select-button${selected ? ' active' : ''}`}
+          type="button"
+          onClick={() => onSelect(task)}
+          disabled={saving}
+          aria-pressed={selected}
+          title={selected ? 'Remove task from selection' : 'Select task for sharing or email'}
+          aria-label={`${selected ? 'Deselect' : 'Select'} ${task.label}`}
+        >
+          <Icon component={selected ? CheckboxChecked24Regular : CheckboxUnchecked24Regular} />
+        </button>
+        {showShare ? (
+          <button
+            className="button secondary gantt-icon-button"
+            type="button"
+            onClick={() => onShare(task)}
+            disabled={saving}
+            title="Share task"
+            aria-label={`Share ${task.label}`}
+          >
+            <Icon component={ShareAndroid24Regular} />
+          </button>
+        ) : null}
         <button
           className="button secondary gantt-icon-button"
           type="button"

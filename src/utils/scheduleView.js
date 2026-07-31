@@ -1,5 +1,6 @@
 import { isOverdue, normalizePreds } from './schedule.js';
 import { getScheduleAssignees, getTaskAssignees } from './assignees.js';
+import { normalizeStepStatus } from './stepStatus.js';
 
 function parseDateValue(iso) {
   if (!iso) return null;
@@ -127,7 +128,7 @@ export function buildScheduleRows(projects, tasksByProject, showTasks, expandedP
             assign: getScheduleAssignees(step)[0] || '',
             predecessors: normalizePreds(step.predecessors),
             done: !!step.done,
-            status: step.done ? 'done' : phase.status || project.status || 'planning',
+            status: normalizeStepStatus(step.status || phase.status || project.status, step.done),
           },
         ];
 
@@ -381,7 +382,7 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
             type: 'step',
             label: step.name,
             projectName: project.name,
-            status: step.done ? 'done' : phase.status || project.status || 'planning',
+            status: normalizeStepStatus(step.status || phase.status || project.status, step.done),
             projectId: project.id,
             phaseId: phase.id,
             stepId: step.id,

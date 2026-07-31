@@ -20,7 +20,7 @@ These are proposed targets for owner approval. They are not current guarantees.
 | Tier | Surface | Proposed RPO | Proposed RTO | Proposed retention |
 | --- | --- | ---: | ---: | ---: |
 | 1 | Supabase Postgres data, Auth users, and migration history | 24 hours initially; evaluate 1 hour if the business cannot tolerate a workday of loss | 8 business hours | 30 daily recovery points |
-| 1 | Supabase Storage objects in `project-files` and `takeoff-files` | 24 hours | 8 business hours | 30 daily recovery points |
+| 1 | Supabase Storage objects in `project-files`, `takeoff-files`, and `certificate-files` | 24 hours | 8 business hours | 30 daily recovery points |
 | 2 | Git source, migrations, Edge Function source, and build configuration | Every pushed commit | 1 hour | Full Git history plus an independent mirror |
 | 2 | Netlify configuration, environment-variable manifest, domain routing, and last known good release | On every configuration change | 4 business hours | Current configuration plus change history |
 | 2 | Supabase Auth/Storage/Realtime settings, Edge Function settings, and secret-name manifest | On every configuration change | 4 business hours | Current configuration plus change history |
@@ -47,10 +47,11 @@ Supabase states that Free projects should regularly create off-site logical expo
 
 ### Supabase Storage
 
-The live project contains two private buckets:
+The recovery design covers three private buckets. The first two are live; `certificate-files` is introduced by the pending subcontractor-certificate migration:
 
 - `project-files`: project files, project photos, inspection attachments, task attachments, selection attachments/photos, workflow attachments, invoices, warranty/closeout attachments, and related uploads.
 - `takeoff-files`: source PDFs associated with saved Takeoffs.
+- `certificate-files`: subcontractor insurance certificate PDFs and images, created and policy-backed by migration `20260728170000_add_subcontractor_insurance_certificates.sql`.
 
 The `takeoff-files` bucket and its policies are created by a tracked migration. The repository references `project-files` and tracks later portal policies, but does not contain an idempotent migration that creates and fully configures that bucket. `SUPABASE_STORAGE_RLS_FIX.md` documents an older manual setup path and is not a complete recovery manifest.
 
@@ -116,7 +117,7 @@ The client uses local/session storage and IndexedDB for authentication/session c
 | Priority | Gap | Consequence | Required next action |
 | --- | --- | --- | --- |
 | Critical | Free Supabase production project reports no backups | Database/Auth loss may be unrecoverable | Establish a daily encrypted logical export or approve a paid backup option |
-| Critical | Storage object bytes have no independent backup | Documents, photos, attachments, and Takeoff PDFs may be unrecoverable even if database rows survive | Back up both buckets to an independent, versioned destination |
+| Critical | Storage object bytes require independent backup | Documents, photos, attachments, Takeoff PDFs, and insurance certificates may be unrecoverable even if database rows survive | Back up every private application bucket to an independent, versioned destination |
 | High | `project-files` bucket creation/configuration is not fully migration-backed | A new project cannot be recreated consistently from Git alone | Add an idempotent bucket/configuration migration after comparing live policies |
 | High | No restore drill | Backup completeness and real recovery time are unknown | Restore into an isolated non-production project and run verification |
 | High | Provider configuration and secret values have no recovery manifest | Recreated services may build but fail Auth, telemetry, deployment, or push | Store an encrypted owner-controlled configuration/credential recovery record |
@@ -165,7 +166,7 @@ After the owner chooses a path and destination, implement only:
 
 1. A secret-safe backup runner that fails closed when production identifiers or destination credentials are missing.
 2. Logical database exports that follow Supabase's roles/schema/data sequence and preserve migration history.
-3. Recursive exports of `project-files` and `takeoff-files`.
+3. Recursive exports of `project-files`, `takeoff-files`, and `certificate-files`.
 4. Encryption in transit and at rest with destination credentials separate from production credentials.
 5. A manifest containing timestamps, tool versions, checksums, aggregate table/object counts, and success/failure status—never row content, object names, credentials, URLs with secrets, or customer/project identifiers.
 6. Retention enforcement only after a newer backup is verified.
@@ -184,7 +185,7 @@ Do not:
 The repository now contains a manual-first `Production recovery backup` GitHub workflow and a fail-closed runner for the approved production project and B2 destination.
 
 - The runner follows Supabase's supported roles, schema, data, and migration-history dump sequence.
-- It recursively downloads `project-files` and `takeoff-files` through the authenticated Storage API.
+- It recursively downloads `project-files`, `takeoff-files`, and `certificate-files` through the authenticated Storage API.
 - The plaintext working set exists only in a restricted temporary runner directory and is encrypted with GnuPG AES-256 before transfer.
 - Each B2 object receives an explicit 30-day governance retention timestamp. The restricted automation key must not have `bypassGovernance`.
 - The runner downloads the encrypted B2 object and verifies its SHA-256 checksum, then verifies the retained object's Object Lock mode.

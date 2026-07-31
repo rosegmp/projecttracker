@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 
-const STORAGE_BUCKETS = ['project-files', 'takeoff-files'];
+const STORAGE_BUCKETS = ['project-files', 'takeoff-files', 'certificate-files'];
 const PAGE_SIZE = 1000;
 
 function fail(message) {

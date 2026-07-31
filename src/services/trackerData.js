@@ -3290,6 +3290,12 @@ function buildPerson(type, payload) {
     notes: payload.notes?.trim() || '',
     tags: normalizeTags(payload.tags),
     peopleType: type,
+    ...(type === 'sub'
+      ? {
+        certificateRequirement: payload.certificateRequirement === 'not_required' ? 'not_required' : 'required',
+        inactive: payload.inactive === true,
+      }
+      : {}),
   });
 }
 

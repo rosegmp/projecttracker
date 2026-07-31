@@ -21,6 +21,7 @@ const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
 const NativeScheduleView = lazy(() => import('./components/NativeScheduleView.jsx'));
 const NativeTasksView = lazy(() => import('./components/NativeTasksView.jsx'));
 const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'));
+const NativeCertificatesView = lazy(() => import('./components/NativeCertificatesView.jsx'));
 const NativeSettingsView = lazy(() => import('./components/NativeSettingsView.jsx'));
 const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
 const NativeFilesView = lazy(() =>
@@ -97,6 +98,11 @@ const tabs = [
     description: 'Switch between people types, search quickly, and choose the best view.',
   },
   {
+    id: 'certificates',
+    label: 'Certificates',
+    description: 'Track subcontractor insurance coverage, documents, and expiration dates.',
+  },
+  {
     id: 'settings',
     label: 'Settings',
     description: 'Controls that shape date calculations, calendar visibility, and page-level display helpers.',
@@ -107,7 +113,7 @@ const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
 const LAST_ACTIVE_TAB_KEY = 'cx_last_active_tab';
 const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks']);
 const validTabIds = new Set(tabs.map((tab) => tab.id));
-const NON_EDITOR_TAB_IDS = ['home', 'projects', 'calendar'];
+const NON_EDITOR_TAB_IDS = ['home', 'projects', 'calendar', 'certificates'];
 
 function normalizeAppUserRole(role) {
   return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only';
@@ -194,7 +200,7 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
 
 export default function App() {
   const nativeAndroid = isNativeAndroidApp();
-  const [activeTab, setActiveTab] = useState(getTabFromLocation);
+  const [activeTab, setActiveTab] = useState(() => nativeAndroid ? 'home' : getTabFromLocation());
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
   const [authSession, setAuthSession] = useState(null);
@@ -248,6 +254,7 @@ export default function App() {
   });
   const trackerStateRef = useRef(trackerState);
   const previousActiveTabRef = useRef(activeTab);
+  const handlingPopStateRef = useRef(false);
   const initialWorkspaceLoadedRef = useRef(false);
   const refreshRequestIdRef = useRef(0);
 
@@ -411,7 +418,10 @@ export default function App() {
 
   useEffect(() => {
     const previousTab = previousActiveTabRef.current;
-    const shouldPushHistory = isNativeAndroidApp() && previousTab !== activeTab;
+    const shouldPushHistory =
+      isNativeAndroidApp() &&
+      !handlingPopStateRef.current &&
+      previousTab !== activeTab;
     syncTabToLocation(activeTab, { push: shouldPushHistory });
     if (typeof window !== 'undefined' && validTabIds.has(activeTab)) {
       try {
@@ -421,11 +431,15 @@ export default function App() {
       }
     }
     previousActiveTabRef.current = activeTab;
+    handlingPopStateRef.current = false;
   }, [activeTab]);
 
   useEffect(() => {
     function handlePopState() {
-      setActiveTab(getTabFromLocation());
+      const nextTab = getTabFromLocation();
+      if (nextTab === previousActiveTabRef.current) return;
+      handlingPopStateRef.current = true;
+      setActiveTab(nextTab);
     }
 
     window.addEventListener('popstate', handlePopState);
@@ -1031,6 +1045,16 @@ export default function App() {
           refresh={refreshData}
           loading={loading}
           activeUser={activeUser}
+        />
+      );
+    }
+
+    if (activeTab === 'certificates') {
+      return (
+        <NativeCertificatesView
+          data={trackerState}
+          activeUser={activeUser}
+          onStateChange={setTrackerState}
         />
       );
     }

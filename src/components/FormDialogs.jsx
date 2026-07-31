@@ -189,6 +189,7 @@ export function EmailAddressModal({ draft, saving, onChange, onToggleSave, onClo
             <input
               autoFocus
               type="email"
+              multiple={draft.allowMultiple === true}
               value={draft.email}
               placeholder="name@example.com"
               onChange={(event) => onChange(event.target.value)}

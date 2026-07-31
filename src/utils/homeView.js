@@ -46,6 +46,7 @@ function predecessorIds(value) {
 function buildProjectBlockedSteps(project, todayIso) {
   const blocked = [];
   (project?.phases || []).forEach((phase) => {
+    if (isCompleteStatus(phase?.status)) return;
     const stepMap = new Map((phase.steps || []).filter((step) => step?.id).map((step) => [String(step.id), step]));
     (phase.steps || []).forEach((step) => {
       if (isStepComplete(step)) return;
@@ -275,7 +276,9 @@ export function buildHomeAttentionSummary(projects = [], scopedTasks = [], today
         attentionKind: 'Overdue',
       });
     });
-    blockedSteps.push(...buildProjectBlockedSteps(project, todayIso));
+    if (!isCompleteStatus(project?.status)) {
+      blockedSteps.push(...buildProjectBlockedSteps(project, todayIso));
+    }
   });
 
   const byDueDate = (left, right) => {

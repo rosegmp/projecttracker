@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatShortDate } from '../utils/calendarUi.js';
 import FluentIcon from './FluentIcon.jsx';
+import StepStatusButton from './StepStatusButton.jsx';
 
 function rowDateLabel(row) {
   if (!row.start && !row.end) return 'Date not set';
@@ -20,6 +21,7 @@ export default function MobileScheduleAgenda({
   onAddDelay,
   onEdit,
   onDependencies,
+  onStatus,
 }) {
   return (
     <div ref={agendaRef} className={`mobile-schedule-agenda${className ? ` ${className}` : ''}`} aria-label="Schedule agenda">
@@ -73,7 +75,10 @@ export default function MobileScheduleAgenda({
             tabIndex={row.type === 'step' ? -1 : undefined}
           >
             <div className="mobile-agenda-item-copy">
-              <strong>{row.label}</strong>
+              <div className="schedule-step-title">
+                <strong>{row.label}</strong>
+                {row.type === 'step' ? <StepStatusButton row={row} onClick={onStatus} /> : null}
+              </div>
               <span>{rowDateLabel(row)}</span>
               {row.subtitle ? <small>{row.subtitle}</small> : null}
               {row.assignees?.length ? <small>Assigned to {row.assignees.join(', ')}</small> : null}

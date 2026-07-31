@@ -21,6 +21,7 @@ import SavedFiltersControls from './SavedFiltersControls.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import SharedCalendarGrid from './SharedCalendarGrid.jsx';
 import MobileScheduleAgenda from './MobileScheduleAgenda.jsx';
+import StepStatusButton from './StepStatusButton.jsx';
 import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import {
   timelineItemIntersectsWindow,
@@ -29,8 +30,10 @@ import {
 } from '../utils/virtualization.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { formatAssignees, getScheduleAssignees, getTaskAssignees, scheduleAssigneeFields, taskAssigneeFields } from '../utils/assignees.js';
+import { normalizeStepStatus } from '../utils/stepStatus.js';
 
 const ScheduleItemModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.ScheduleItemModal })));
+const StepStatusModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.StepStatusModal })));
 const DelayModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.DelayModal })));
 const DependencyModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.DependencyModal })));
 const InspectionModal = lazy(() => import('./TaskInspectionDialogs.jsx').then((module) => ({ default: module.InspectionModal })));
@@ -150,6 +153,7 @@ export default function NativeScheduleView({
     setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1));
   const calendarSwipeHandlers = useHorizontalSwipe(goToNextCalendarMonth, goToPreviousCalendarMonth);
   const [editorDraft, setEditorDraft] = useState(null);
+  const [stepStatusDraft, setStepStatusDraft] = useState(null);
   const [delayDraft, setDelayDraft] = useState(null);
   const [dependencyDraft, setDependencyDraft] = useState(null);
   const [inspectionDraft, setInspectionDraft] = useState(null);
@@ -784,6 +788,59 @@ export default function NativeScheduleView({
       ),
       autoStart: false,
     });
+  }
+
+  function openStepStatus(row) {
+    setStepStatusDraft({
+      projectId: row.parentProjectId,
+      phaseId: row.parentPhaseId,
+      stepId: row.entityId,
+      name: row.label,
+      status: normalizeStepStatus(row.status, row.done),
+    });
+  }
+
+  async function handleSaveStepStatus() {
+    if (!stepStatusDraft) return;
+    const mutationKey = ['project', stepStatusDraft.projectId, 'step-status', stepStatusDraft.stepId];
+    beginMutation(mutationKey);
+    try {
+      const currentData = dataRef.current;
+      const project = currentData.projects.find((item) => item.id === stepStatusDraft.projectId);
+      const phase = project?.phases?.find((item) => item.id === stepStatusDraft.phaseId);
+      const step = phase?.steps?.find((item) => item.id === stepStatusDraft.stepId);
+      if (!project || !phase || !step) {
+        throw new Error('This schedule step is no longer available.');
+      }
+
+      const nextProject = resyncProjectSchedule({
+        ...project,
+        phases: (project.phases || []).map((item) => (
+          item.id === phase.id
+            ? {
+                ...item,
+                steps: (item.steps || []).map((candidate) => (
+                  candidate.id === step.id
+                    ? {
+                        ...candidate,
+                        status: stepStatusDraft.status,
+                        done: stepStatusDraft.status === 'done',
+                      }
+                    : candidate
+                )),
+              }
+            : item
+        )),
+      });
+      const nextTasks = syncProjectTasks(project.id, nextProject, currentData.tasks);
+      const nextState = await updateProjectAndTasks(currentData, project.id, nextProject, nextTasks);
+      commitScheduleState(nextState);
+      setStepStatusDraft(null);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to change the schedule step status.', 'Save failed');
+    } finally {
+      endMutation(mutationKey);
+    }
   }
 
   function buildStepDependencyOptions(projectId, phaseId, stepId = '', selectedPreds = [], projectsSource = data.projects) {
@@ -2258,6 +2315,9 @@ export default function NativeScheduleView({
     ? isMutating(['project', editorDraft.projectId, editorDraft.type, editorDraft.stepId || editorDraft.phaseId || 'create']) ||
       isMutating(['project', editorDraft.projectId, editorDraft.type, editorDraft.phaseId])
     : false;
+  const stepStatusSaving = stepStatusDraft
+    ? isMutating(['project', stepStatusDraft.projectId, 'step-status', stepStatusDraft.stepId])
+    : false;
   const delaySaving = delayDraft
     ? isMutating(['project', delayDraft.projectId, 'delay', delayDraft.delayId || 'create'])
     : false;
@@ -2418,6 +2478,7 @@ export default function NativeScheduleView({
             else if (row.type === 'task') openTaskEditor(row);
           }}
           onDependencies={openDependencyEditor}
+          onStatus={openStepStatus}
         />
         <div ref={ganttShellRef} className={`gantt-shell desktop-schedule-gantt${scheduleDisplayMode === 'agenda' ? ' desktop-hidden' : ''}`}>
           <div ref={ganttTableRef} className="gantt-table">
@@ -2478,9 +2539,12 @@ export default function NativeScheduleView({
                     ) : (
                       <span className="gantt-expand-spacer" />
                     )}
-                    <strong title={row.type === 'delay' && row.description ? row.description : undefined}>
-                      {row.label}
-                    </strong>
+                    <div className="schedule-step-title">
+                      <strong title={row.type === 'delay' && row.description ? row.description : undefined}>
+                        {row.label}
+                      </strong>
+                      {row.type === 'step' ? <StepStatusButton row={row} onClick={openStepStatus} /> : null}
+                    </div>
                   </div>
                   {row.type !== 'project' && row.subtitle ? <small>{row.subtitle}</small> : null}
                 </div>
@@ -2910,6 +2974,13 @@ export default function NativeScheduleView({
         onSave={() => handleSaveEditor('close')}
         onSaveAndNew={() => handleSaveEditor('new')}
         onDelete={handleDeleteEditor}
+      /> : null}
+      {stepStatusDraft ? <StepStatusModal
+        draft={stepStatusDraft}
+        saving={stepStatusSaving}
+        onChange={(status) => setStepStatusDraft((current) => (current ? { ...current, status } : current))}
+        onClose={() => setStepStatusDraft(null)}
+        onSave={handleSaveStepStatus}
       /> : null}
       {editorPredecessorDraft ? <StepPredecessorModal
         draft={editorPredecessorDraft}

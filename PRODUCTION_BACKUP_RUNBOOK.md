@@ -38,7 +38,7 @@ The workflow rejects a Supabase URL or database URL that does not contain the ap
 2. Open **Actions → Production recovery backup → Run workflow**.
 3. Confirm the run reports:
    - logical database exports completed;
-   - two Storage buckets exported;
+   - all three Storage buckets (`project-files`, `takeoff-files`, and `certificate-files`) exported after the certificate migration is active;
    - encrypted upload completed;
    - downloaded B2 checksum matched;
    - Object Lock mode is `GOVERNANCE`.
@@ -64,5 +64,7 @@ Do not configure lifecycle deletion until at least two scheduled recovery points
 - Encrypted B2 object size: 317,835,231 bytes
 - Verification: downloaded SHA-256 matched; Object Lock mode `GOVERNANCE`; retention 30 days
 - Daily schedule: enabled with `PRODUCTION_BACKUPS_ENABLED=true`
+
+The subcontractor-certificate integration adds the private `certificate-files` bucket. The backup exporter is prepared to include it in the same encrypted recovery point. Apply migration `20260728170000_add_subcontractor_insurance_certificates.sql` before deploying the updated scheduled workflow so the first three-bucket run cannot fail on a missing bucket.
 
 The two preceding configuration attempts failed before a recovery point was created: run `30300098932` rejected a missing database URL, and run `30300422870` rejected invalid pooler authentication. This is expected fail-closed behavior.
