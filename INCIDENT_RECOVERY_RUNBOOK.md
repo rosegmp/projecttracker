@@ -111,7 +111,7 @@ The database recovery operator must use the Supabase SQL Editor or another appro
 
 4. Confirm an authenticated client can still read Home and a project, displays the maintenance banner, and receives `APP_WRITES_FROZEN` for a write. Do not create production test records. Offline changes must remain pending rather than becoming failed items.
 5. Compare application/database activity timestamps against the confirmed freeze time before selecting a recovery point. The append-only `app_runtime_control_events` table records activation and release metadata.
-6. Complete the recovery validation sequence. The service-role key and direct recovery/database sessions deliberately bypass the table and Storage guards so authorized recovery operations remain possible. Edge Functions explicitly honor the freeze even though they use a service-role client.
+6. Complete the recovery validation sequence. Service-role and direct recovery/database sessions are not denied by the freeze guards, although their ordinary grants still apply, so authorized recovery operations remain possible. Edge Functions explicitly honor the freeze even though they use a service-role client.
 7. Release the freeze only after database, Storage, authorization, Edge Function, web, and Android checks pass:
 
    ```sql

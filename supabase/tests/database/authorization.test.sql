@@ -202,11 +202,15 @@ select results_eq(
   'storage insert, update, and delete paths have restrictive maintenance policies'
 );
 
+-- The baseline app schema intentionally grants clients directly and uses
+-- security-definer RPCs; grant this transaction-scoped probe only so the test
+-- isolates the maintenance trigger's service-role bypass from table grants.
+grant select, update on public.tasks to service_role;
 set local role service_role;
 set local "request.jwt.claims" = '{"role":"service_role"}';
 select lives_ok(
   $$update public.tasks set data = data || '{"recoveryChecked":true}'::jsonb where id = 'auth-task-a'$$,
-  'the service-role recovery path can write while application clients are frozen'
+  'an otherwise-authorized service-role recovery path bypasses the freeze guard'
 );
 
 reset role;
