@@ -1,6 +1,6 @@
 begin;
 
-select plan(30);
+select plan(33);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -21,6 +21,9 @@ insert into public.project_user_access (project_id, user_id, position) values
 insert into public.tasks (id, data) values
   ('auth-task-a', '{"name":"Authorized task","projectId":"auth-project-a"}'),
   ('auth-task-b', '{"name":"Restricted task","projectId":"auth-project-b"}');
+
+insert into public.project_inspections (project_id, id, position, data) values
+  ('auth-project-a', 'auth-inspection-a', 0, '{"id":"auth-inspection-a","inspectionType":"Framing","status":"scheduled"}');
 
 insert into public.subs (id, data) values
   ('auth-sub-a', '{"company":"Authorized Subcontractor","peopleType":"sub"}');
@@ -69,6 +72,16 @@ select lives_ok(
   )$$,
   'editors can create subcontractor insurance certificates'
 );
+select throws_ok(
+  $$select public.delete_project_inspection('auth-project-a', 'auth-inspection-a', 99, '{}'::jsonb)$$,
+  '40001',
+  'NORMALIZED_VERSION_CONFLICT:inspections:auth-inspection-a',
+  'focused inspection delete rejects a stale device version'
+);
+select lives_ok(
+  $$select public.delete_project_inspection('auth-project-a', 'auth-inspection-a', 1, '{}'::jsonb)$$,
+  'assigned editors can delete one current inspection through the focused RPC'
+);
 select results_eq(
   'select subcontractor_id from public.insurance_certificates',
   array['auth-sub-a'::text],
@@ -91,6 +104,12 @@ select throws_ok(
   '42501',
   'You do not have permission to edit insurance certificates.',
   'view-only users cannot edit subcontractor insurance certificates'
+);
+select throws_ok(
+  $$select public.delete_project_inspection('auth-project-a', 'auth-inspection-a', 1, '{}'::jsonb)$$,
+  '42501',
+  'You do not have access to edit this project.',
+  'view-only users cannot delete inspections through the focused RPC'
 );
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000004","email":"customer@test.local","role":"authenticated"}';

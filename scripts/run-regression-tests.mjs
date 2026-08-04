@@ -235,13 +235,43 @@ const tests = [
       );
       assert.equal(logs[0].notes, 'Device notes');
       assert.equal(logs[0]._offlineStatus, 'pending');
+      assert.equal(logs[0]._offlineServerRecord.notes, 'Server notes');
       const state = applyQueuedInspectionOperations({
         projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', status: 'scheduled' }] }],
       }, operations);
       assert.equal(state.projects[0].inspections[0].status, 'failed');
       assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
+      assert.equal(state.projects[0].inspections[0]._offlineServerRecord.status, 'scheduled');
       assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
       assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
+    },
+  },
+  {
+    name: 'offline queued deletes remain visible as reviewable optimistic tombstones',
+    run() {
+      const deleteOperations = [
+        {
+          kind: 'daily-log.save', action: 'delete', projectId: 'project-1', entityId: 'log-1',
+          status: 'pending', queuedAt: '2026-08-04T17:00:00.000Z',
+          payload: { id: 'log-1', date: '2026-08-04', title: 'Daily log', version: 3 },
+        },
+        {
+          kind: 'inspection.save', action: 'delete', projectId: 'project-1', entityId: 'inspection-1',
+          status: 'needs-attention', queuedAt: '2026-08-04T17:01:00.000Z',
+          payload: { id: 'inspection-1', inspectionType: 'Framing', status: 'scheduled' },
+        },
+      ];
+      const logs = mergeQueuedDailyLogs(
+        [{ id: 'log-1', date: '2026-08-04', title: 'Daily log', version: 3 }],
+        deleteOperations,
+      );
+      assert.equal(logs[0]._offlineDeleted, true);
+      assert.equal(logs[0]._offlineAction, 'delete');
+      const state = applyQueuedInspectionOperations({
+        projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', inspectionType: 'Framing', status: 'scheduled' }] }],
+      }, deleteOperations);
+      assert.equal(state.projects[0].inspections[0]._offlineDeleted, true);
+      assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
     },
   },
   {
@@ -260,8 +290,11 @@ const tests = [
       assert.match(syncSource, /await uploadStoredAttachment\(operation, record, 'daily-log-photos'/);
       assert.match(syncSource, /await removeOfflineAttachments\(operation\.id\)/);
       assert.match(workflowSource, /queueDailyLog: queueDailyLogRecord/);
+      assert.match(workflowSource, /queueDailyLogDelete/);
       assert.match(workflowSource, /_offlineAttachmentId: offlineAttachmentId/);
       assert.match(inspectionSource, /export async function queueProjectInspectionOffline/);
+      assert.match(inspectionSource, /export async function queueProjectInspectionDeleteOffline/);
+      assert.match(inspectionSource, /delete_project_inspection/);
       assert.match(inspectionSource, /storageProvider: 'device'/);
     },
   },

@@ -186,6 +186,54 @@ test('maintenance mode keeps staff workspace readable and disables project chang
   await expect(page.getByRole('button', { name: 'Staff Test Project', exact: true })).toBeVisible();
 });
 
+test('staff can review and discard one conflicted device copy', async ({ page }) => {
+  const appUserId = 'offline-review-editor';
+  const authUserId = '40000000-0000-4000-8000-000000000011';
+  const projectId = 'offline-review-project';
+  await page.addInitScript(({ userId, operation }) => {
+    window.localStorage.setItem(
+      `project-tracker:offline-operations:v1:${userId}`,
+      JSON.stringify([operation]),
+    );
+  }, {
+    userId: authUserId,
+    operation: {
+      id: 'offline-review-operation',
+      userId: authUserId,
+      kind: 'daily-log.save',
+      action: 'save',
+      projectId,
+      entityId: 'daily-log-review',
+      payload: { id: 'daily-log-review', date: '2026-08-04', title: 'Daily log', notes: 'Device framing notes', version: 2 },
+      expected: { version: 2 },
+      queuedAt: '2026-08-04T17:00:00.000Z',
+      updatedAt: '2026-08-04T17:01:00.000Z',
+      status: 'needs-attention',
+      lastError: 'This record changed on the server. Reopen it and apply the device changes manually.',
+    },
+  });
+  await mockStaffBackend(page, {
+    role: 'Edit',
+    email: 'offline-review@example.test',
+    appUserId,
+    authUserId,
+    projects: [projectRow(projectId, appUserId)],
+  });
+
+  await page.goto('/?tab=projects');
+  await expect(page.getByText('1 device-saved change need attention')).toBeVisible();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  const reviewDialog = page.getByRole('dialog', { name: 'Review device-saved changes' });
+  await expect(reviewDialog.getByText('2026-08-04')).toBeVisible();
+  await expect(reviewDialog.getByText('Staff Test Project')).toBeVisible();
+  await expect(reviewDialog.getByText(/changed on the server/)).toBeVisible();
+  await reviewDialog.getByRole('button', { name: 'Discard' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Discard device copy' });
+  await confirmDialog.getByRole('button', { name: 'Discard' }).click();
+  await expect(reviewDialog.getByText('No device-saved changes')).toBeVisible();
+  await expect(page.getByText('device-saved change need attention')).toHaveCount(0);
+});
+
 test('administrator creates a project through the versioned mutation boundary', async ({ page }) => {
   const appUserId = 'mutation-admin';
   let projectOperation = null;

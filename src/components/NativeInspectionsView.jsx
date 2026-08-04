@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  getStoredAuthSession, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
+  getStoredAuthSession, queueProjectInspectionDeleteOffline, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
@@ -570,6 +570,13 @@ export default function NativeInspectionsView({
       const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
       if (!project) return;
       const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
+      if (!existing) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        const nextState = await queueProjectInspectionDeleteOffline(data, project.id, existing);
+        onStateChange(nextState);
+        setInspectionDraft(null);
+        return;
+      }
       const nextProject = {
         ...project,
         inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
@@ -582,6 +589,18 @@ export default function NativeInspectionsView({
           .map((file) => deleteProjectFileFromStorage(file)),
       );
       setInspectionDraft(null);
+    } catch (error) {
+      if (isOfflineNetworkError(error)) {
+        const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
+        const existing = (project?.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
+        if (project && existing) {
+          const nextState = await queueProjectInspectionDeleteOffline(data, project.id, existing);
+          onStateChange(nextState);
+          setInspectionDraft(null);
+          return;
+        }
+      }
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to delete inspection.', 'Delete failed');
     } finally {
       endMutation(mutationKey);
     }
@@ -616,11 +635,11 @@ export default function NativeInspectionsView({
                   {inspections.map((inspection) => {
                     const operation = offlineOperationByRecord.get(`${selectedProject?.id || inspection.projectId}:${inspection.id}`);
                     return (
-                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status}`}>
+                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status}${inspection._offlineDeleted ? ' offline-delete-pending' : ''}`}>
                       <div className="inspection-card-header">
                         <div>
                           <p className="project-status">{inspection.status}</p>
-                          {operation ? <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : 'Saved on device'}</span> : null}
+                          {operation ? <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.action === 'delete' ? 'Delete saved on device' : 'Saved on device'}</span> : null}
                           <h3>{inspection.subcode || 'No subcode'}</h3>
                           <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
                         </div>
@@ -628,7 +647,7 @@ export default function NativeInspectionsView({
                           className={`button secondary gantt-icon-button${isMutating(['inspection', inspection.id]) ? ' is-loading' : ''}`}
                           type="button"
                           onClick={() => startEdit(inspection)}
-                          disabled={isMutating(['inspection', inspection.id]) || readOnly}
+                          disabled={isMutating(['inspection', inspection.id]) || readOnly || operation?.action === 'delete'}
                           title="Edit inspection"
                           aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'}`}
                           aria-busy={isMutating(['inspection', inspection.id])}

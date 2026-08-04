@@ -1624,6 +1624,7 @@ function runTrackerMutation(key, mutationFn, invalidate = [['tracker'], ['supaba
 function stripRecordMetadata(item) {
   if (!item || typeof item !== 'object') return item;
   const { _version, _normalizedVersions, _personKey, ...data } = item;
+  Object.keys(data).filter((key) => key.startsWith('_offline')).forEach((key) => delete data[key]);
   return data;
 }
 
@@ -3121,6 +3122,7 @@ export async function queueProjectInspectionOffline(
     id: operationId,
     userId,
     kind: 'inspection.save',
+    action: 'save',
     projectId,
     entityId: inspection.id,
     payload,
@@ -3145,6 +3147,64 @@ export async function queueProjectInspectionOffline(
           inspections: (item.inspections || []).some((existing) => existing.id === inspection.id)
             ? item.inspections.map((existing) => existing.id === inspection.id ? queuedInspection : existing)
             : [...(item.inspections || []), queuedInspection],
+        }
+      : item),
+  };
+}
+
+export async function queueProjectInspectionDeleteOffline(currentState, projectId, inspection) {
+  const project = currentState.projects.find((item) => item.id === projectId);
+  if (!project || !inspection?.id) throw new Error('Project inspection was not found.');
+  const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+  if (!userId) throw new Error('Sign in before deleting an inspection offline.');
+  const existingOperation = getOfflineOperations(userId, {
+    kind: 'inspection.save', projectId,
+  }).find((operation) => operation.entityId === inspection.id);
+  const expectedVersion = Number(project._normalizedVersions?.inspections?.[inspection.id]) || 0;
+  if (expectedVersion <= 0 && existingOperation) {
+    await removeOfflineAttachments(existingOperation.id);
+    removeOfflineOperationsForEntity(userId, {
+      kind: 'inspection.save', projectId, entityId: inspection.id,
+    });
+    return {
+      ...currentState,
+      projects: currentState.projects.map((item) => item.id === projectId
+        ? { ...item, inspections: (item.inspections || []).filter((entry) => entry.id !== inspection.id) }
+        : item),
+    };
+  }
+  if (existingOperation) await removeOfflineAttachments(existingOperation.id);
+  const queued = enqueueOfflineOperation(userId, {
+    id: existingOperation?.id || createOfflineOperationId(),
+    userId,
+    kind: 'inspection.save',
+    action: 'delete',
+    projectId,
+    entityId: inspection.id,
+    payload: stripRecordMetadata(inspection),
+    expected: existingOperation?.expected || {
+      version: expectedVersion,
+      fileVersions: {
+        sticker: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:sticker`]) || 0,
+        report: Number(project._normalizedVersions?.inspectionFiles?.[`${inspection.id}:report`]) || 0,
+      },
+    },
+    cleanupFiles: [inspection.stickerFile, inspection.reportFile].filter((file) => file?.storagePath),
+    attachmentIds: [],
+  });
+  const tombstone = {
+    ...inspection,
+    _offlineAction: 'delete',
+    _offlineDeleted: true,
+    _offlineStatus: queued.status,
+    _offlineQueuedAt: queued.queuedAt,
+  };
+  return {
+    ...currentState,
+    projects: currentState.projects.map((item) => item.id === projectId
+      ? {
+          ...item,
+          inspections: (item.inspections || []).map((entry) => entry.id === inspection.id ? tombstone : entry),
         }
       : item),
   };
@@ -3239,6 +3299,21 @@ export async function syncQueuedProjectInspection(operation) {
       report: Number(operation.expected?.fileVersions?.report) || 0,
     },
   }, 'Queued inspection sync');
+}
+
+export async function syncQueuedProjectInspectionDelete(operation) {
+  if (!operation?.projectId || !operation?.entityId) {
+    throw new Error('Queued inspection delete is missing its project or inspection identifier.');
+  }
+  return callPortalVisibilityRpc('delete_project_inspection', {
+    p_project_id: operation.projectId,
+    p_inspection_id: operation.entityId,
+    p_expected_version: Number(operation.expected?.version) || 0,
+    p_expected_file_versions: {
+      sticker: Number(operation.expected?.fileVersions?.sticker) || 0,
+      report: Number(operation.expected?.fileVersions?.report) || 0,
+    },
+  }, 'Queued inspection delete');
 }
 
 export async function updateProjects(currentState, projectUpdates) {

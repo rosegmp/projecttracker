@@ -73,8 +73,9 @@ function remoteBody(type, projectId, record) {
   const config = CONFIG[type];
   const serializableRecord = { ...record };
   delete serializableRecord.deletedPhotos;
-  delete serializableRecord._offlineStatus;
-  delete serializableRecord._offlineQueuedAt;
+  Object.keys(serializableRecord)
+    .filter((key) => key.startsWith('_offline'))
+    .forEach((key) => delete serializableRecord[key]);
   const shared = { id: record.id, project_id: projectId, title: record.title, data: { ...serializableRecord, projectId, id: record.id } };
   delete shared.data.version;
   if (type === 'dailyLogs') return { ...shared, log_date: record.date };
@@ -159,6 +160,7 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
       id: operationId,
       userId,
       kind: 'daily-log.save',
+      action: 'save',
       projectId: scopedProjectId,
       entityId: record.id,
       payload: prepared,
@@ -180,8 +182,52 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
     return { record: queuedRecord, local: true, offline: true, queued: true };
   }
 
+  async function queueDailyLogDelete(record) {
+    assertEdit();
+    if (!configured || !userId) throw new Error('Sign in before deleting a daily log offline.');
+    const existingOperation = getOfflineOperations(userId, {
+      kind: 'daily-log.save',
+      projectId: scopedProjectId,
+    }).find((operation) => operation.entityId === record.id);
+    if (Number(record.version) <= 0 && existingOperation) {
+      await removeOfflineAttachments(existingOperation.id);
+      removeOfflineOperationsForEntity(userId, {
+        kind: 'daily-log.save', projectId: scopedProjectId, entityId: record.id,
+      });
+      writeLocal('dailyLogs', scopedProjectId, readLocal('dailyLogs', scopedProjectId).filter((item) => item.id !== record.id));
+      return { local: true, offline: true, discarded: true };
+    }
+    const operation = {
+      id: existingOperation?.id || createOfflineOperationId(),
+      userId,
+      kind: 'daily-log.save',
+      action: 'delete',
+      projectId: scopedProjectId,
+      entityId: record.id,
+      payload: { ...remoteBody('dailyLogs', scopedProjectId, record).data, version: Number(record.version) || 0 },
+      expected: existingOperation?.expected || { version: Number(record.version) || 0 },
+      cleanupFiles: contractorEntries(record).flatMap((entry) => entry.photos || []).filter((file) => file?.storagePath),
+      attachmentIds: [],
+    };
+    if (existingOperation) await removeOfflineAttachments(existingOperation.id);
+    const queued = enqueueOfflineOperation(userId, operation);
+    const tombstone = {
+      ...record,
+      _offlineAction: 'delete',
+      _offlineDeleted: true,
+      _offlineStatus: queued.status,
+      _offlineQueuedAt: queued.queuedAt,
+    };
+    writeLocal('dailyLogs', scopedProjectId, [
+      tombstone,
+      ...readLocal('dailyLogs', scopedProjectId).filter((item) => item.id !== record.id),
+    ]);
+    return { record: tombstone, local: true, offline: true, queued: true };
+  }
+
   return {
     queueDailyLog: queueDailyLogRecord,
+    queueDailyLogDelete,
     async list(type) {
       const config = CONFIG[type];
       if (!config) throw new Error('Unknown project workflow.');
@@ -268,6 +314,9 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         if (!response.ok) throw new Error(await response.text());
         return { local: false };
       } catch (error) {
+        if (type === 'dailyLogs' && offlineQueueEnabled && isOfflineNetworkError(error)) {
+          return queueDailyLogDelete(record);
+        }
         if (!missingTable(error)) throw error;
         writeLocal(type, scopedProjectId, readLocal(type, scopedProjectId).filter((item) => item.id !== record.id));
         return { local: true, setupRequired: true };

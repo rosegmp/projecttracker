@@ -386,9 +386,13 @@ export default function ProjectWorkflowManager({
     if (!confirmed) return;
     setSaving(true);
     try {
-      await service.remove(workflowType, record);
-      if (daily) await Promise.allSettled(contractorPhotos(record).map((photo) => deleteProjectFileFromStorage(photo)));
-      else await deleteWorkflowAttachments(record.attachments);
+      const result = await service.remove(workflowType, record);
+      if (daily) {
+        if (!result.queued) await Promise.allSettled(contractorPhotos(record).map((photo) => deleteProjectFileFromStorage(photo)));
+      } else {
+        await deleteWorkflowAttachments(record.attachments);
+      }
+      if (result.queued) setMessage('Delete saved on this device. It will sync automatically when the connection returns.');
       setDraft(null);
       await loadRecords();
     }
@@ -495,10 +499,10 @@ export default function ProjectWorkflowManager({
       {loading ? <div className="empty-state compact"><p>Loading {daily ? 'daily logs' : 'change orders'}...</p></div> : records.length ? (
         <div className="project-workflow-list">
           {records.map((record) => (
-            <article className="project-workflow-card" key={record.id}>
+            <article className={`project-workflow-card${record._offlineDeleted ? ' offline-delete-pending' : ''}`} key={record.id}>
               <div className="project-workflow-card-heading">
-                <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
-                {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
+                <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : record._offlineDeleted ? 'Delete saved on device' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
+                {canEdit && !record._offlineDeleted ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
               </div>
               {daily ? (
                 <>

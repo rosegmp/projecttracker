@@ -534,10 +534,65 @@ a {
 .offline-sync-banner > div {
   display: grid;
   gap: 2px;
+  flex: 1;
 }
 
 .offline-sync-banner span {
   font-size: var(--font-size-sm);
+}
+
+.offline-review-modal {
+  width: min(720px, 100%);
+}
+
+.offline-review-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.offline-review-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-subtle);
+}
+
+.offline-review-item.error,
+.offline-delete-pending {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+
+.offline-review-item h3,
+.offline-review-item p {
+  margin: 5px 0 0;
+}
+
+.offline-review-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.offline-review-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .offline-review-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .offline-review-actions > .button {
+    flex: 1;
+  }
 }
 
 .workspace-shell-bar {
