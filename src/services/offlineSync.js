@@ -2,6 +2,7 @@ import { createConstructionWorkflowService } from './constructionWorkflows.js';
 import {
   deleteProjectFileFromStorage,
   syncQueuedProjectInspection,
+  syncQueuedProjectInspectionDelete,
   uploadProjectFileToStorage,
 } from './trackerData.js';
 import {
@@ -95,9 +96,11 @@ async function syncOperation(operation) {
       canEdit: true,
       offlineQueueEnabled: false,
     });
+    if (operation.action === 'delete') return service.remove('dailyLogs', operation.payload);
     return service.save('dailyLogs', await materializeDailyLog(operation, storedAttachments));
   }
   if (operation.kind === 'inspection.save') {
+    if (operation.action === 'delete') return syncQueuedProjectInspectionDelete(operation);
     return syncQueuedProjectInspection({
       ...operation,
       payload: await materializeInspection(operation, storedAttachments),

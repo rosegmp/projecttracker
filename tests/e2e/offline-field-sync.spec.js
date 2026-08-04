@@ -77,6 +77,11 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
       return;
     }
     if (url.pathname.endsWith('/project_daily_logs')) {
+      if (request.method() === 'DELETE') {
+        savedDailyLog = null;
+        await route.fulfill({ status: 204, body: '' });
+        return;
+      }
       if (request.method() === 'POST') {
         const body = request.postDataJSON();
         savedDailyLog = {
@@ -178,6 +183,18 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
       count.onerror = () => reject(count.error);
     };
   }))).toBe(0);
+
+  await context.setOffline(true);
+  await page.locator('.project-workflow-card').getByRole('button', { name: /Edit daily log/ }).click();
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Delete record' }).getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByText('Delete saved on device').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Review device-saved changes' }).getByRole('heading', { name: /Delete/ })).toBeVisible();
+  await page.getByRole('dialog', { name: 'Review device-saved changes' }).getByRole('button', { name: 'Close' }).click();
+  await context.setOffline(false);
+  await expect.poll(() => savedDailyLog).toBe(null);
+  await expect(page.getByText('Delete saved on device')).toHaveCount(0);
 
   uploadedStoragePaths.length = 0;
   await page.getByRole('tab', { name: 'Inspections' }).click();

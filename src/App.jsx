@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import AppDialogHost, { showAppAlert } from './components/AppDialogs.jsx';
+import AppDialogHost, { showAppAlert, showAppConfirm } from './components/AppDialogs.jsx';
 import FluentIcon from './components/FluentIcon.jsx';
 import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
 import { getVisibleProjectsForUser } from './utils/accessUi.js';
@@ -12,8 +12,11 @@ import {
   applyQueuedInspectionOperations,
   getOfflineOperations,
   getOfflineOperationSummary,
+  removeOfflineOperation,
   subscribeToOfflineOperations,
+  updateOfflineOperation,
 } from './services/offlineOperations.js';
+import { removeOfflineAttachments } from './services/offlineAttachmentStore.js';
 import { flushOfflineOperations } from './services/offlineSync.js';
 import {
   DEFAULT_RUNTIME_STATUS,
@@ -244,6 +247,8 @@ export default function App() {
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [offlineSyncSummary, setOfflineSyncSummary] = useState({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
+  const [showOfflineReview, setShowOfflineReview] = useState(false);
+  const [offlineReviewBusyId, setOfflineReviewBusyId] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState(DEFAULT_RUNTIME_STATUS);
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
@@ -506,6 +511,51 @@ export default function App() {
       allowedTabs: base.allowedTabs.filter((tabId) => configuredTabs.has(tabId)),
     };
   }, [activeUser?.role, runtimeStatus.writesFrozen, trackerState.settings?.visibleTopLevelTabs]);
+
+  const offlineReviewOperations = getOfflineOperations(String(authSession?.user?.id || ''));
+
+  function offlineOperationLabel(operation) {
+    const projectName = trackerState.projects.find((project) => project.id === operation.projectId)?.name || 'Project';
+    const record = operation.payload || {};
+    const recordName = operation.kind === 'daily-log.save'
+      ? record.date || record.title || 'Daily log'
+      : record.subcode || record.inspectionType || 'Inspection';
+    const deviceSummary = operation.kind === 'daily-log.save'
+      ? [record.weather, record.notes, record.delays, record.issues].find((value) => String(value || '').trim())
+      : [record.status, record.date, record.notes].filter((value) => String(value || '').trim()).join(' · ');
+    return { projectName, recordName, deviceSummary: String(deviceSummary || '').trim().slice(0, 240) };
+  }
+
+  async function retryOfflineReviewOperation(operation) {
+    const userId = String(authSession?.user?.id || '');
+    if (!userId || !operation?.id || runtimeStatus.writesFrozen) return;
+    setOfflineReviewBusyId(operation.id);
+    try {
+      updateOfflineOperation(userId, operation.id, { status: 'pending', lastError: '' });
+      const result = await flushOfflineOperations(userId);
+      if (result.synced > 0) await refreshData({ force: true });
+    } finally {
+      setOfflineReviewBusyId('');
+    }
+  }
+
+  async function discardOfflineReviewOperation(operation) {
+    const userId = String(authSession?.user?.id || '');
+    if (!userId || !operation?.id) return;
+    const { recordName } = offlineOperationLabel(operation);
+    const confirmed = await showAppConfirm(`Discard the device-saved ${operation.action === 'delete' ? 'delete for' : 'changes to'} ${recordName}?`, {
+      title: 'Discard device copy', confirmLabel: 'Discard', tone: 'danger',
+    });
+    if (!confirmed) return;
+    setOfflineReviewBusyId(operation.id);
+    try {
+      await removeOfflineAttachments(operation.id);
+      removeOfflineOperation(userId, operation.id);
+      await refreshData({ force: true });
+    } finally {
+      setOfflineReviewBusyId('');
+    }
+  }
 
   useEffect(() => {
     if (!nativeAndroid || loading || !authSession || !activeUser?.id || runtimeStatus.writesFrozen) return;
@@ -1115,6 +1165,44 @@ export default function App() {
   return (
     <main className="app-shell">
       <AppDialogHost />
+      {showOfflineReview ? (
+        <div className="modal-backdrop" onClick={() => setShowOfflineReview(false)}>
+          <div className="modal-card offline-review-modal" role="dialog" aria-modal="true" aria-labelledby="offline-review-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Offline field work</p>
+                <h2 id="offline-review-title">Review device-saved changes</h2>
+                <p>Retry one record while online, or discard its device copy to keep the current server record.</p>
+              </div>
+              <button className="button secondary" type="button" onClick={() => setShowOfflineReview(false)}>Close</button>
+            </div>
+            {offlineReviewOperations.length ? (
+              <div className="offline-review-list">
+                {offlineReviewOperations.map((operation) => {
+                  const { projectName, recordName, deviceSummary } = offlineOperationLabel(operation);
+                  const busy = offlineReviewBusyId === operation.id;
+                  return (
+                    <article className={`offline-review-item${operation.status === 'needs-attention' ? ' error' : ''}`} key={operation.id}>
+                      <div>
+                        <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.status === 'syncing' ? 'Syncing' : 'Saved on device'}</span>
+                        <h3>{operation.action === 'delete' ? `Delete ${recordName}` : recordName}</h3>
+                        <p>{projectName} · {operation.kind === 'daily-log.save' ? 'Daily log' : 'Inspection'}</p>
+                        {deviceSummary ? <p><strong>Device copy:</strong> {deviceSummary}</p> : null}
+                        {operation.lastError ? <p className="offline-review-error">{operation.lastError}</p> : null}
+                        <small>Saved {operation.updatedAt ? new Date(operation.updatedAt).toLocaleString() : 'on this device'}</small>
+                      </div>
+                      <div className="offline-review-actions">
+                        <button className={`button primary${busy ? ' is-loading' : ''}`} type="button" onClick={() => void retryOfflineReviewOperation(operation)} disabled={busy || runtimeStatus.writesFrozen || navigator.onLine === false}>Retry</button>
+                        <button className="button secondary danger" type="button" onClick={() => void discardOfflineReviewOperation(operation)} disabled={busy}>Discard</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <div className="empty-state compact"><h3>No device-saved changes</h3><p>The offline queue is clear.</p></div>}
+          </div>
+        </div>
+      ) : null}
       {androidProjectPrompt ? (
         <div className="modal-backdrop" onClick={() => setAndroidProjectPrompt(null)}>
           <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="android-project-action-title" onClick={(event) => event.stopPropagation()}>
@@ -1499,6 +1587,7 @@ export default function App() {
                 : `${offlineSyncSummary.total} change${offlineSyncSummary.total === 1 ? '' : 's'} will sync automatically when a connection is available.`}
             </span>
           </div>
+          <button className="button secondary" type="button" onClick={() => setShowOfflineReview(true)}>Review</button>
         </section>
       ) : null}
       {projectDrawerOpen ? (

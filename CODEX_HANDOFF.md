@@ -5,7 +5,7 @@ Updated: 2026-08-04
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `codex/finalize-write-freeze-record` (docs-only checkpoint from clean `main` at `94abb87`)
+- Branch: `codex/offline-conflict-review` (Recommendation #4 milestone 4.3 from clean `main` at `13f2eca`)
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
@@ -219,9 +219,17 @@ Updated: 2026-08-04
 
 ### Next offline milestones
 
-1. Add review controls for conflicted device copies, plus queued deletes and same-record retry/discard actions.
-2. Extend the offline queue to the next highest-value field workflows after conflict handling is proven.
-3. Extend the proven queue to task updates and warranty/punch items; keep administration, access control, budgets, and destructive bulk operations online-only.
+1. Extend the proven queue to task updates and warranty/punch items.
+2. Keep administration, access control, budgets, and destructive bulk operations online-only.
+
+### Milestone 4.3 implementation checkpoint: conflict review and queued deletes
+
+- The global device-sync banner now opens a responsive **Review device-saved changes** dialog on desktop and Android. Each queued daily log or inspection shows its project, record context, device-copy summary, saved time, current status, and privacy-safe synchronization reason.
+- Each record can be retried independently while online or discarded after confirmation. Retry preserves the original optimistic version and attempts only the queued record sequence; discard removes its device attachments and refreshes current server data rather than silently overwriting another user's changes.
+- Daily-log and inspection deletes can now be queued offline. They remain visible as **Delete saved on device** tombstones until reconnect, can be reviewed/discarded, coalesce with an earlier device edit for the same record, and clean stored files only after the version-checked server delete succeeds.
+- Migration `20260804170000_add_focused_inspection_delete.sql` adds an editor-authorized, project-scoped inspection delete RPC that locks and verifies the inspection plus sticker/report versions before deleting. Stale versions fail with `NORMALIZED_VERSION_CONFLICT`; View Only users remain denied.
+- Regression coverage now verifies reviewable tombstone overlays and retains the current server record alongside the device overlay. The focused review/discard journey and the expanded offline attachment/reconnect/delete journey pass, as do all 146 regression tests, all 13 Playwright journeys, the 690-module production build, and `git diff --check`.
+- This checkpoint changes web/Android runtime source and adds one migration. It is not yet committed or deployed; the protected Supabase job must pass all 33 authorization assertions before the additive production migration is applied.
 
 ### Android field-entry and file-action checkpoint
 

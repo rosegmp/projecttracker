@@ -96,6 +96,10 @@ export function updateOfflineOperation(userId, operationId, updates) {
   return operations[index];
 }
 
+export function getOfflineOperation(userId, operationId) {
+  return readStoredOperations(userId).find((operation) => operation.id === operationId) || null;
+}
+
 export function removeOfflineOperation(userId, operationId) {
   const operations = readStoredOperations(userId);
   const next = operations.filter((operation) => operation.id !== operationId);
@@ -148,11 +152,15 @@ export function mergeQueuedDailyLogs(records, operations) {
   (operations || [])
     .filter((operation) => operation.kind === 'daily-log.save')
     .forEach((operation) => {
+      const serverRecord = byId.get(operation.entityId) || null;
       byId.set(operation.entityId, {
-        ...(byId.get(operation.entityId) || {}),
+        ...(serverRecord || {}),
         ...operation.payload,
+        _offlineAction: operation.action || 'save',
+        _offlineDeleted: operation.action === 'delete',
         _offlineStatus: operation.status,
         _offlineQueuedAt: operation.queuedAt,
+        _offlineServerRecord: serverRecord,
       });
     });
   return [...byId.values()].sort((left, right) =>
@@ -177,11 +185,15 @@ export function applyQueuedInspectionOperations(state, operations) {
       if (!queued?.length) return project;
       const inspections = new Map((project.inspections || []).map((inspection) => [String(inspection.id), inspection]));
       queued.forEach((operation) => {
+        const serverRecord = inspections.get(operation.entityId) || null;
         inspections.set(operation.entityId, {
-          ...(inspections.get(operation.entityId) || {}),
+          ...(serverRecord || {}),
           ...operation.payload,
+          _offlineAction: operation.action || 'save',
+          _offlineDeleted: operation.action === 'delete',
           _offlineStatus: operation.status,
           _offlineQueuedAt: operation.queuedAt,
+          _offlineServerRecord: serverRecord,
         });
       });
       return { ...project, inspections: [...inspections.values()] };
