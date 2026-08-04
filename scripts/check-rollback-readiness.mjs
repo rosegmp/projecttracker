@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -76,8 +77,22 @@ export function assessRollbackReadiness({ deploys, runs, branch, head }) {
 }
 
 async function run(command, args, options = {}) {
-  const executable = process.platform === 'win32' && command === 'netlify' ? 'netlify.cmd' : command;
-  const { stdout } = await execFileAsync(executable, args, {
+  let executable = command;
+  let commandArgs = args;
+  if (process.platform === 'win32' && command === 'netlify') {
+    const netlifyEntry = join(
+      process.env.APPDATA || '',
+      'npm',
+      'node_modules',
+      'netlify-cli',
+      'bin',
+      'run.js',
+    );
+    if (!existsSync(netlifyEntry)) fail('Netlify CLI entry point was not found.');
+    executable = process.execPath;
+    commandArgs = [netlifyEntry, ...args];
+  }
+  const { stdout } = await execFileAsync(executable, commandArgs, {
     cwd: process.cwd(),
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
