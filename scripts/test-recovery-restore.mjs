@@ -122,6 +122,9 @@ test('storage import uploads and verifies one representative without logging nam
     assert.equal(request.headers.authorization, `Bearer ${secret}`);
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method === 'POST' && url.pathname.startsWith('/storage/v1/object/')) {
+      if (url.pathname.includes('/certificate-files/')) {
+        assert.equal(request.headers['content-type'], 'application/pdf');
+      }
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       uploaded.set(url.pathname, Buffer.concat(chunks));

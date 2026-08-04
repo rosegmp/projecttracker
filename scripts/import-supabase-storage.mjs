@@ -21,6 +21,17 @@ function encodePath(value) {
   return value.split('/').map(encodeURIComponent).join('/');
 }
 
+function contentTypeFor(relative) {
+  switch (path.extname(relative).toLowerCase()) {
+    case '.pdf': return 'application/pdf';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.png': return 'image/png';
+    case '.webp': return 'image/webp';
+    default: return 'application/octet-stream';
+  }
+}
+
 async function filesBelow(root, relative = '') {
   const entries = await readdir(path.join(root, relative), { withFileTypes: true });
   const files = [];
@@ -78,7 +89,7 @@ async function main() {
         key,
         {
           method: 'POST',
-          headers: { 'content-type': 'application/octet-stream', 'x-upsert': 'true' },
+          headers: { 'content-type': contentTypeFor(relative), 'x-upsert': 'true' },
           body,
         },
       );
