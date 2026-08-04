@@ -82,7 +82,7 @@ Netlify auto publishing is disabled by locking the currently published deploy. N
 3. `.github/workflows/publish-production.yml` runs only when that CI run succeeds. It uses the protected `production` environment and does not run for pull requests or feature branches.
 4. The publisher waits for a ready production-context Netlify deploy whose site id, branch, URL, and full commit hash exactly match the tested merge commit.
 5. It publishes that atomic deploy, re-locks it, checks HTTP success for production and the deploy-specific URL, and verifies that the published locked deploy still matches the tested commit.
-6. A commit containing `[skip netlify]` or `[netlify skip]` completes the workflow without publishing. Use this only for operations/docs changes that do not alter the production bundle.
+6. A `main` commit containing `[skip netlify]` or `[netlify skip]` completes the workflow without publishing. For merge-based protected changes, place the marker in the pull-request title so it appears in the resulting merge commit; a marker only in the feature-branch commit subject is not preserved. Use this only for operations/docs changes that do not alter the production bundle.
 
 If CI fails, the publisher does not run and the existing locked production deploy remains live. If the publisher cannot prove an exact deploy match or any API/HTTP check fails, it stops without selecting another deploy. `NETLIFY_AUTH_TOKEN` is stored only in GitHub's protected `production` environment; never print, copy into repository files, or include it in an incident record.
 
