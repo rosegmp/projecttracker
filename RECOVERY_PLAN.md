@@ -206,6 +206,14 @@ This establishes one verified recovery point, not a proven RPO/RTO. Keep milesto
 
 ## Milestone 3.3 isolated restore drill
 
+### Approved first-drill target and prepared automation
+
+The owner approved overwriting the non-production **Project Hub Staging** project (`kvvvzthzdvzfovphrnlq`) for the first drill. Supabase Free permits only two active projects for this account, so a third disposable project could not be created; production project `oxojlwhmarafxuqvqgqg` remains a fixed rejected target. The staging database password was rotated, and the recovery URL, session-pooler URL, anon key, and service-role key are stored only as protected GitHub environment secrets.
+
+The manual-only `Isolated production recovery restore drill` workflow requires the exact confirmation `OVERWRITE_PROJECT_HUB_STAGING`. Its runner verifies the newest B2 object's Governance retention, encrypted checksum, production source-ref hash, database-file hashes, expected bucket set, and safe COPY targets before connecting to the target. It restores the database/Auth and migration history using the documented roles/schema/replica/data sequence, restores all three Storage buckets, checksum-verifies one downloaded object from each non-empty bucket, compares aggregate database/migration/object counts, builds an isolated Sentry-disabled client, runs the disposable authorization suite, and checks the three existing staging Edge Functions' JWT boundary. Decrypted contents remain in one restricted runner directory and are never uploaded as artifacts.
+
+This is a prepared checkpoint, not a completed drill. Do not claim the proposed RPO/RTO, enable lifecycle deletion, or reset staging until the workflow passes, evidence is retained, and the owner approves cleanup.
+
 Use a disposable or dedicated recovery Supabase project that is not production and is protected from public traffic.
 
 1. Record production backup timestamp and checksums.

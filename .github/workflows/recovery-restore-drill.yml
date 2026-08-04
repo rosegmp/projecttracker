@@ -1,0 +1,106 @@
+name: Isolated production recovery restore drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type OVERWRITE_PROJECT_HUB_STAGING to replace the staging project
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-production-recovery-restore
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: Restore newest recovery point into Project Hub Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production-backup
+    env:
+      RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+      RECOVERY_SUPABASE_PROJECT_REF: ${{ secrets.RECOVERY_SUPABASE_PROJECT_REF }}
+      RECOVERY_SUPABASE_URL: ${{ secrets.RECOVERY_SUPABASE_URL }}
+      RECOVERY_SUPABASE_DB_URL: ${{ secrets.RECOVERY_SUPABASE_DB_URL }}
+      RECOVERY_SUPABASE_ANON_KEY: ${{ secrets.RECOVERY_SUPABASE_ANON_KEY }}
+      RECOVERY_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RECOVERY_SUPABASE_SERVICE_ROLE_KEY }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      BACKUP_ENCRYPTION_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+      B2_BUCKET: dph-recovery-2458
+      B2_ENDPOINT: https://s3.us-east-005.backblazeb2.com
+      B2_REGION: us-east-005
+      STAGING_SUPABASE_URL: ${{ secrets.RECOVERY_SUPABASE_URL }}
+      STAGING_SUPABASE_ANON_KEY: ${{ secrets.RECOVERY_SUPABASE_ANON_KEY }}
+      STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RECOVERY_SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Restore and verify newest recovery point
+        id: recovery
+        shell: bash
+        run: bash scripts/run-recovery-restore-drill.sh
+
+      - name: Build isolated recovery client
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.RECOVERY_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.RECOVERY_SUPABASE_ANON_KEY }}
+          VITE_SENTRY_DSN: ''
+        run: npm run build
+
+      - name: Run disposable authorization suite
+        run: npm run test:staging
+
+      - name: Verify isolated Edge Function authentication boundaries
+        shell: bash
+        run: |
+          for function_name in create-auth-user send-project-notification extract-insurance-certificate; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: $RECOVERY_SUPABASE_ANON_KEY" \
+              --header 'content-type: application/json' \
+              --data '{}' \
+              "$RECOVERY_SUPABASE_URL/functions/v1/$function_name")"
+            if [ "$status" != "401" ]; then
+              echo "::error::Staging function authentication check failed (HTTP $status)"
+              exit 1
+            fi
+          done
+          echo "All three staging functions rejected unauthenticated requests."
+
+      - name: Record privacy-safe drill evidence
+        shell: bash
+        run: |
+          {
+            echo "### Isolated recovery drill"
+            echo "- Target: Project Hub Staging"
+            echo "- Backup created: ${{ steps.recovery.outputs.backup_created_at }}"
+            echo "- Database rows verified: ${{ steps.recovery.outputs.database_rows }}"
+            echo "- Storage objects verified: ${{ steps.recovery.outputs.storage_objects }}"
+            echo "- RPO at drill start: ${{ steps.recovery.outputs.rpo_seconds }} seconds"
+            echo "- Restore and aggregate verification: ${{ steps.recovery.outputs.restore_seconds }} seconds"
+            echo "- Authorization fixtures: passed and cleaned up"
+            echo "- Edge Function authentication boundaries: passed"
+            echo "- Production traffic and credentials: not used"
+          } >> "$GITHUB_STEP_SUMMARY"

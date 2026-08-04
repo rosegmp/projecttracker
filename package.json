@@ -12,6 +12,7 @@
     "test:e2e:server": "vite build && vite preview --host 127.0.0.1 --port 4173",
     "test:staging": "node scripts/run-staging-application-tests.mjs",
     "test:backup": "node scripts/test-production-backup.mjs",
+    "test:recovery": "node scripts/test-recovery-restore.mjs",
     "test:db": "supabase test db",
     "android:sync": "npm run build && npx cap sync android",
     "android:copy": "npm run build && npx cap copy android",

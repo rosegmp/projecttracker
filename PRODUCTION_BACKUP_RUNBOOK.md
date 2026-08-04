@@ -68,3 +68,21 @@ Do not configure lifecycle deletion until at least two scheduled recovery points
 The subcontractor-certificate integration adds the private `certificate-files` bucket. The backup exporter is prepared to include it in the same encrypted recovery point. Apply migration `20260728170000_add_subcontractor_insurance_certificates.sql` before deploying the updated scheduled workflow so the first three-bucket run cannot fail on a missing bucket.
 
 The two preceding configuration attempts failed before a recovery point was created: run `30300098932` rejected a missing database URL, and run `30300422870` rejected invalid pooler authentication. This is expected fail-closed behavior.
+
+## Isolated restore drill
+
+The first approved drill target is the non-production **Project Hub Staging** project (`kvvvzthzdvzfovphrnlq`). The Supabase Free two-active-project limit prevented creating a disposable third project, so this drill intentionally overwrites staging. Production project `oxojlwhmarafxuqvqgqg` is hard-rejected by the runner.
+
+The protected `production-backup` environment additionally requires these recovery-target secrets:
+
+| Secret | Value |
+| --- | --- |
+| `RECOVERY_SUPABASE_PROJECT_REF` | Exact approved staging project ref |
+| `RECOVERY_SUPABASE_URL` | Exact approved staging project URL |
+| `RECOVERY_SUPABASE_DB_URL` | Staging Session pooler URL with the rotated password |
+| `RECOVERY_SUPABASE_ANON_KEY` | Staging legacy anon key for the isolated client and boundary tests |
+| `RECOVERY_SUPABASE_SERVICE_ROLE_KEY` | Staging service-role key for object restore and aggregate validation |
+
+To run the drill, manually dispatch **Isolated production recovery restore drill** and enter exactly `OVERWRITE_PROJECT_HUB_STAGING`. Any other value fails before backup download or database connection. The job selects the newest B2 recovery point, verifies retention/checksums/source identity, restores database/Auth/migration history and all three Storage buckets, builds against staging with Sentry disabled, runs disposable authorization tests, and records only privacy-safe aggregate evidence.
+
+Do not attach decrypted files, SQL, manifests, object names, credentials, or provider response bodies to an issue or workflow artifact. Keep B2 lifecycle deletion disabled. After a passing drill, retain the run URL and aggregate RPO/RTO evidence, then obtain owner approval before resetting staging to its ordinary migration-only role.

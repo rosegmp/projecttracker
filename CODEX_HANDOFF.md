@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-07-31
+Updated: 2026-08-03
 
 ## Working copy
 
@@ -177,7 +177,10 @@ Updated: 2026-07-31
 - GitHub environment `production-backup` is configured. Manual runs `30300098932` and `30300422870` failed closed on a missing database URL and then invalid pooler authentication, respectively; both stopped before Storage export or B2 upload.
 - Manual run `30300685312` passed on 2026-07-27 in 3 minutes 38 seconds. It completed all five logical dumps, exported both Storage buckets with 96 aggregate objects, encrypted the complete working set, uploaded a 317,835,231-byte recovery point, downloaded and SHA-256-verified the B2 copy, and verified 30-day `GOVERNANCE` Object Lock.
 - Repository variable `PRODUCTION_BACKUPS_ENABLED=true` is active, enabling the daily 07:17 UTC schedule. Scheduled run `30347954365` passed on 2026-07-28 and created the required second recovery point: all five logical dumps completed, both then-live Storage buckets exported 96 aggregate objects, the 317,837,468-byte encrypted copy uploaded and downloaded successfully, its SHA-256 checksum matched, and 30-day `GOVERNANCE` Object Lock was verified.
-- Milestone 3.2's two-recovery-point requirement is satisfied. The next recovery decision point is the isolated restore drill; lifecycle deletion should remain disabled until that drill and its cleanup are reviewed. The proposed RPO/RTO remain unproven until the restore drill passes.
+- Milestone 3.2's two-recovery-point requirement is satisfied. Scheduled run `30807175679` also passed on 2026-08-03 with five database exports, all three live Storage buckets, 124 aggregate objects, a 417,873,061-byte encrypted copy, matching SHA-256 verification, and 30-day `GOVERNANCE` Object Lock.
+- The owner approved overwriting the non-production **Project Hub Staging** project (`kvvvzthzdvzfovphrnlq`) for the first isolated restore drill after the Free-plan two-active-project limit prevented creating a disposable third project. The staging database password was rotated; the exact session-pooler route, URL, anon key, and service-role key are stored only in the protected `production-backup` and `staging` GitHub environments. Temporary local credential files were overwritten and removed. Production project `oxojlwhmarafxuqvqgqg` remains excluded by fixed fail-closed checks.
+- A manual-only `Isolated production recovery restore drill` workflow is prepared locally. It requires the exact dispatch confirmation `OVERWRITE_PROJECT_HUB_STAGING`, downloads only the newest locked B2 recovery point, verifies its checksum/source hash/manifest SQL hashes, decrypts only in a restricted runner directory, clears only the approved staging database, restores roles/schema/data/Auth/migration history, restores and representative-download-verifies all three private Storage buckets, builds an isolated Sentry-disabled client, runs the disposable staging authorization suite, and verifies all three staging Edge Functions reject unauthenticated requests. It emits only aggregate counts and RPO/restore timing; decrypted data and object names are never artifacts or job-summary content.
+- Focused recovery coverage and the existing backup coverage pass (`npm run test:recovery`, `npm run test:backup`), as do Bash syntax validation and `git diff --check`. The workflow has not yet been committed, pushed, or dispatched. Lifecycle deletion remains disabled, and the staging cleanup/reset decision remains pending until restore evidence is retained and reviewed.
 
 ## Current priority: Recommendation roadmap #4 — offline-first field operations
 
@@ -267,7 +270,7 @@ Updated: 2026-07-31
 - Direct launcher shortcuts, notification actions, and inbound photo shares continue through their explicit intent routes rather than being redirected to Home. On a cold shortcut launch, Home is the initial history entry and the shortcut destination is added after authentication/data startup.
 - Android Back now uses the activity's `OnBackPressedDispatcher`: it navigates backward through WebView history when available and backgrounds the task at the navigation root instead of destroying the activity. React popstate handling suppresses a replacement push entry so Back can genuinely unwind top-level navigation.
 - Verification passes all 139 regression tests, the 686-module production build, Android `:app:compileDebugJavaWithJavac`, and `git diff --check`. No Capacitor sync or APK build was run at this bounded checkpoint; complete those at the next commit/release checkpoint, then physically smoke-test cold launch, warm launcher return, each direct shortcut, multi-screen Back, and root Back.
-- The repository owner reports that the physical Android smoke test for direct shortcuts, camera capture, inbound photo sharing, and file Open/Share passed. Cold/warm launcher and Back behavior remain part of the next native release-device check unless separately confirmed.
+- The repository owner reports that the complete physical Android release smoke test passed. This now covers direct shortcuts, camera capture, inbound photo sharing, file Open/Share, cold launch to Home, warm launcher return to the last page, multi-screen/root Back behavior, schedule-step status changes, task Share/Email grouping, and the Certificates workspace.
 
 ### Schedule step status shortcut checkpoint
 
@@ -313,7 +316,7 @@ Updated: 2026-07-31
 ### Integrated certificates, navigation, schedule, and task-sharing release checkpoint
 
 - The complete local release gate passes all 143 regression tests, both backup automation tests, all 11 Chromium browser journeys, the 689-module production build, production and full dependency audits with zero vulnerabilities, Capacitor Android sync, Gradle `assembleDebug`, and `git diff --check`.
-- The refreshed debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,950,205 bytes, built July 31, 2026 at 1:48 PM). The next physical-device check should cover cold Home launch, warm launcher return, multi-screen/root Back behavior, schedule-step status changes, task Share/Email grouping, and the Certificates workspace.
+- The refreshed debug APK is `C:\Dev\Project Tracker\android\app\build\outputs\apk\debug\app-debug.apk` (11,950,205 bytes, built July 31, 2026 at 1:48 PM). Physical release-device validation completed successfully by August 3, 2026 for cold Home launch, warm launcher return, multi-screen/root Back behavior, schedule-step status changes, task Share/Email grouping, and the Certificates workspace.
 - Local pgTAP authorization tests could not start because Docker is not installed on this Windows workstation. Production migration parity is nevertheless confirmed through `20260728210000`, and a linked dry run reports no pending migration. The required GitHub Actions Supabase authorization job remains the authoritative migrated-schema gate for this release.
 - Production `extract-insurance-certificate` remains ACTIVE at version 4 with JWT verification enabled; this release adds no Edge Function change beyond that already deployed version.
 - Integrated release commit `f78c59e` (`Add certificates and mobile workflow improvements`) is pushed to `origin/main`. GitHub Actions run `30652767794` passed the web build/tests/backup/browser/audit job, the complete migrated Supabase authorization job, and the Android sync/debug APK job with artifact upload. The web job retained one non-blocking development-audit annotation while concluding successfully; local production and full dependency audits both reported zero vulnerabilities.
