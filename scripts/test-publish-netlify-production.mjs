@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  retryOperation,
   selectPublishedDeploy,
   selectReadyDeploy,
 } from './publish-netlify-production.mjs';
@@ -82,4 +83,24 @@ test('selects the newest published production deploy', () => {
     },
   ]);
   assert.equal(selected.id, '2'.repeat(24));
+});
+
+test('retries a transient verification failure within its bound', async () => {
+  let attempts = 0;
+  const result = await retryOperation(async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error('transient');
+    return 'verified';
+  }, { attempts: 3, delayMs: 0 });
+  assert.equal(result, 'verified');
+  assert.equal(attempts, 3);
+});
+
+test('fails after the bounded retry count is exhausted', async () => {
+  let attempts = 0;
+  await assert.rejects(() => retryOperation(async () => {
+    attempts += 1;
+    throw new Error('still unavailable');
+  }, { attempts: 2, delayMs: 0 }), /still unavailable/);
+  assert.equal(attempts, 2);
 });

@@ -104,18 +104,36 @@ async function lockDeploy(deployId) {
   return locked;
 }
 
-async function checkHttp(url, label) {
-  let response;
-  try {
-    response = await fetch(url, {
-      redirect: 'follow',
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch {
-    fail(`${label} HTTP check failed.`);
+export async function retryOperation(operation, { attempts = 5, delayMs = 10_000 } = {}) {
+  if (!Number.isInteger(attempts) || attempts < 1) fail('Retry attempts must be a positive integer.');
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1 && delayMs > 0) {
+        await new Promise((accept) => setTimeout(accept, delayMs));
+      }
+    }
   }
-  if (!response.ok) fail(`${label} returned HTTP ${response.status}.`);
-  return response.status;
+  throw lastError;
+}
+
+async function checkHttp(url, label) {
+  return retryOperation(async () => {
+    let response;
+    try {
+      response = await fetch(url, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      fail(`${label} HTTP check failed.`);
+    }
+    if (!response.ok) fail(`${label} returned HTTP ${response.status}.`);
+    return response.status;
+  });
 }
 
 async function waitForReadyDeploy(expectedSha) {
