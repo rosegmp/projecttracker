@@ -1,0 +1,50 @@
+name: Publish production
+
+on:
+  workflow_run:
+    workflows: [Continuous integration]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-production-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish tested Netlify deploy
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Check for intentional Netlify skip
+        id: commit
+        shell: bash
+        run: |
+          if git log -1 --format=%B | grep -Eiq '\[(skip netlify|netlify skip)\]'; then
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+            echo 'Production publish intentionally skipped by the tested commit.'
+          else
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish and lock the tested deploy
+        if: steps.commit.outputs.skip != 'true'
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: node scripts/publish-netlify-production.mjs --live
