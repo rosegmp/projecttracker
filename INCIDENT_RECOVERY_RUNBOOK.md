@@ -73,6 +73,19 @@ The equivalent Netlify API operations are `lockDeploy`, `restoreSiteDeploy`, and
 - Require the regression suite, browser journeys, production build, production dependency audit, database authorization tests, and Android build when runtime source changed.
 - Operational documentation and rehearsal commits should include `[skip netlify]` so they do not create an unnecessary production deploy. This does not replace CI.
 
+## Normal production publishing
+
+Netlify auto publishing is disabled by locking the currently published deploy. New `main` commits may still build, but they do not become live until the tested-deploy workflow publishes them.
+
+1. Changes merge to protected `main` only after the required web, database, and Android checks pass.
+2. The push-triggered `main` CI run repeats the complete gate on the merge commit.
+3. `.github/workflows/publish-production.yml` runs only when that CI run succeeds. It uses the protected `production` environment and does not run for pull requests or feature branches.
+4. The publisher waits for a ready production-context Netlify deploy whose site id, branch, URL, and full commit hash exactly match the tested merge commit.
+5. It publishes that atomic deploy, re-locks it, checks HTTP success for production and the deploy-specific URL, and verifies that the published locked deploy still matches the tested commit.
+6. A commit containing `[skip netlify]` or `[netlify skip]` completes the workflow without publishing. Use this only for operations/docs changes that do not alter the production bundle.
+
+If CI fails, the publisher does not run and the existing locked production deploy remains live. If the publisher cannot prove an exact deploy match or any API/HTTP check fails, it stops without selecting another deploy. `NETLIFY_AUTH_TOKEN` is stored only in GitHub's protected `production` environment; never print, copy into repository files, or include it in an incident record.
+
 ## Write freeze and maintenance
 
 Project Tracker does not currently have one authoritative maintenance switch that blocks writes from web and already-installed Android clients. A Netlify lock stops auto publishing but does not stop application writes. Asking users to stop editing is a coordination control, not a technical guarantee.
@@ -127,10 +140,8 @@ This missing server-side write freeze is an open recovery-control decision, not 
 
 ## Approval checkpoints still open
 
-1. Enable GitHub branch protection/rules for `main` with required CI checks.
-2. Decide whether Netlify production should remain auto-published or stay locked until CI passes and an operator publishes the prepared deploy.
-3. Design and rehearse a server-enforced maintenance/write-freeze control that also covers installed Android clients.
-4. Assign a second authorized recovery responder.
+1. Design and rehearse a server-enforced maintenance/write-freeze control that also covers installed Android clients.
+2. Assign a second authorized recovery responder.
 
 ## References
 
