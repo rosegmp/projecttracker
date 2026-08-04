@@ -172,3 +172,41 @@ test('storage import uploads and verifies one representative without logging nam
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('storage import reports only controlled HTTP failure details', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-storage-failure-'));
+  const server = createServer((request, response) => {
+    response.statusCode = 413;
+    response.end('private provider response');
+  });
+  try {
+    const storage = path.join(root, 'storage');
+    const manifestPath = path.join(root, 'manifest.json');
+    for (const bucket of buckets) await mkdir(path.join(storage, bucket), { recursive: true });
+    await writeFile(path.join(storage, 'project-files', 'confidential-name.pdf'), 'bytes');
+    await writeFile(manifestPath, JSON.stringify({
+      storage: {
+        buckets: buckets.map((bucket, index) => ({
+          bucket,
+          objectCount: index === 0 ? 1 : 0,
+          contentLengthBytes: index === 0 ? 5 : 0,
+        })),
+      },
+    }));
+    const port = await listen(server);
+    const result = await runNode(
+      'scripts/import-supabase-storage.mjs',
+      [storage, manifestPath, path.join(root, 'result.json')],
+      {
+        RECOVERY_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        RECOVERY_SUPABASE_SERVICE_ROLE_KEY: 'failure-secret',
+      },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /project-files \(HTTP 413\)/);
+    assert.doesNotMatch(result.stdout + result.stderr, /confidential-name|private provider|failure-secret/);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});

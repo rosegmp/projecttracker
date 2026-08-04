@@ -5,8 +5,10 @@ import path from 'node:path';
 
 const BUCKETS = ['project-files', 'takeoff-files', 'certificate-files'];
 
+class SafeRestoreError extends Error {}
+
 function fail(message) {
-  throw new Error(message);
+  throw new SafeRestoreError(message);
 }
 
 function requireEnvironment(name) {
@@ -104,7 +106,8 @@ async function main() {
   console.log(`Storage restore verified: ${BUCKETS.length} buckets, ${objectCount} objects.`);
 }
 
-main().catch(() => {
-  console.error('Storage restore failed. Object names and response bodies were suppressed.');
+main().catch((error) => {
+  const detail = error instanceof SafeRestoreError ? ` ${error.message}` : '';
+  console.error(`Storage restore failed.${detail} Object names and response bodies were suppressed.`);
   process.exitCode = 1;
 });
