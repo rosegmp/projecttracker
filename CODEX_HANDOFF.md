@@ -5,7 +5,7 @@ Updated: 2026-08-04
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `codex/application-write-freeze` (in progress from clean `main` at `f273e1f`)
+- Branch: `codex/record-write-freeze-release` (docs-only checkpoint from deployed `main` at `ea51756`)
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
@@ -549,15 +549,16 @@ This build includes the current Takeoff integration, project main photos, the An
 
 ## Efficient continuation
 
-### In-progress recovery milestone: server-enforced application write freeze
+### Completed recovery milestone: server-enforced application write freeze
 
-- Feature branch `codex/application-write-freeze` adds an audited singleton runtime control and operator-only `set_app_write_freeze` RPC. Anonymous/authenticated writes to every current public application table are denied by statement triggers while frozen; restrictive Storage policies block object insert/update/delete; service-role and direct database recovery sessions are not denied by the freeze guards, subject to their ordinary grants.
+- Merge commit `ea51756` adds an audited singleton runtime control and operator-only `set_app_write_freeze` RPC. Anonymous/authenticated writes to every current public application table are denied by statement triggers while frozen; restrictive Storage policies block object insert/update/delete; service-role and direct database recovery sessions are not denied by the freeze guards, subject to their ordinary grants.
 - `create-auth-user`, `send-project-notification`, and `extract-insurance-certificate` explicitly reject work with HTTP 503 and `APP_WRITES_FROZEN` while frozen, even though their backend clients use the service role.
 - The web/Android client polls runtime state, shows a maintenance banner, disables top-level edit/manage capabilities, pauses notification work, and leaves queued offline changes pending until release. Older installed Android clients are still protected by the database and Storage enforcement.
 - Regression coverage includes status/error handling, a readable maintenance-mode Playwright journey, and 14 pgTAP assertions for operator authority, audit events, reads, direct and security-definer write rejection, trigger/Storage coverage, recovery bypass, and successful release.
-- Local bounded checks have passed 145 regression tests, the focused maintenance Playwright journey, and the 690-module production build. Docker/Podman and Deno are unavailable on this workstation, so the disposable Supabase database suite and Edge compilation/deployment remain gated by hosted validation.
-- Before production: commit/push this branch, open a PR, require every protected check, apply the additive/default-off migration only after the disposable database job passes, deploy the three functions, merge, then verify the CI-gated exact-commit Netlify publication. Do not perform a live freeze rehearsal without treating it as a production mutation.
-- The only remaining owner decision after this control is activated is assigning a second authorized recovery responder.
+- Local bounded checks passed 145 regression tests, the focused maintenance Playwright journey, the 690-module production build, and `git diff --check`. Pull request #6 then passed both protected web, Supabase, and Android check sets; merge-commit CI run `30926334975` repeated the full gate successfully.
+- Production migration `20260804160000_add_application_write_freeze.sql` was applied only after the fresh-database suite passed and remote migration parity was confirmed. `create-auth-user` version 7, `send-project-notification` version 6, and `extract-insurance-certificate` version 5 are active with the shared maintenance check.
+- Publish workflow run `30926517798` selected exact tested commit `ea517569fae162dcdbc1a4c16d58cd8b714b3725`, returned HTTP 200 for production and the deploy URL, and confirmed `locked=true`. The public runtime-status RPC subsequently reported `writesFrozen=false` with no maintenance message; no live write freeze was activated during release.
+- The next and only remaining owner decision is assigning a second authorized recovery responder. A live freeze rehearsal remains a production mutation and should use an incident id plus the runbook checkpoints.
 
 - Keep new requests bounded and batch related UI changes.
 - Build/test once per coherent batch rather than after each small visual adjustment.
