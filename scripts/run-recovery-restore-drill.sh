@@ -118,11 +118,11 @@ psql "$RECOVERY_SUPABASE_DB_URL" --no-psqlrc --tuples-only --no-align \
 
 echo "Clearing the approved staging target and restoring database/Auth data."
 psql "$RECOVERY_SUPABASE_DB_URL" --no-psqlrc --variable ON_ERROR_STOP=1 \
-  --command 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role; GRANT ALL ON SCHEMA public TO postgres, service_role; DROP SCHEMA IF EXISTS supabase_migrations CASCADE;' \
+  --command 'SET client_min_messages = warning; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role; GRANT ALL ON SCHEMA public TO postgres, service_role; DROP SCHEMA IF EXISTS supabase_migrations CASCADE;' \
   >/dev/null
 psql "$RECOVERY_SUPABASE_DB_URL" --no-psqlrc --single-transaction \
   --variable ON_ERROR_STOP=1 \
-  --file "$plain_root/database/roles.sql" \
+  --file "$generated_root/roles.sql" \
   --file "$plain_root/database/schema.sql" \
   --file "$generated_root/truncate.sql" \
   --command 'SET session_replication_role = replica' \

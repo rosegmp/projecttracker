@@ -54,7 +54,7 @@ test('recovery preparation verifies hashes and creates bounded aggregate SQL', a
     await mkdir(database, { recursive: true });
     for (const bucket of buckets) await mkdir(path.join(storage, bucket), { recursive: true });
     const sql = new Map([
-      ['roles.sql', '-- roles\n'],
+      ['roles.sql', 'ALTER ROLE "supabase_admin" WITH LOGIN;\nCREATE ROLE "custom_reader";\nALTER ROLE "custom_reader" WITH NOLOGIN;\nGRANT "custom_reader" TO "postgres";\n'],
       ['schema.sql', '-- schema\n'],
       ['data.sql', 'COPY public.example (id) FROM stdin;\n1\n\\.\nCOPY auth.users (id) FROM stdin;\n2\n\\.\n'],
       ['migration-history-schema.sql', '-- history schema\n'],
@@ -93,6 +93,10 @@ test('recovery preparation verifies hashes and creates bounded aggregate SQL', a
     assert.equal(result.code, 0, result.stderr);
     const truncate = await readFile(path.join(generated, 'truncate.sql'), 'utf8');
     assert.equal(truncate, 'TRUNCATE TABLE auth.users, public.example CASCADE;\n');
+    const roles = await readFile(path.join(generated, 'roles.sql'), 'utf8');
+    assert.doesNotMatch(roles, /ALTER ROLE "supabase_admin"|GRANT "custom_reader" TO "postgres"/);
+    assert.match(roles, /CREATE ROLE "custom_reader"/);
+    assert.match(roles, /ALTER ROLE "custom_reader"/);
     assert.doesNotMatch(result.stdout + result.stderr, /auth\.users|public\.example/);
     const summary = JSON.parse(await readFile(path.join(generated, 'summary.json'), 'utf8'));
     assert.equal(summary.databaseRows, 2);

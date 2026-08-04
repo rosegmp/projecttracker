@@ -12,6 +12,22 @@ const DATABASE_FILES = [
   'migration-history-data.sql',
 ];
 const BUCKETS = ['project-files', 'takeoff-files', 'certificate-files'];
+const RESERVED_ROLES = new Set([
+  'anon',
+  'authenticated',
+  'authenticator',
+  'cli_login_postgres',
+  'dashboard_user',
+  'pgbouncer',
+  'postgres',
+  'service_role',
+  'supabase_admin',
+  'supabase_auth_admin',
+  'supabase_functions_admin',
+  'supabase_read_only_user',
+  'supabase_replication_admin',
+  'supabase_storage_admin',
+]);
 const SAFE_COPY_TARGET = /^(?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*)(?:\.(?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*))?$/;
 
 function fail(message) {
@@ -46,6 +62,20 @@ async function assertOnlyExpectedEntries(root) {
   if (entries.join('\n') !== ['database', 'manifest.json', 'storage'].join('\n')) {
     fail('Backup contains unexpected top-level entries.');
   }
+}
+
+function sanitizeRoles(source) {
+  const kept = [];
+  for (const line of source.split('\n')) {
+    const roleStatement = /^(?:CREATE|ALTER) ROLE "([^"]+)"(?:\s|;)/.exec(line);
+    if (roleStatement && RESERVED_ROLES.has(roleStatement[1])) continue;
+    if (/^(?:GRANT|REVOKE)\b/.test(line)) {
+      const mentionedRoles = [...line.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+      if (mentionedRoles.some((role) => RESERVED_ROLES.has(role))) continue;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
 }
 
 async function main() {
@@ -93,6 +123,10 @@ async function main() {
     path.join(plainRoot, 'database', 'migration-history-data.sql'),
   );
   await mkdir(outputRoot, { recursive: true });
+  const sanitizedRoles = sanitizeRoles(
+    await readFile(path.join(plainRoot, 'database', 'roles.sql'), 'utf8'),
+  );
+  await writeFile(path.join(outputRoot, 'roles.sql'), sanitizedRoles, { flag: 'wx' });
   await writeFile(
     path.join(outputRoot, 'truncate.sql'),
     `TRUNCATE TABLE ${targets.join(', ')} CASCADE;\n`,
