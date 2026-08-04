@@ -5,7 +5,7 @@ Updated: 2026-08-04
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `codex/record-write-freeze-release` (docs-only checkpoint from deployed `main` at `ea51756`)
+- Branch: `codex/finalize-write-freeze-record` (docs-only checkpoint from clean `main` at `94abb87`)
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
@@ -558,6 +558,7 @@ This build includes the current Takeoff integration, project main photos, the An
 - Local bounded checks passed 145 regression tests, the focused maintenance Playwright journey, the 690-module production build, and `git diff --check`. Pull request #6 then passed both protected web, Supabase, and Android check sets; merge-commit CI run `30926334975` repeated the full gate successfully.
 - Production migration `20260804160000_add_application_write_freeze.sql` was applied only after the fresh-database suite passed and remote migration parity was confirmed. `create-auth-user` version 7, `send-project-notification` version 6, and `extract-insurance-certificate` version 5 are active with the shared maintenance check.
 - Publish workflow run `30926517798` selected exact tested commit `ea517569fae162dcdbc1a4c16d58cd8b714b3725`, returned HTTP 200 for production and the deploy URL, and confirmed `locked=true`. The public runtime-status RPC subsequently reported `writesFrozen=false` with no maintenance message; no live write freeze was activated during release.
+- The subsequent documentation merge `94abb87` passed CI run `30927177428`. Because the PR title did not contain `[skip netlify]`, its merge commit did not inherit the marker from the individual documentation commit; publisher run `30927386875` therefore published that source-identical docs merge, verified both URLs at HTTP 200, and re-locked production. For merge-based protected changes, put `[skip netlify]` in the PR title so it survives in the `main` merge message.
 - The next and only remaining owner decision is assigning a second authorized recovery responder. A live freeze rehearsal remains a production mutation and should use an incident id plus the runbook checkpoints.
 
 - Keep new requests bounded and batch related UI changes.
