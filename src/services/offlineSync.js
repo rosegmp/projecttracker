@@ -14,6 +14,7 @@ import {
   getOfflineAttachments,
   removeOfflineAttachments,
 } from './offlineAttachmentStore.js';
+import { isAppWriteFreezeError } from './runtimeStatus.js';
 
 const activeFlushes = new Map();
 
@@ -124,6 +125,13 @@ async function runFlush(userId) {
       removeOfflineOperation(userId, operation.id);
       result.synced += 1;
     } catch (error) {
+      if (isAppWriteFreezeError(error)) {
+        updateOfflineOperation(userId, operation.id, {
+          status: 'pending',
+          lastError: '',
+        });
+        break;
+      }
       if (isOfflineNetworkError(error)) {
         updateOfflineOperation(userId, operation.id, { status: 'pending', lastError: '' });
         break;

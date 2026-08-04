@@ -19,6 +19,10 @@ import {
   reconcileOfflineAttachments,
   removeOfflineAttachments,
 } from './offlineAttachmentStore.js';
+import {
+  normalizeAppRuntimeStatus,
+  throwIfAppWriteFrozen,
+} from './runtimeStatus.js';
 
 const SUPABASE_URL = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
 const SUPABASE_KEY = (import.meta.env?.VITE_SUPABASE_KEY || '').trim();
@@ -1407,6 +1411,7 @@ async function fetchWithTimeout(url, options = {}, label = 'Request', timeoutMs 
         response = await runFetch(options);
       }
     }
+    if (!shouldRetryRead) await throwIfAppWriteFrozen(response);
     return response;
   } catch (error) {
     const message = String(error?.message || error || '');
@@ -1435,6 +1440,16 @@ export async function fetchAuthorizedSupabase(path, options = {}, label = 'Supab
   } catch (error) {
     throw attachRequestId(error, requestId);
   }
+}
+
+export async function loadAppRuntimeStatus() {
+  const response = await fetchAuthorizedSupabase('/rest/v1/rpc/get_app_runtime_status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }, 'Maintenance status');
+  if (!response.ok) throw new Error('Unable to read application maintenance status.');
+  return normalizeAppRuntimeStatus(await response.json());
 }
 
 function buildProjectStoragePath(projectId, folderId, fileId, originalName) {

@@ -5,6 +5,7 @@ import {
   logEdgeFailure,
   REQUEST_ID_HEADER,
 } from '../_shared/requestCorrelation.ts';
+import { getAppRuntimeStatus, maintenanceMessage } from '../_shared/maintenance.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -61,7 +62,10 @@ Deno.serve(async (request) => {
     jsonResponse(body, status, requestId, corsHeaders);
   const fail = (error: string, status: number, operation: string, code: unknown) => {
     logEdgeFailure({ code, functionName: 'create-auth-user', operation, requestId, status });
-    return respond({ error }, status);
+    return respond({
+      error,
+      ...(code === 'app_writes_frozen' ? { code: 'APP_WRITES_FROZEN' } : {}),
+    }, status);
   };
   let operation = 'request.initialize';
 
@@ -94,6 +98,12 @@ Deno.serve(async (request) => {
     const { data: callerData, error: callerError } = await adminClient.auth.getUser(callerToken);
     if (callerError || !callerData?.user?.email) {
       return fail('Unable to verify signed-in user.', 401, operation, 'invalid_token');
+    }
+
+    operation = 'maintenance.check';
+    const runtimeStatus = await getAppRuntimeStatus(adminClient);
+    if (runtimeStatus.writesFrozen) {
+      return fail(maintenanceMessage(runtimeStatus), 503, operation, 'app_writes_frozen');
     }
 
     const callerEmail = normalizeEmail(callerData.user.email);

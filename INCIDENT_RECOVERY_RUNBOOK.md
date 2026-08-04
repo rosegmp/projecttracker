@@ -28,7 +28,7 @@ Any command or dashboard page that identifies a different production project, si
 2. Stop new releases. Do not merge, push migrations, deploy Edge Functions, or rotate credentials while diagnosis is in progress.
 3. Record the currently published Netlify deploy id/commit and the current Git `main` commit. A mismatch is evidence, not permission to publish.
 4. If the live client is causing damage or a rollback is probable, the Netlify owner locks the currently published deploy before another Git deploy can overwrite the response.
-5. Announce maintenance using the template below. Ask active field users to stop editing; Android clients may remain capable of writes even if the web deploy is locked.
+5. Announce maintenance using the template below, enable the server-enforced write freeze, and confirm its status before selecting a recovery point.
 6. Record the newest verified B2 recovery-point timestamp and calculate its potential data-loss window. Do not restore merely because a backup exists.
 7. Classify the incident with the decision table. Prefer a forward fix when data is intact and a bounded fix is safer than losing post-backup work.
 
@@ -88,17 +88,40 @@ If CI fails, the publisher does not run and the existing locked production deplo
 
 ## Write freeze and maintenance
 
-Project Tracker does not currently have one authoritative maintenance switch that blocks writes from web and already-installed Android clients. A Netlify lock stops auto publishing but does not stop application writes. Asking users to stop editing is a coordination control, not a technical guarantee.
+Project Tracker has one server-enforced application write freeze. It blocks authenticated and anonymous writes to public application tables and private Storage objects, including calls made by older installed Android clients. The current web/Android client remains readable, displays a maintenance banner, hides top-level editing entry points, and pauses queued offline mutations until the freeze is released. The three application Edge Functions also reject invitations, notifications, and certificate extraction with HTTP 503 and code `APP_WRITES_FROZEN`.
 
-Until a tested server-side maintenance control exists:
+The database recovery operator must use the Supabase SQL Editor or another approved direct database session. Never place credentials in the incident record and never update `app_runtime_controls` directly.
 
-1. Announce the freeze and record its effective time.
-2. Avoid broad SQL grants/revokes or database-wide read-only settings during an incident unless a separately reviewed procedure has been rehearsed; managed Auth, Storage, and recovery connections may also be affected.
-3. Use a bounded deny policy/RPC guard only if it was prepared and tested before the incident. Do not invent emergency RLS changes while data is already at risk.
-4. Compare database activity timestamps against the freeze time before choosing a recovery point.
-5. Resume writes only after database, Storage, Auth, Edge Functions, client, and authorization checks pass.
+1. Announce maintenance and record the incident id and intended effective time.
+2. Enable the freeze with an incident-specific message:
 
-This missing server-side write freeze is an open recovery-control decision, not a completed capability.
+   ```sql
+   select public.set_app_write_freeze(
+     true,
+     'Project Tracker is temporarily read-only while recovery validation is in progress.',
+     'INC-YYYYMMDD-NN'
+   );
+   ```
+
+3. Confirm the returned and current status both show `"writesFrozen": true`:
+
+   ```sql
+   select public.get_app_runtime_status();
+   ```
+
+4. Confirm an authenticated client can still read Home and a project, displays the maintenance banner, and receives `APP_WRITES_FROZEN` for a write. Do not create production test records. Offline changes must remain pending rather than becoming failed items.
+5. Compare application/database activity timestamps against the confirmed freeze time before selecting a recovery point. The append-only `app_runtime_control_events` table records activation and release metadata.
+6. Complete the recovery validation sequence. The service-role key and direct recovery/database sessions deliberately bypass the table and Storage guards so authorized recovery operations remain possible. Edge Functions explicitly honor the freeze even though they use a service-role client.
+7. Release the freeze only after database, Storage, authorization, Edge Function, web, and Android checks pass:
+
+   ```sql
+   select public.set_app_write_freeze(false, '', 'INC-YYYYMMDD-NN');
+   select public.get_app_runtime_status();
+   ```
+
+8. Confirm `"writesFrozen": false`, send the all-clear, and monitor queued Android/web sync plus normal mutation/error telemetry.
+
+The freeze is intentionally scoped to application database and Storage writes and the three application Edge Functions. It does not prevent Supabase Auth credential/session operations, provider-console changes, direct database/recovery work, or external notifications already in flight. Handle those surfaces separately when the incident requires it.
 
 ### Maintenance message
 
@@ -133,15 +156,14 @@ This missing server-side write freeze is an open recovery-control decision, not 
 
 - The linked Netlify site id and production URL match this runbook.
 - Recent production deploys are atomic, `ready`, and retain deploy permalinks suitable for preflight HTTP checks.
-- Auto publishing is active; recent recovery-documentation commits were published even though GitHub's production dependency audit failed.
-- GitHub `main` is not protected. This allows direct pushes without required status checks.
+- Netlify production is locked and exact-commit publishing is gated by successful push CI through the protected `production` environment.
+- GitHub `main` has strict required web, database, and Android checks, including for administrators; force pushes and branch deletion are disabled.
 - The latest failure was a new transitive dependency advisory while application tests, browser journeys, build, database authorization tests, and Android build passed. The correct response is a lockfile forward fix, not a client/database rollback.
 - No Netlify deploy was locked, published, restored, or unlocked during this rehearsal. Production data and traffic were not changed.
 
 ## Approval checkpoints still open
 
-1. Design and rehearse a server-enforced maintenance/write-freeze control that also covers installed Android clients.
-2. Assign a second authorized recovery responder.
+1. Assign a second authorized recovery responder.
 
 ## References
 
