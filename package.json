@@ -13,6 +13,7 @@
     "test:staging": "node scripts/run-staging-application-tests.mjs",
     "test:backup": "node scripts/test-production-backup.mjs",
     "test:recovery": "node scripts/test-recovery-restore.mjs",
+    "test:rollback": "node scripts/test-rollback-readiness.mjs",
     "test:db": "supabase test db",
     "android:sync": "npm run build && npx cap sync android",
     "android:copy": "npm run build && npx cap copy android",

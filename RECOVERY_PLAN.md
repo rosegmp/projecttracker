@@ -234,6 +234,16 @@ Use a disposable or dedicated recovery Supabase project that is not production a
 
 ## Milestone 3.4 rollback and full incident recovery
 
+### Prepared non-destructive rehearsal — 2026-08-04
+
+`INCIDENT_RECOVERY_RUNBOOK.md` now defines fixed production identifiers, responder authority, a first-ten-minute checklist, incident decision table, Netlify lock/publish/unlock sequence, Git revert versus forward-fix rules, full recovery order, maintenance communications, post-recovery rotation/audit work, and explicit production approval checkpoints.
+
+The read-only inventory confirmed that Netlify retains ready atomic production deploys and deploy permalinks, but auto publishing is active and GitHub `main` is not protected. Recovery-documentation commits were therefore published even while GitHub's production dependency audit was red. The failure was a newly published high-severity advisory in transitive `brace-expansion` 5.0.8; application tests, browser journeys, build, database authorization tests, and Android compilation passed. The correct response is the non-breaking 5.0.9 lockfile forward fix, not a web/database rollback.
+
+The repository now includes a fail-closed read-only rollback-readiness checker and deterministic tests. It requires a clean `main`, fixed Netlify site/URL, a matching latest CI run, and two retained ready production deploys before it checks the production and candidate permalinks. A published deploy behind `main` is accepted only when it is an ancestor of `main` (for example, after an intentional `[skip netlify]` operations commit) and is reported for attention. It reports branch-protection and CI gaps without emitting full provider responses.
+
+No production deploy was locked, restored, published, or unlocked during this rehearsal. The remaining decisions are whether to protect `main`, whether Netlify should stay locked until CI passes, how to implement a server-enforced write freeze that covers installed Android clients, and who will be the second authorized responder.
+
 Document and rehearse:
 
 - Netlify release rollback and deploy locking;

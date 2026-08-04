@@ -39,6 +39,11 @@ jobs:
       - name: Test backup automation
         run: npm run test:backup
 
+      - name: Test recovery and rollback automation
+        run: |
+          npm run test:recovery
+          npm run test:rollback
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
