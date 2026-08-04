@@ -58,6 +58,7 @@ async function mockStaffBackend(page, {
   subs = [],
   certificateRows = [],
   coverageRows = [],
+  runtimeStatus = { writesFrozen: false, message: '', changedAt: '' },
   handleRpc = async () => null,
 }) {
   const settings = {
@@ -110,6 +111,15 @@ async function mockStaffBackend(page, {
       return;
     }
 
+    if (url.pathname.endsWith('/rpc/get_app_runtime_status')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(runtimeStatus),
+      });
+      return;
+    }
+
     if (url.pathname.includes('/rpc/')) {
       const rpcResponse = await handleRpc({ request, url });
       if (rpcResponse) {
@@ -153,6 +163,28 @@ async function mockStaffBackend(page, {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
 }
+
+test('maintenance mode keeps staff workspace readable and disables project changes', async ({ page }) => {
+  const appUserId = 'maintenance-admin';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'maintenance-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000010',
+    projects: [projectRow('maintenance-project', appUserId)],
+    runtimeStatus: {
+      writesFrozen: true,
+      message: 'Recovery validation is in progress.',
+      changedAt: '2026-08-04T16:00:00Z',
+    },
+  });
+
+  await page.goto('/?tab=projects');
+  await expect(page.getByText('Maintenance mode — changes are paused')).toBeVisible();
+  await expect(page.getByText(/Recovery validation is in progress/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New project' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Staff Test Project', exact: true })).toBeVisible();
+});
 
 test('administrator creates a project through the versioned mutation boundary', async ({ page }) => {
   const appUserId = 'mutation-admin';

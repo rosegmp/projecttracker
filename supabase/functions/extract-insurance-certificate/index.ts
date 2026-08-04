@@ -5,6 +5,7 @@ import {
   logEdgeFailure,
   REQUEST_ID_HEADER,
 } from '../_shared/requestCorrelation.ts';
+import { getAppRuntimeStatus, maintenanceMessage } from '../_shared/maintenance.ts';
 
 const FUNCTION_NAME = 'extract-insurance-certificate';
 const CERTIFICATE_BUCKET = 'certificate-files';
@@ -96,7 +97,10 @@ Deno.serve(async (request) => {
     jsonResponse(body, status, requestId, corsHeaders);
   const fail = (error: string, status: number, operation: string, code: unknown) => {
     logEdgeFailure({ code, functionName: FUNCTION_NAME, operation, requestId, status });
-    return respond({ error }, status);
+    return respond({
+      error,
+      ...(code === 'app_writes_frozen' ? { code: 'APP_WRITES_FROZEN' } : {}),
+    }, status);
   };
   let operation = 'request.initialize';
 
@@ -123,6 +127,12 @@ Deno.serve(async (request) => {
     const caller = callerData?.user;
     if (callerError || !caller?.id || !caller.email) {
       return fail('Unable to verify signed-in user.', 401, operation, 'invalid_token');
+    }
+
+    operation = 'maintenance.check';
+    const runtimeStatus = await getAppRuntimeStatus(admin);
+    if (runtimeStatus.writesFrozen) {
+      return fail(maintenanceMessage(runtimeStatus), 503, operation, 'app_writes_frozen');
     }
 
     operation = 'authorization.check';

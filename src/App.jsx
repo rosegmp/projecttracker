@@ -15,6 +15,10 @@ import {
   subscribeToOfflineOperations,
 } from './services/offlineOperations.js';
 import { flushOfflineOperations } from './services/offlineSync.js';
+import {
+  DEFAULT_RUNTIME_STATUS,
+  maintenanceDisplayMessage,
+} from './services/runtimeStatus.js';
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -240,6 +244,7 @@ export default function App() {
   const [connectionTest, setConnectionTest] = useState({ status: 'idle', message: '' });
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [offlineSyncSummary, setOfflineSyncSummary] = useState({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
+  const [runtimeStatus, setRuntimeStatus] = useState(DEFAULT_RUNTIME_STATUS);
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
   const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
@@ -388,6 +393,35 @@ export default function App() {
   }, [authLoading, authSession]);
 
   useEffect(() => {
+    if (!authSession?.user?.id) {
+      setRuntimeStatus(DEFAULT_RUNTIME_STATUS);
+      return undefined;
+    }
+    let cancelled = false;
+    const refreshRuntimeStatus = () => {
+      void loadTrackerDataModule()
+        .then(({ loadAppRuntimeStatus }) => loadAppRuntimeStatus())
+        .then((status) => {
+          if (!cancelled) setRuntimeStatus(status);
+        })
+        .catch((statusError) => {
+          reportError(statusError, { operation: 'runtime.status' });
+        });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshRuntimeStatus();
+    };
+    refreshRuntimeStatus();
+    const intervalId = window.setInterval(refreshRuntimeStatus, 30_000);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [authSession?.user?.id]);
+
+  useEffect(() => {
     const userId = String(authSession?.user?.id || '').trim();
     if (!userId) {
       setOfflineSyncSummary({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
@@ -396,6 +430,7 @@ export default function App() {
     const updateSummary = () => setOfflineSyncSummary(getOfflineOperationSummary(userId));
     const syncNow = () => {
       updateSummary();
+      if (runtimeStatus.writesFrozen) return;
       void flushOfflineOperations(userId)
         .then((result) => {
           updateSummary();
@@ -414,7 +449,7 @@ export default function App() {
       unsubscribe();
       window.removeEventListener('online', syncNow);
     };
-  }, [authSession?.user?.id]);
+  }, [authSession?.user?.id, runtimeStatus.writesFrozen]);
 
   useEffect(() => {
     const previousTab = previousActiveTabRef.current;
@@ -465,21 +500,24 @@ export default function App() {
     const configuredTabs = new Set(normalizeVisibleTopLevelTabs(trackerState.settings?.visibleTopLevelTabs));
     return {
       ...base,
+      canEdit: base.canEdit && !runtimeStatus.writesFrozen,
+      canManageUsers: base.canManageUsers && !runtimeStatus.writesFrozen,
+      canAccessSettings: base.canAccessSettings && !runtimeStatus.writesFrozen,
       allowedTabs: base.allowedTabs.filter((tabId) => configuredTabs.has(tabId)),
     };
-  }, [activeUser?.role, trackerState.settings?.visibleTopLevelTabs]);
+  }, [activeUser?.role, runtimeStatus.writesFrozen, trackerState.settings?.visibleTopLevelTabs]);
 
   useEffect(() => {
-    if (!nativeAndroid || loading || !authSession || !activeUser?.id) return;
+    if (!nativeAndroid || loading || !authSession || !activeUser?.id || runtimeStatus.writesFrozen) return;
     void loadAndroidNotificationsModule()
       .then(({ syncAndroidNotifications }) => syncAndroidNotifications({ data: trackerState, activeUser }))
       .catch((notificationError) => {
         reportError(notificationError, { operation: 'notification.sync', workspace: activeTab });
       });
-  }, [activeTab, activeUser, authSession, loading, nativeAndroid, trackerState.projects, trackerState.settings, trackerState.tasks]);
+  }, [activeTab, activeUser, authSession, loading, nativeAndroid, runtimeStatus.writesFrozen, trackerState.projects, trackerState.settings, trackerState.tasks]);
 
   useEffect(() => {
-    if (!nativeAndroid || loading || !authSession || !activeUser?.id) return undefined;
+    if (!nativeAndroid || loading || !authSession || !activeUser?.id || runtimeStatus.writesFrozen) return undefined;
     function handleVisibilityChange() {
       if (document.visibilityState !== 'visible') return;
       void loadAndroidNotificationsModule()
@@ -490,7 +528,7 @@ export default function App() {
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [activeTab, activeUser, authSession, loading, nativeAndroid]);
+  }, [activeTab, activeUser, authSession, loading, nativeAndroid, runtimeStatus.writesFrozen]);
 
   useEffect(() => {
     if (!nativeAndroid) return undefined;
@@ -1435,6 +1473,15 @@ export default function App() {
         </button>
       ) : null}
 
+      {runtimeStatus.writesFrozen ? (
+        <section className="offline-sync-banner maintenance" role="status" aria-live="polite">
+          <FluentIcon name="lockClosed" size={18} />
+          <div>
+            <strong>Maintenance mode — changes are paused</strong>
+            <span>{maintenanceDisplayMessage(runtimeStatus)} Reads remain available, and device-saved changes will resume syncing after maintenance.</span>
+          </div>
+        </section>
+      ) : null}
       {offlineSyncSummary.total ? (
         <section className={`offline-sync-banner${offlineSyncSummary.needsAttention ? ' error' : ''}`} role="status">
           <FluentIcon name={offlineSyncSummary.needsAttention ? 'warning' : 'replace'} size={18} />

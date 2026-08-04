@@ -525,6 +525,12 @@ a {
   background: var(--danger-surface);
 }
 
+.offline-sync-banner.maintenance {
+  border-color: rgba(186, 117, 23, 0.35);
+  color: #633806;
+  background: var(--warning-surface);
+}
+
 .offline-sync-banner > div {
   display: grid;
   gap: 2px;

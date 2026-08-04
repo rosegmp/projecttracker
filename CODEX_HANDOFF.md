@@ -1,11 +1,11 @@
 # Project Tracker handoff
 
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `main`
+- Branch: `codex/application-write-freeze` (in progress from clean `main` at `f273e1f`)
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
@@ -548,6 +548,16 @@ The branded debug APK was rebuilt on 2026-07-16 and written to:
 This build includes the current Takeoff integration, project main photos, the Android download action menu with **Open file**, **Save to Downloads**, and **Share**, and the local notification improvements above. `npm test`, the production web build, Capacitor Android sync, and `assembleDebug` all passed. The native opener uses Android `ACTION_VIEW` with the existing `FileProvider` and reports a clear error when no installed app supports the file type.
 
 ## Efficient continuation
+
+### In-progress recovery milestone: server-enforced application write freeze
+
+- Feature branch `codex/application-write-freeze` adds an audited singleton runtime control and operator-only `set_app_write_freeze` RPC. Anonymous/authenticated writes to every current public application table are denied by statement triggers while frozen; restrictive Storage policies block object insert/update/delete; service-role and direct database recovery sessions are not denied by the freeze guards, subject to their ordinary grants.
+- `create-auth-user`, `send-project-notification`, and `extract-insurance-certificate` explicitly reject work with HTTP 503 and `APP_WRITES_FROZEN` while frozen, even though their backend clients use the service role.
+- The web/Android client polls runtime state, shows a maintenance banner, disables top-level edit/manage capabilities, pauses notification work, and leaves queued offline changes pending until release. Older installed Android clients are still protected by the database and Storage enforcement.
+- Regression coverage includes status/error handling, a readable maintenance-mode Playwright journey, and 14 pgTAP assertions for operator authority, audit events, reads, direct and security-definer write rejection, trigger/Storage coverage, recovery bypass, and successful release.
+- Local bounded checks have passed 145 regression tests, the focused maintenance Playwright journey, and the 690-module production build. Docker/Podman and Deno are unavailable on this workstation, so the disposable Supabase database suite and Edge compilation/deployment remain gated by hosted validation.
+- Before production: commit/push this branch, open a PR, require every protected check, apply the additive/default-off migration only after the disposable database job passes, deploy the three functions, merge, then verify the CI-gated exact-commit Netlify publication. Do not perform a live freeze rehearsal without treating it as a production mutation.
+- The only remaining owner decision after this control is activated is assigning a second authorized recovery responder.
 
 - Keep new requests bounded and batch related UI changes.
 - Build/test once per coherent batch rather than after each small visual adjustment.

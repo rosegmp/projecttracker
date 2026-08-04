@@ -104,6 +104,12 @@ import {
   mergeQueuedDailyLogs,
   removeOfflineOperation,
 } from '../src/services/offlineOperations.js';
+import {
+  isAppWriteFreezeError,
+  maintenanceDisplayMessage,
+  normalizeAppRuntimeStatus,
+  throwIfAppWriteFrozen,
+} from '../src/services/runtimeStatus.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -111,6 +117,43 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'application runtime status normalizes maintenance state and messages',
+    run() {
+      const status = normalizeAppRuntimeStatus({
+        writesFrozen: true,
+        message: '  Incident maintenance  ',
+        changedAt: '2026-08-04T16:00:00Z',
+      });
+      assert.deepEqual(status, {
+        writesFrozen: true,
+        message: 'Incident maintenance',
+        changedAt: '2026-08-04T16:00:00Z',
+      });
+      assert.equal(maintenanceDisplayMessage(status), 'Incident maintenance');
+      assert.match(maintenanceDisplayMessage({ writesFrozen: true }), /temporarily read-only/);
+    },
+  },
+  {
+    name: 'application write-freeze responses become stable operational errors',
+    async run() {
+      await assert.rejects(
+        () => throwIfAppWriteFrozen(new Response(JSON.stringify({
+          code: '55000',
+          message: 'APP_WRITES_FROZEN',
+          details: 'Maintenance drill in progress.',
+        }), { status: 500 })),
+        (error) => {
+          assert.equal(error.code, 'APP_WRITES_FROZEN');
+          assert.equal(error.message, 'Maintenance drill in progress.');
+          assert.equal(isAppWriteFreezeError(error), true);
+          return true;
+        },
+      );
+      const ordinary = new Response('{"message":"permission denied"}', { status: 403 });
+      assert.equal(await throwIfAppWriteFrozen(ordinary), ordinary);
+    },
+  },
   {
     name: 'offline field queue coalesces edits and preserves conflict versions',
     run() {
