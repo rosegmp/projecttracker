@@ -5,7 +5,7 @@ Updated: 2026-08-04
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `codex/offline-conflict-review` (Recommendation #4 milestone 4.3 from clean `main` at `13f2eca`)
+- Branch: `codex/record-offline-review-release` (documentation checkpoint for deployed Recommendation #4 milestone 4.3)
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
@@ -229,7 +229,9 @@ Updated: 2026-08-04
 - Daily-log and inspection deletes can now be queued offline. They remain visible as **Delete saved on device** tombstones until reconnect, can be reviewed/discarded, coalesce with an earlier device edit for the same record, and clean stored files only after the version-checked server delete succeeds.
 - Migration `20260804170000_add_focused_inspection_delete.sql` adds an editor-authorized, project-scoped inspection delete RPC that locks and verifies the inspection plus sticker/report versions before deleting. Stale versions fail with `NORMALIZED_VERSION_CONFLICT`; View Only users remain denied.
 - Regression coverage now verifies reviewable tombstone overlays and retains the current server record alongside the device overlay. The focused review/discard journey and the expanded offline attachment/reconnect/delete journey pass, as do all 146 regression tests, all 13 Playwright journeys, the 690-module production build, and `git diff --check`.
-- This checkpoint changes web/Android runtime source and adds one migration. It is not yet committed or deployed; the protected Supabase job must pass all 33 authorization assertions before the additive production migration is applied.
+- Feature commit `f3e2d64` merged through protected pull request #9 as `3b0205105e592d4d55c6a6f20a95379a3c463cd5`. Pull-request checks and merge-commit CI run `30931521392` passed the web, all 33 fresh-database authorization assertions, and Android debug-build gates.
+- Migration `20260804170000_add_focused_inspection_delete.sql` was applied after the protected database gate passed. A follow-up linked dry run confirmed complete local/production migration parity.
+- Exact-commit publisher run `30931693244` published `3b0205105e59`, returned HTTP 200 for both the production and immutable deploy URLs, and confirmed production is locked. Milestone 4.3 is deployed and complete.
 
 ### Android field-entry and file-action checkpoint
 
