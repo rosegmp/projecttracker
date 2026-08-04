@@ -244,6 +244,8 @@ The repository now includes a fail-closed read-only rollback-readiness checker a
 
 No production deploy was locked, restored, published, or unlocked during this rehearsal. The remaining decisions are whether to protect `main`, whether Netlify should stay locked until CI passes, how to implement a server-enforced write freeze that covers installed Android clients, and who will be the second authorized responder.
 
+The validated checkpoint is `c4d198b` with Windows invocation follow-up `5aafa26`. GitHub Actions run `30913808720` passed the complete web, database, and Android gate. The live read-only rehearsal returned HTTP 200 for both production and the retained rollback candidate. Both commits used `[skip netlify]`, so the production deploy intentionally remains at its verified ancestor `351a50a`; no production state was mutated.
+
 Document and rehearse:
 
 - Netlify release rollback and deploy locking;
