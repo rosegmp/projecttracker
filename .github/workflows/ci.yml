@@ -43,6 +43,7 @@ jobs:
         run: |
           npm run test:recovery
           npm run test:rollback
+          npm run test:publish
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
