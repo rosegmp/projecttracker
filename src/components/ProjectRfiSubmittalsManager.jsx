@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { personAssignmentLabel } from '../utils/accessUi.js';
 import { formatShortDate } from '../utils/calendarUi.js';
@@ -60,7 +60,7 @@ function money(value) {
     : 'Not set';
 }
 
-export default function ProjectRfiSubmittalsManager({ project, data, canEdit = true }) {
+export default function ProjectRfiSubmittalsManager({ project, data, canEdit = true, navigationTarget = null }) {
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [activeType, setActiveType] = useState('rfis');
   const [recordsByType, setRecordsByType] = useState({ rfis: [], submittals: [] });
@@ -69,6 +69,8 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
+  const [highlightedRecordId, setHighlightedRecordId] = useState('');
+  const recordRefs = useRef({});
   const records = recordsByType[activeType] || [];
   const meta = TYPES[activeType];
 
@@ -97,6 +99,33 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
   }
 
   useEffect(() => { void loadRecords(); }, [service]);
+
+  useEffect(() => {
+    if (navigationTarget?.detailTab !== 'rfis-submittals') return;
+    if (!['rfis', 'submittals'].includes(navigationTarget.workflowType)) return;
+    setActiveType(navigationTarget.workflowType);
+    setDraft(null);
+    setMessage('');
+    setHighlightedRecordId(String(navigationTarget.workflowItemId || ''));
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!highlightedRecordId) return undefined;
+    if (!records.some((record) => record.id === highlightedRecordId)) {
+      if (!loading) setHighlightedRecordId('');
+      return undefined;
+    }
+    const scrollTimer = window.setTimeout(() => {
+      recordRefs.current[highlightedRecordId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedRecordId((current) => (current === highlightedRecordId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightedRecordId, loading, records]);
 
   function change(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -215,7 +244,14 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
       {loading ? <div className="empty-state compact"><p>Loading RFIs and submittals…</p></div> : records.length ? (
         <div className="project-workflow-list">
           {records.map((record) => (
-            <article className="project-workflow-card" key={record.id}>
+            <article
+              className={`project-workflow-card${highlightedRecordId === record.id ? ' highlighted' : ''}`}
+              key={record.id}
+              ref={(node) => {
+                if (node) recordRefs.current[record.id] = node;
+                else delete recordRefs.current[record.id];
+              }}
+            >
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>
                 {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}

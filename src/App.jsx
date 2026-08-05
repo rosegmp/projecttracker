@@ -221,6 +221,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => nativeAndroid ? 'home' : getTabFromLocation());
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
+  const [certificateNavigationTarget, setCertificateNavigationTarget] = useState(null);
   const [authSession, setAuthSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -259,7 +260,9 @@ export default function App() {
   const [startupCheck, setStartupCheck] = useState({ status: 'idle', message: '' });
   const [offlineSyncSummary, setOfflineSyncSummary] = useState({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
   const [showOfflineReview, setShowOfflineReview] = useState(false);
+  const [offlineReviewTargetId, setOfflineReviewTargetId] = useState('');
   const [offlineReviewBusyId, setOfflineReviewBusyId] = useState('');
+  const offlineReviewItemRefs = useRef({});
   const [runtimeStatus, setRuntimeStatus] = useState(DEFAULT_RUNTIME_STATUS);
   const [showAndroidNavMenu, setShowAndroidNavMenu] = useState(false);
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
@@ -534,6 +537,18 @@ export default function App() {
   }, [activeTab, loading, trackerState.tasks]);
 
   const offlineReviewOperations = getOfflineOperations(String(authSession?.user?.id || ''));
+
+  useEffect(() => {
+    if (!showOfflineReview || !offlineReviewTargetId) return undefined;
+    const scrollTimer = window.setTimeout(() => {
+      offlineReviewItemRefs.current[offlineReviewTargetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => setOfflineReviewTargetId(''), 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [offlineReviewTargetId, showOfflineReview]);
 
   function offlineOperationLabel(operation) {
     const projectName = trackerState.projects.find((project) => project.id === operation.projectId)?.name || 'Project';
@@ -860,6 +875,11 @@ export default function App() {
   }
 
   function openHomeItem(item) {
+    if (item.type === 'offline-sync') {
+      setOfflineReviewTargetId(item.id);
+      setShowOfflineReview(true);
+      return;
+    }
     if (item.type === 'project') {
       setProjectNavigationTarget({ projectId: item.id, token: `${item.id}-${Date.now()}` });
       syncProjectToLocation(item.id, { push: true });
@@ -879,6 +899,79 @@ export default function App() {
     }
     if (item.type === 'inspection') {
       setProjectNavigationTarget({ projectId: item.projectId, detailTab: 'inspections', token: `${Date.now()}` });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'certificate' && capabilities.allowedTabs.includes('certificates')) {
+      setCertificateNavigationTarget({
+        subcontractorId: item.subcontractorId,
+        statusId: item.statusId,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('certificates');
+      return;
+    }
+    if (item.type === 'selection' && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'selections',
+        selectionId: item.id,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'portal' && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'portal',
+        portalItemId: item.id,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (['rfi', 'submittal'].includes(item.type) && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'rfis-submittals',
+        workflowType: item.type === 'rfi' ? 'rfis' : 'submittals',
+        workflowItemId: item.id,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'change-order' && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'change-orders',
+        workflowType: 'changeOrders',
+        workflowItemId: item.id,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (['budget', 'commitment', 'budget-summary'].includes(item.type) && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'budget-commitments',
+        workflowType: item.type === 'commitment' ? 'commitments' : 'budgetItems',
+        workflowItemId: item.type === 'budget-summary' ? '' : item.id,
+        token: `${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (['warranty', 'closeout'].includes(item.type) && item.projectId) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'warranty-closeout',
+        workflowType: item.type === 'warranty' ? 'warrantyItems' : 'closeoutItems',
+        workflowItemId: item.id,
+        token: `${Date.now()}`,
+      });
       setActiveTab('projects');
       return;
     }
@@ -1089,6 +1182,8 @@ export default function App() {
           onStateChange={setTrackerState}
           onOpenItem={openHomeItem}
           onOpenCollection={openHomeCollection}
+          includeCertificateExceptions={capabilities.allowedTabs.includes('certificates')}
+          offlineOperations={offlineReviewOperations}
         />
       );
     }
@@ -1177,6 +1272,7 @@ export default function App() {
           data={trackerState}
           activeUser={activeUser}
           onStateChange={setTrackerState}
+          navigationTarget={certificateNavigationTarget}
         />
       );
     }
@@ -1216,7 +1312,14 @@ export default function App() {
                   const { projectName, recordName, deviceSummary } = offlineOperationLabel(operation);
                   const busy = offlineReviewBusyId === operation.id;
                   return (
-                    <article className={`offline-review-item${operation.status === 'needs-attention' ? ' error' : ''}`} key={operation.id}>
+                    <article
+                      className={`offline-review-item${operation.status === 'needs-attention' ? ' error' : ''}${offlineReviewTargetId === operation.id ? ' highlighted' : ''}`}
+                      key={operation.id}
+                      ref={(node) => {
+                        if (node) offlineReviewItemRefs.current[operation.id] = node;
+                        else delete offlineReviewItemRefs.current[operation.id];
+                      }}
+                    >
                       <div>
                         <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.status === 'syncing' ? 'Syncing' : 'Saved on device'}</span>
                         <h3>{operation.action === 'delete' ? `Delete ${recordName}` : recordName}</h3>
@@ -1621,7 +1724,7 @@ export default function App() {
                 : `${offlineSyncSummary.total} change${offlineSyncSummary.total === 1 ? '' : 's'} will sync automatically when a connection is available.`}
             </span>
           </div>
-          <button className="button secondary" type="button" onClick={() => setShowOfflineReview(true)}>Review</button>
+          <button className="button secondary" type="button" onClick={() => { setOfflineReviewTargetId(''); setShowOfflineReview(true); }}>Review</button>
         </section>
       ) : null}
       {projectDrawerOpen ? (

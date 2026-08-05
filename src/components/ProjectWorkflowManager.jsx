@@ -121,6 +121,7 @@ export default function ProjectWorkflowManager({
   subcontractors = [],
   onStateChange = null,
   createRequest = null,
+  navigationTarget = null,
 }) {
   const daily = workflowType === 'dailyLogs';
   const nativeAndroid = isNativeAndroidApp();
@@ -136,6 +137,8 @@ export default function ProjectWorkflowManager({
   const [weatherPrefilling, setWeatherPrefilling] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
   const lastCreateRequestTokenRef = useRef('');
+  const recordRefs = useRef({});
+  const [highlightedRecordId, setHighlightedRecordId] = useState('');
   const subcontractorOptions = useMemo(() => (subcontractors || [])
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
@@ -154,6 +157,31 @@ export default function ProjectWorkflowManager({
   }
 
   useEffect(() => { void loadRecords(); }, [offlineRevision, service, workflowType]);
+
+  useEffect(() => {
+    if (daily || navigationTarget?.workflowType !== workflowType) return;
+    setDraft(null);
+    setMessage('');
+    setHighlightedRecordId(String(navigationTarget.workflowItemId || ''));
+  }, [daily, navigationTarget, workflowType]);
+
+  useEffect(() => {
+    if (!highlightedRecordId) return undefined;
+    if (!records.some((record) => record.id === highlightedRecordId)) {
+      if (!loading) setHighlightedRecordId('');
+      return undefined;
+    }
+    const scrollTimer = window.setTimeout(() => {
+      recordRefs.current[highlightedRecordId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedRecordId((current) => (current === highlightedRecordId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightedRecordId, loading, records]);
 
   useEffect(() => {
     if (!daily) return undefined;
@@ -499,7 +527,14 @@ export default function ProjectWorkflowManager({
       {loading ? <div className="empty-state compact"><p>Loading {daily ? 'daily logs' : 'change orders'}...</p></div> : records.length ? (
         <div className="project-workflow-list">
           {records.map((record) => (
-            <article className={`project-workflow-card${record._offlineDeleted ? ' offline-delete-pending' : ''}`} key={record.id}>
+            <article
+              className={`project-workflow-card${record._offlineDeleted ? ' offline-delete-pending' : ''}${highlightedRecordId === record.id ? ' highlighted' : ''}`}
+              key={record.id}
+              ref={(node) => {
+                if (node) recordRefs.current[record.id] = node;
+                else delete recordRefs.current[record.id];
+              }}
+            >
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : record._offlineDeleted ? 'Delete saved on device' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
                 {canEdit && !record._offlineDeleted ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}

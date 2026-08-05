@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
@@ -51,7 +51,7 @@ function emptyDraft(type, records) {
   };
 }
 
-export default function ProjectBudgetCommitmentsManager({ project, data, canEdit = true }) {
+export default function ProjectBudgetCommitmentsManager({ project, data, canEdit = true, navigationTarget = null }) {
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [activeType, setActiveType] = useState('budgetItems');
   const [recordsByType, setRecordsByType] = useState({ budgetItems: [], commitments: [] });
@@ -60,6 +60,8 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
+  const [highlightedRecordId, setHighlightedRecordId] = useState('');
+  const recordRefs = useRef({});
   const records = recordsByType[activeType] || [];
   const meta = TYPES[activeType];
 
@@ -97,6 +99,33 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
   }
 
   useEffect(() => { void loadRecords(); }, [service]);
+
+  useEffect(() => {
+    if (navigationTarget?.detailTab !== 'budget-commitments') return;
+    if (!['budgetItems', 'commitments'].includes(navigationTarget.workflowType)) return;
+    setActiveType(navigationTarget.workflowType);
+    setDraft(null);
+    setMessage('');
+    setHighlightedRecordId(String(navigationTarget.workflowItemId || ''));
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!highlightedRecordId) return undefined;
+    if (!records.some((record) => record.id === highlightedRecordId)) {
+      if (!loading) setHighlightedRecordId('');
+      return undefined;
+    }
+    const scrollTimer = window.setTimeout(() => {
+      recordRefs.current[highlightedRecordId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedRecordId((current) => (current === highlightedRecordId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightedRecordId, loading, records]);
 
   function change(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -225,7 +254,14 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
           {records.map((record) => {
             const currentBudget = numeric(record.originalBudget) + numeric(record.approvedChanges);
             return (
-              <article className="project-workflow-card" key={record.id}>
+              <article
+                className={`project-workflow-card${highlightedRecordId === record.id ? ' highlighted' : ''}`}
+                key={record.id}
+                ref={(node) => {
+                  if (node) recordRefs.current[record.id] = node;
+                  else delete recordRefs.current[record.id];
+                }}
+              >
                 <div className="project-workflow-card-heading"><div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>{canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}</div>
                 {activeType === 'budgetItems' ? (
                   <dl className="project-workflow-summary"><div><dt>Current budget</dt><dd>{money(currentBudget)}</dd></div><div><dt>Forecast</dt><dd>{money(record.forecastCost)}</dd></div><div><dt>Variance</dt><dd>{money(currentBudget - numeric(record.forecastCost))}</dd></div></dl>

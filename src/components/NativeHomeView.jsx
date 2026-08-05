@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createTask, loadAuditEvents, updateTask } from '../services/trackerData.js';
+import { loadInsuranceCertificates } from '../services/insuranceCertificates.js';
+import { loadPortalItemsForProjects, loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
+import { reportError } from '../services/observability.js';
 import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser } from '../utils/accessUi.js';
 import { formatAuditValue } from '../utils/auditTrail.js';
 import { taskAssigneeFields } from '../utils/assignees.js';
@@ -7,7 +10,13 @@ import {
   addLocalDays,
   buildHomeActionCenterItems,
   buildHomeAttentionSummary,
+  buildHomeCertificateExceptions,
+  buildHomeFinancialExceptions,
+  buildHomeOfflineSyncExceptions,
+  buildHomeWarrantyCloseoutExceptions,
   buildHomeOpenTasks,
+  buildHomeOverdueDocumentExceptions,
+  buildHomePendingDecisionExceptions,
   buildHomeRangeSummary,
   getLocalIsoDate,
   getProjectOperationalHealth,
@@ -15,6 +24,7 @@ import {
 } from '../utils/homeView.js';
 import { loadFourDayForecast } from '../utils/weather.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { getVisibleProjectTabs } from '../utils/projectTabs.js';
 import FluentIcon from './FluentIcon.jsx';
 
 const HOME_LIST_LIMIT = 5;
@@ -124,7 +134,7 @@ function formatActionStatus(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function ActionCenter({ actions, canEdit, onOpen, onComplete }) {
+function ActionCenter({ actions, canEdit, onOpen, onComplete, sourceWarning = '' }) {
   const [showAll, setShowAll] = useState(false);
   const visibleActions = showAll ? actions : actions.slice(0, ACTION_CENTER_LIMIT);
 
@@ -157,6 +167,7 @@ function ActionCenter({ actions, canEdit, onOpen, onComplete }) {
           ))}
         </div>
       ) : <p className="home-empty-row">No operational exceptions need attention.</p>}
+      {sourceWarning ? <p className="home-audit-message error">{sourceWarning}</p> : null}
       {actions.length > ACTION_CENTER_LIMIT ? (
         <button className="text-button home-action-toggle" type="button" onClick={() => setShowAll((current) => !current)}>
           {showAll ? 'Show fewer' : `Show all ${actions.length}`}
@@ -254,6 +265,8 @@ export default function NativeHomeView({
   onStateChange,
   onOpenItem,
   onOpenCollection,
+  includeCertificateExceptions = false,
+  offlineOperations = [],
 }) {
   const [auditRows, setAuditRows] = useState([]);
   const [auditLoading, setAuditLoading] = useState(true);
@@ -264,6 +277,16 @@ export default function NativeHomeView({
   const [weatherVisible, setWeatherVisible] = useState(() => readWeatherPreference(activeUser));
   const [quickTask, setQuickTask] = useState({ label: '', projectId: '', due: '', assignee: '' });
   const [quickTaskMessage, setQuickTaskMessage] = useState(null);
+  const [certificates, setCertificates] = useState([]);
+  const [certificateLoadError, setCertificateLoadError] = useState('');
+  const [portalItems, setPortalItems] = useState([]);
+  const [portalLoadError, setPortalLoadError] = useState('');
+  const [documentItems, setDocumentItems] = useState({ rfis: [], submittals: [] });
+  const [documentLoadError, setDocumentLoadError] = useState('');
+  const [financialItems, setFinancialItems] = useState({ changeOrders: [], budgetItems: [], commitments: [] });
+  const [financialLoadError, setFinancialLoadError] = useState('');
+  const [warrantyCloseoutItems, setWarrantyCloseoutItems] = useState({ warrantyItems: [], closeoutItems: [] });
+  const [warrantyCloseoutLoadError, setWarrantyCloseoutLoadError] = useState('');
   const dataRef = useRef(data);
   const { runMutation, isMutating } = useEntityMutations();
   const now = useMemo(() => new Date(), [data]);
@@ -279,14 +302,82 @@ export default function NativeHomeView({
 
   const visibleProjects = useMemo(() => getVisibleProjectsForUser(data.projects, data.settings, activeUser), [activeUser, data.projects, data.settings]);
   const visibleTasks = useMemo(() => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects), [data.settings, data.tasks, visibleProjects]);
+  const visibleProjectTabIds = useMemo(
+    () => new Set(getVisibleProjectTabs(data.settings?.visibleProjectTabs, activeUser?.role).map((tab) => tab.id)),
+    [activeUser?.role, data.settings?.visibleProjectTabs],
+  );
   const scopedOpenTasks = useMemo(
     () => buildHomeOpenTasks(visibleTasks, visibleProjects, activeUser, [...(data.subs || []), ...(data.employees || [])]),
     [activeUser, data.employees, data.subs, visibleProjects, visibleTasks],
   );
-  const attention = useMemo(
-    () => buildHomeAttentionSummary(visibleProjects, scopedOpenTasks, todayIso, canEdit ? visibleTasks : []),
-    [canEdit, scopedOpenTasks, todayIso, visibleProjects, visibleTasks],
+  const certificateExceptions = useMemo(
+    () => includeCertificateExceptions
+      ? buildHomeCertificateExceptions(data.subs || [], certificates, todayIso)
+      : [],
+    [certificates, data.subs, includeCertificateExceptions, todayIso],
   );
+  const pendingDecisions = useMemo(
+    () => buildHomePendingDecisionExceptions(visibleProjects, portalItems, todayIso, {
+      includeSelections: visibleProjectTabIds.has('selections'),
+    }),
+    [portalItems, todayIso, visibleProjectTabIds, visibleProjects],
+  );
+  const overdueDocuments = useMemo(
+    () => visibleProjectTabIds.has('rfis-submittals')
+      ? buildHomeOverdueDocumentExceptions(
+        visibleProjects,
+        documentItems.rfis,
+        documentItems.submittals,
+        todayIso,
+      )
+      : [],
+    [documentItems.rfis, documentItems.submittals, todayIso, visibleProjectTabIds, visibleProjects],
+  );
+  const financialExceptions = useMemo(
+    () => buildHomeFinancialExceptions(
+      visibleProjects,
+      visibleProjectTabIds.has('change-orders') ? financialItems.changeOrders : [],
+      visibleProjectTabIds.has('budget-commitments') ? financialItems.budgetItems : [],
+      visibleProjectTabIds.has('budget-commitments') ? financialItems.commitments : [],
+      todayIso,
+    ),
+    [
+      financialItems.budgetItems,
+      financialItems.changeOrders,
+      financialItems.commitments,
+      todayIso,
+      visibleProjectTabIds,
+      visibleProjects,
+    ],
+  );
+  const warrantyCloseoutExceptions = useMemo(
+    () => visibleProjectTabIds.has('warranty-closeout')
+      ? buildHomeWarrantyCloseoutExceptions(
+        visibleProjects,
+        warrantyCloseoutItems.warrantyItems,
+        warrantyCloseoutItems.closeoutItems,
+        todayIso,
+      )
+      : [],
+    [todayIso, visibleProjectTabIds, visibleProjects, warrantyCloseoutItems.closeoutItems, warrantyCloseoutItems.warrantyItems],
+  );
+  const offlineSyncExceptions = useMemo(
+    () => buildHomeOfflineSyncExceptions(
+      visibleProjects,
+      offlineOperations,
+      activeUser?.name || activeUser?.email || 'You',
+    ),
+    [activeUser?.email, activeUser?.name, offlineOperations, visibleProjects],
+  );
+  const attention = useMemo(() => ({
+    ...buildHomeAttentionSummary(visibleProjects, scopedOpenTasks, todayIso, canEdit ? visibleTasks : []),
+    certificateExceptions,
+    pendingDecisions,
+    overdueDocuments,
+    financialExceptions,
+    warrantyCloseoutExceptions,
+    offlineSyncExceptions,
+  }), [canEdit, certificateExceptions, financialExceptions, offlineSyncExceptions, overdueDocuments, pendingDecisions, scopedOpenTasks, todayIso, visibleProjects, visibleTasks, warrantyCloseoutExceptions]);
   const actionCenterItems = useMemo(() => buildHomeActionCenterItems(attention), [attention]);
   const todaySummary = useMemo(() => buildHomeRangeSummary(visibleProjects, scopedOpenTasks, todayIso, todayIso), [scopedOpenTasks, todayIso, visibleProjects]);
   const nextSevenSummary = useMemo(
@@ -330,6 +421,109 @@ export default function NativeHomeView({
 
   useEffect(() => { void refreshAudit(); }, [refreshAudit]);
 
+  const refreshCertificates = useCallback(async () => {
+    if (!includeCertificateExceptions) {
+      setCertificates([]);
+      setCertificateLoadError('');
+      return;
+    }
+    setCertificateLoadError('');
+    try {
+      setCertificates(await loadInsuranceCertificates());
+    } catch (error) {
+      reportError(error, { operation: 'certificate.home-list', workspace: 'home' });
+      setCertificateLoadError('Certificate exceptions are temporarily unavailable.');
+    }
+  }, [includeCertificateExceptions]);
+
+  useEffect(() => { void refreshCertificates(); }, [refreshCertificates]);
+
+  const refreshPortalActions = useCallback(async () => {
+    if (!visibleProjects.length || !visibleProjectTabIds.has('portal')) {
+      setPortalItems([]);
+      setPortalLoadError('');
+      return;
+    }
+    setPortalLoadError('');
+    try {
+      setPortalItems(await loadPortalItemsForProjects(visibleProjects.map((project) => project.id)));
+    } catch (error) {
+      reportError(error, { operation: 'portal.home-list', workspace: 'home' });
+      setPortalLoadError('Pending portal actions are temporarily unavailable.');
+    }
+  }, [visibleProjectTabIds, visibleProjects]);
+
+  useEffect(() => { void refreshPortalActions(); }, [refreshPortalActions]);
+
+  const refreshDocumentActions = useCallback(async () => {
+    if (!visibleProjects.length || !visibleProjectTabIds.has('rfis-submittals')) {
+      setDocumentItems({ rfis: [], submittals: [] });
+      setDocumentLoadError('');
+      return;
+    }
+    setDocumentLoadError('');
+    try {
+      const projectIds = visibleProjects.map((project) => project.id);
+      const [rfis, submittals] = await Promise.all([
+        loadWorkflowItemsForProjects('rfis', projectIds),
+        loadWorkflowItemsForProjects('submittals', projectIds),
+      ]);
+      setDocumentItems({ rfis, submittals });
+    } catch (error) {
+      reportError(error, { operation: 'rfi-submittal.home-list', workspace: 'home' });
+      setDocumentLoadError('Overdue RFI and submittal actions are temporarily unavailable.');
+    }
+  }, [visibleProjectTabIds, visibleProjects]);
+
+  useEffect(() => { void refreshDocumentActions(); }, [refreshDocumentActions]);
+
+  const refreshFinancialActions = useCallback(async () => {
+    const includeChangeOrders = visibleProjectTabIds.has('change-orders');
+    const includeBudget = visibleProjectTabIds.has('budget-commitments');
+    if (!visibleProjects.length || (!includeChangeOrders && !includeBudget)) {
+      setFinancialItems({ changeOrders: [], budgetItems: [], commitments: [] });
+      setFinancialLoadError('');
+      return;
+    }
+    setFinancialLoadError('');
+    try {
+      const projectIds = visibleProjects.map((project) => project.id);
+      const [changeOrders, budgetItems, commitments] = await Promise.all([
+        includeChangeOrders ? loadWorkflowItemsForProjects('changeOrders', projectIds) : Promise.resolve([]),
+        includeBudget ? loadWorkflowItemsForProjects('budgetItems', projectIds) : Promise.resolve([]),
+        includeBudget ? loadWorkflowItemsForProjects('commitments', projectIds) : Promise.resolve([]),
+      ]);
+      setFinancialItems({ changeOrders, budgetItems, commitments });
+    } catch (error) {
+      reportError(error, { operation: 'financial.home-list', workspace: 'home' });
+      setFinancialLoadError('Change-order and budget actions are temporarily unavailable.');
+    }
+  }, [visibleProjectTabIds, visibleProjects]);
+
+  useEffect(() => { void refreshFinancialActions(); }, [refreshFinancialActions]);
+
+  const refreshWarrantyCloseoutActions = useCallback(async () => {
+    if (!visibleProjects.length || !visibleProjectTabIds.has('warranty-closeout')) {
+      setWarrantyCloseoutItems({ warrantyItems: [], closeoutItems: [] });
+      setWarrantyCloseoutLoadError('');
+      return;
+    }
+    setWarrantyCloseoutLoadError('');
+    try {
+      const projectIds = visibleProjects.map((project) => project.id);
+      const [warrantyItems, closeoutItems] = await Promise.all([
+        loadWorkflowItemsForProjects('warrantyItems', projectIds),
+        loadWorkflowItemsForProjects('closeoutItems', projectIds),
+      ]);
+      setWarrantyCloseoutItems({ warrantyItems, closeoutItems });
+    } catch (error) {
+      reportError(error, { operation: 'warranty-closeout.home-list', workspace: 'home' });
+      setWarrantyCloseoutLoadError('Warranty and closeout actions are temporarily unavailable.');
+    }
+  }, [visibleProjectTabIds, visibleProjects]);
+
+  useEffect(() => { void refreshWarrantyCloseoutActions(); }, [refreshWarrantyCloseoutActions]);
+
   const refreshWeather = useCallback(async (force = true) => {
     if (!weatherVisible) return;
     setWeatherLoading(true);
@@ -352,7 +546,16 @@ export default function NativeHomeView({
   }
 
   async function refreshHome() {
-    await Promise.all([refresh({ force: true }), refreshAudit(), weatherVisible ? refreshWeather(true) : Promise.resolve()]);
+    await Promise.all([
+      refresh({ force: true }),
+      refreshAudit(),
+      refreshCertificates(),
+      refreshPortalActions(),
+      refreshDocumentActions(),
+      refreshFinancialActions(),
+      refreshWarrantyCloseoutActions(),
+      weatherVisible ? refreshWeather(true) : Promise.resolve(),
+    ]);
   }
 
   async function completeTask(task) {
@@ -416,7 +619,19 @@ export default function NativeHomeView({
         </div>
       </section>
 
-      <ActionCenter actions={actionCenterItems} canEdit={canEdit} onOpen={onOpenItem} onComplete={taskComplete} />
+      <ActionCenter
+        actions={actionCenterItems}
+        canEdit={canEdit}
+        onOpen={onOpenItem}
+        onComplete={taskComplete}
+        sourceWarning={[
+          certificateLoadError,
+          portalLoadError,
+          documentLoadError,
+          financialLoadError,
+          warrantyCloseoutLoadError,
+        ].filter(Boolean).join(' ')}
+      />
 
       {canEdit ? <QuickTaskForm draft={quickTask} projects={visibleProjects} assigneeOptions={assigneeOptions} saving={isMutating('home:task:create')} message={quickTaskMessage} onChange={(field, value) => setQuickTask((current) => ({ ...current, [field]: value }))} onSubmit={(event) => void submitQuickTask(event)} /> : null}
 

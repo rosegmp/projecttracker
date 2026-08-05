@@ -3,6 +3,14 @@ import { renderModalPortal, showAppAlert, showAppConfirm } from './AppDialogs.js
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { formatFileSize } from '../utils/fileUi.js';
 import { findClosestSubcontractor } from '../utils/certificateMatching.js';
+import {
+  certificateEligible,
+  certificateRequired,
+  certificateStatus,
+  sortCertificatesByExpiration,
+  subcontractorCertificateStatus,
+  subcontractorLabel,
+} from '../utils/certificateStatus.js';
 import { reportError } from '../services/observability.js';
 import { updatePerson } from '../services/trackerData.js';
 import {
@@ -60,44 +68,6 @@ function copyCertificate(certificate) {
       aggregateLimit: coverage.aggregateLimit || '',
     })),
   };
-}
-
-function subcontractorLabel(subcontractor) {
-  const name = `${subcontractor?.first || ''} ${subcontractor?.last || ''}`.trim();
-  return String(subcontractor?.company || name || 'Unnamed subcontractor').trim();
-}
-
-function certificateStatus(expirationDate) {
-  if (!expirationDate) return { id: 'missing', label: 'Missing expiration', days: null };
-  const end = new Date(`${expirationDate}T23:59:59`);
-  if (Number.isNaN(end.getTime())) return { id: 'missing', label: 'Missing expiration', days: null };
-  const days = Math.ceil((end.getTime() - Date.now()) / 86400000);
-  if (days < 0) return { id: 'expired', label: 'Expired', days };
-  if (days <= 30) return { id: 'expiring', label: 'Expiring soon', days };
-  return { id: 'active', label: 'Active', days };
-}
-
-function certificateRequired(subcontractor) {
-  return subcontractor?.certificateRequirement !== 'not_required';
-}
-
-function certificateEligible(subcontractor) {
-  return subcontractor?.inactive !== true && certificateRequired(subcontractor);
-}
-
-function sortCertificatesByExpiration(certificates) {
-  return [...certificates].sort((left, right) => {
-    const leftTime = left.expirationDate ? new Date(`${left.expirationDate}T23:59:59`).getTime() : 0;
-    const rightTime = right.expirationDate ? new Date(`${right.expirationDate}T23:59:59`).getTime() : 0;
-    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
-  });
-}
-
-function subcontractorCertificateStatus(subcontractor, certificates) {
-  if (subcontractor?.inactive === true) return { id: 'inactive', label: 'Inactive', days: null };
-  if (!certificateRequired(subcontractor)) return { id: 'not-required', label: 'No cert needed', days: null };
-  if (!certificates.length) return { id: 'missing', label: 'Missing certificate', days: null };
-  return certificateStatus(certificates[0].expirationDate);
 }
 
 function formatCurrency(value) {
@@ -455,7 +425,7 @@ function BulkCertificateModal({
   );
 }
 
-export default function NativeCertificatesView({ data, activeUser, onStateChange }) {
+export default function NativeCertificatesView({ data, activeUser, onStateChange, navigationTarget = null }) {
   const canEdit = ['Admin', 'Edit'].includes(activeUser?.role);
   const subcontractors = useMemo(
     () => [...(data.subs || [])].sort((a, b) => subcontractorLabel(a).localeCompare(subcontractorLabel(b))),
@@ -504,6 +474,13 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   useEffect(() => {
     void refreshCertificates();
   }, []);
+
+  useEffect(() => {
+    if (!navigationTarget?.subcontractorId) return;
+    setSubcontractorFilter(navigationTarget.subcontractorId);
+    setStatusFilter(navigationTarget.statusId || 'all');
+    setSearch('');
+  }, [navigationTarget]);
 
   function startCreate(subcontractorId = '') {
     const filteredSubcontractor = subcontractorFilter !== 'all' ? subcontractorFilter : '';

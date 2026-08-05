@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getStoredAuthSession } from '../services/trackerData.js';
@@ -151,7 +151,7 @@ function CustomerWarrantyRequests({ project, activeUser }) {
   );
 }
 
-function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
+function StaffWarrantyCloseoutManager({ project, data, canEdit = true, navigationTarget = null }) {
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [activeType, setActiveType] = useState('warrantyItems');
   const [recordsByType, setRecordsByType] = useState({ warrantyItems: [], closeoutItems: [] });
@@ -161,6 +161,8 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
   const [message, setMessage] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
+  const [highlightedRecordId, setHighlightedRecordId] = useState('');
+  const recordRefs = useRef({});
   const records = recordsByType[activeType] || [];
   const meta = TYPES[activeType];
   const warranty = recordsByType.warrantyItems;
@@ -214,6 +216,33 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
   useEffect(() => {
     if (offlineRevision > 0) void loadRecords();
   }, [offlineRevision]);
+
+  useEffect(() => {
+    if (navigationTarget?.detailTab !== 'warranty-closeout') return;
+    if (!['warrantyItems', 'closeoutItems'].includes(navigationTarget.workflowType)) return;
+    setActiveType(navigationTarget.workflowType);
+    setDraft(null);
+    setMessage('');
+    setHighlightedRecordId(String(navigationTarget.workflowItemId || ''));
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!highlightedRecordId) return undefined;
+    if (!records.some((record) => record.id === highlightedRecordId)) {
+      if (!loading) setHighlightedRecordId('');
+      return undefined;
+    }
+    const scrollTimer = window.setTimeout(() => {
+      recordRefs.current[highlightedRecordId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedRecordId((current) => (current === highlightedRecordId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightedRecordId, loading, records]);
 
   function change(field, value) { setDraft((current) => ({ ...current, [field]: value })); }
   function addAttachments(fileList) { setDraft((current) => addPendingWorkflowAttachments(current, fileList)); }
@@ -346,7 +375,14 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
       {loading ? <div className="empty-state compact"><p>Loading warranty and closeout…</p></div> : records.length ? (
         <div className="project-workflow-list">
           {records.map((record) => (
-            <article className="project-workflow-card" key={record.id}>
+            <article
+              className={`project-workflow-card${highlightedRecordId === record.id ? ' highlighted' : ''}`}
+              key={record.id}
+              ref={(node) => {
+                if (node) recordRefs.current[record.id] = node;
+                else delete recordRefs.current[record.id];
+              }}
+            >
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span>{activeType === 'warrantyItems' && (warrantyOperationById.get(record.id) || record._offlineStatus) ? <span className={`status-pill offline-${warrantyOperationById.get(record.id)?.status || record._offlineStatus}`}>{(warrantyOperationById.get(record.id)?.status || record._offlineStatus) === 'needs-attention' ? 'Needs attention' : (warrantyOperationById.get(record.id)?.status || record._offlineStatus) === 'syncing' ? 'Syncing' : 'Saved on device'}</span> : null}<h3>{record.number} · {record.title}</h3></div>
                 {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}
