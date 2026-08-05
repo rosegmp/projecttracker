@@ -27,6 +27,7 @@ import {
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import {
+  buildHomeActionCenterItems,
   buildHomeAttentionSummary,
   buildHomeDaySummary,
   buildHomeOpenTasks,
@@ -95,13 +96,16 @@ import {
   hydrateNormalizedTakeoff,
   splitTakeoffSnapshot,
 } from '../src/features/takeoff/services/takeoffNormalization.js';
+import { constrainDrawingEndpoint } from '../src/features/takeoff/services/takeoffDrawing.js';
 import {
   applyQueuedInspectionOperations,
+  applyQueuedTaskOperations,
   enqueueOfflineOperation,
   getOfflineOperations,
   getOfflineOperationSummary,
   isOfflineNetworkError,
   mergeQueuedDailyLogs,
+  mergeQueuedWarrantyItems,
   removeOfflineOperation,
 } from '../src/services/offlineOperations.js';
 import {
@@ -228,6 +232,22 @@ const tests = [
           queuedAt: '2026-07-27T12:01:00.000Z',
           payload: { id: 'inspection-1', status: 'failed', notes: 'Corrected offline' },
         },
+        {
+          kind: 'task.save',
+          projectId: 'project-1',
+          entityId: 'task-1',
+          status: 'pending',
+          queuedAt: '2026-07-27T12:02:00.000Z',
+          payload: { id: 'task-1', projectId: 'project-1', label: 'Device task', done: true },
+        },
+        {
+          kind: 'warranty-item.save',
+          projectId: 'project-1',
+          entityId: 'warranty-1',
+          status: 'pending',
+          queuedAt: '2026-07-27T12:03:00.000Z',
+          payload: { id: 'warranty-1', projectId: 'project-1', number: 'WAR-001', title: 'Device punch item', status: 'in_progress' },
+        },
       ];
       const logs = mergeQueuedDailyLogs(
         [{ id: 'log-1', date: '2026-07-27', title: 'Daily log', notes: 'Server notes' }],
@@ -236,12 +256,24 @@ const tests = [
       assert.equal(logs[0].notes, 'Device notes');
       assert.equal(logs[0]._offlineStatus, 'pending');
       assert.equal(logs[0]._offlineServerRecord.notes, 'Server notes');
-      const state = applyQueuedInspectionOperations({
+      const state = applyQueuedTaskOperations(applyQueuedInspectionOperations({
+        tasks: [{ id: 'task-1', projectId: 'project-1', label: 'Server task', done: false }],
         projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', status: 'scheduled' }] }],
-      }, operations);
+      }, operations), operations);
       assert.equal(state.projects[0].inspections[0].status, 'failed');
       assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
       assert.equal(state.projects[0].inspections[0]._offlineServerRecord.status, 'scheduled');
+      assert.equal(state.tasks[0].label, 'Device task');
+      assert.equal(state.tasks[0].done, true);
+      assert.equal(state.tasks[0]._offlineStatus, 'pending');
+      assert.equal(state.tasks[0]._offlineServerRecord.label, 'Server task');
+      const warrantyItems = mergeQueuedWarrantyItems(
+        [{ id: 'warranty-1', number: 'WAR-001', title: 'Server punch item', status: 'open' }],
+        operations,
+      );
+      assert.equal(warrantyItems[0].title, 'Device punch item');
+      assert.equal(warrantyItems[0]._offlineStatus, 'pending');
+      assert.equal(warrantyItems[0]._offlineServerRecord.title, 'Server punch item');
       assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
       assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
     },
@@ -296,6 +328,10 @@ const tests = [
       assert.match(inspectionSource, /export async function queueProjectInspectionDeleteOffline/);
       assert.match(inspectionSource, /delete_project_inspection/);
       assert.match(inspectionSource, /storageProvider: 'device'/);
+      assert.match(syncSource, /operation\.kind === 'task\.save'/);
+      assert.match(syncSource, /operation\.kind === 'warranty-item\.save'/);
+      assert.match(inspectionSource, /export function queueTaskUpdateOffline/);
+      assert.match(inspectionSource, /export async function syncQueuedTask/);
     },
   },
   {
@@ -615,16 +651,33 @@ const tests = [
         { id: 'unassigned', projectId: 'p1', label: 'Call inspector', due: '', done: false, assignees: [] },
       ];
       const attention = buildHomeAttentionSummary(projects, tasks, '2026-07-16', tasks);
+      const actions = buildHomeActionCenterItems(attention);
       const range = buildHomeRangeSummary(projects, tasks, '2026-07-17', '2026-07-23');
       const health = getProjectOperationalHealth(projects[0], tasks, '2026-07-16');
       assert.deepEqual(attention.overdueTasks.map((item) => item.id), ['overdue']);
       assert.deepEqual(attention.overdueInspections.map((item) => item.id), ['i-old']);
       assert.deepEqual(attention.blockedSteps.map((item) => item.id), ['step-2']);
       assert.deepEqual(attention.unassignedTasks.map((item) => item.id), ['unassigned']);
+      assert.deepEqual(actions.map((action) => action.item.id), ['overdue', 'i-old', 'step-2', 'unassigned']);
+      assert.deepEqual(actions.map((action) => action.owner), ['Alex', 'Unassigned', 'Unassigned', 'Unassigned']);
+      assert.deepEqual(actions.map((action) => action.reason), [
+        'Task is past due',
+        'Inspection is past due',
+        'Schedule is blocked or delayed',
+        'Work has no owner',
+      ]);
+      const multiReasonTask = { ...tasks[2], type: 'task', projectName: 'Lake House', attentionKind: 'Overdue' };
+      const deduplicatedActions = buildHomeActionCenterItems({
+        overdueTasks: [multiReasonTask],
+        unassignedTasks: [multiReasonTask],
+      });
+      assert.equal(deduplicatedActions.length, 1);
+      assert.equal(deduplicatedActions[0].reason, 'Task is past due · Work has no owner');
       assert.deepEqual(range.openTasks.map((item) => item.id), ['upcoming']);
       assert.equal(health.tone, 'attention');
       assert.equal(health.issueCount, 3);
-      assert.match(homeSource, /Needs attention/);
+      assert.match(homeSource, /Action center/);
+      assert.match(homeSource, /Work item.*Project.*Owner.*Due.*Reason.*Status.*Actions/);
       assert.match(homeSource, /Next 7 days/);
       assert.match(homeSource, /QuickTaskForm/);
       assert.match(homeSource, /Mark .* complete/);
@@ -1331,6 +1384,42 @@ const tests = [
       assert.match(appSource, /AndroidNotificationPreferences/);
       assert.match(appSource, /Notification settings/);
       assert.match(manifestSource, /android\.permission\.POST_NOTIFICATIONS/);
+    },
+  },
+  {
+    name: 'new task assignment emails use separate internal and external settings with server-side recipient enforcement',
+    async run() {
+      const [settingsSource, trackerSource, pushSource, functionSource, tasksSource, scheduleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/androidPushNotifications.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(settingsSource, /New task assignment emails/);
+      assert.match(settingsSource, /Employees and administrators/);
+      assert.match(settingsSource, /Subcontractors and suppliers/);
+      assert.match(settingsSource, /emailNewTasksToInternalAssignees/);
+      assert.match(settingsSource, /emailNewTasksToExternalAssignees/);
+      assert.match(trackerSource, /emailNewTasksToInternalAssignees: false/);
+      assert.match(trackerSource, /emailNewTasksToExternalAssignees: false/);
+      assert.match(trackerSource, /assignees: eventKind === 'task-created'/);
+      assert.match(pushSource, /assignees: Array\.isArray\(event\.assignees\)/);
+      assert.match(functionSource, /admin\.from\('settings'\)/);
+      assert.match(functionSource, /admin\.from\('people'\)/);
+      assert.match(functionSource, /admin\.from\('tasks'\)/);
+      assert.match(functionSource, /admin\.from\('task_assignments'\)/);
+      assert.match(functionSource, /task_project_mismatch/);
+      assert.match(functionSource, /\['sub', 'supplier'\]/);
+      assert.match(functionSource, /\['Admin', 'Edit', 'View Only'\]/);
+      assert.match(functionSource, /RESEND_API_KEY/);
+      assert.match(functionSource, /TASK_ASSIGNMENT_EMAIL_FROM/);
+      assert.match(functionSource, /https:\/\/api\.resend\.com\/emails/);
+      assert.match(functionSource, /'Idempotency-Key'/);
+      assert.match(tasksSource, /sendAssignmentNotifications: false/);
+      assert.match(scheduleSource, /sendAssignmentNotifications: false/);
     },
   },
   {
@@ -3835,8 +3924,17 @@ const tests = [
           type: 'text',
           text: 'Verify opening',
           color: '#654321',
+          thickness: 3,
           points: [{ x: 30, y: 40 }],
           createdAt: '2026-07-27T12:01:00.000Z',
+        }, {
+          id: 'markup-2',
+          pageNumber: 2,
+          type: 'rectangle',
+          color: '#112233',
+          thickness: 5,
+          points: [{ x: 10, y: 15 }, { x: 50, y: 75 }],
+          createdAt: '2026-07-27T12:02:00.000Z',
         }],
       };
       const normalized = splitTakeoffSnapshot(snapshot);
@@ -3846,6 +3944,8 @@ const tests = [
       assert.deepEqual(normalized.sheets.map((sheet) => sheet.page_number), [1, 2]);
       assert.deepEqual(normalized.measurements[0].points, snapshot.measurements[0].points);
       assert.equal(normalized.markups[0].text, 'Verify opening');
+      assert.equal(normalized.markups[1].type, 'rectangle');
+      assert.equal(normalized.markups[1].line_width, 5);
 
       const hydrated = hydrateNormalizedTakeoff(
         normalized.snapshot,
@@ -3857,6 +3957,15 @@ const tests = [
       assert.deepEqual(hydrated.measurements, snapshot.measurements);
       assert.deepEqual(hydrated.markups, snapshot.markups);
 
+      assert.deepEqual(
+        constrainDrawingEndpoint({ x: 10, y: 15 }, { x: 50, y: 75 }, 'rectangle', true),
+        { x: 70, y: 75 },
+      );
+      assert.deepEqual(
+        constrainDrawingEndpoint({ x: 10, y: 15 }, { x: 50, y: 75 }, 'oval', false),
+        { x: 50, y: 75 },
+      );
+
       const migrationSource = await readFile(
         new URL('../supabase/migrations/20260727150000_normalize_project_takeoffs.sql', import.meta.url),
         'utf8',
@@ -3867,6 +3976,13 @@ const tests = [
       assert.match(migrationSource, /security invoker/);
       assert.match(migrationSource, /takeoff_version_conflict/);
       assert.match(migrationSource, /Portal accounts cannot read takeoff measurements/);
+      const drawingMigrationSource = await readFile(
+        new URL('../supabase/migrations/20260804180000_add_takeoff_drawing_shapes.sql', import.meta.url),
+        'utf8',
+      );
+      assert.match(drawingMigrationSource, /'line', 'multiline', 'rectangle', 'oval'/);
+      assert.match(drawingMigrationSource, /line_width numeric not null default 3/);
+      assert.match(drawingMigrationSource, /save_project_takeoff_normalized/);
     },
   },
   {

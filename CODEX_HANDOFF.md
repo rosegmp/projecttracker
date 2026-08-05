@@ -1,12 +1,13 @@
 # Project Tracker handoff
 
-Updated: 2026-08-04
+Updated: 2026-08-05
 
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
-- Branch: `codex/record-offline-review-release` (documentation checkpoint for deployed Recommendation #4 milestone 4.3)
+- Branch: `main` at `8a3496d` with an uncommitted Takeoff drawing-tools checkpoint
 - The integrated construction-workflow and secure portal release is deployed from `main`; see the production rollout milestone below.
+
 - Recent commits:
   - `dfa03d2` Record backend correlation activation
   - `524fdb4` Add backend request correlation
@@ -32,6 +33,30 @@ Updated: 2026-08-04
   - `6e94084` Prevent startup splash from hanging
   - `d9d0e1c` Add Home dashboard and weather forecast
   - `dbc9809` Normalize tracker data and authorization
+
+## Current priority: project-wide review Recommendation 1 — Unified Action Center
+
+### First bounded implementation checkpoint: existing Home exceptions
+
+- Home now consolidates the four existing operational exception sources—overdue tasks, overdue inspections, blocked/delayed schedule steps, and editor-visible unassigned work—into one responsive **Action center** instead of four separate summary cards.
+- Every action row uses the same work item, project, owner, due date, reason, status, and action contract. Owners come only from direct task/schedule assignments or the inspection agency/inspector field; absent ownership remains explicitly **Unassigned**.
+- One underlying item appears once even when it has multiple reasons, such as an overdue unassigned task; all reasons remain visible on that row. Items are ordered by actionable date, severity, project, and label, and the first eight render by default with an in-place show-all control.
+- Existing authorization boundaries remain unchanged: project/task visibility is still filtered by the existing access helpers, non-Admin internal users continue to see overdue tasks scoped to their assignments, unassigned work remains editor-only, and read-only roles receive no mutation affordance. Existing drill-through and editor task-completion actions are preserved.
+- This checkpoint adds no workflow datasets, database changes, remote writes, or migrations. Expiring/missing certificates, portal/selection actions, RFIs/submittals, financial exceptions, warranty/closeout deadlines, and offline sync failures remain later incremental Action Center sources.
+- Focused verification passes all 146 regression tests, the 694-module production Vite build, and `git diff --check`. No Playwright suite, Capacitor sync, Gradle/APK build, commit, push, deployment, or remote migration was run for this checkpoint.
+- The working tree still includes the pre-existing uncommitted Takeoff drawing tools and offline task/warranty changes; those edits were preserved. Action Center work is limited to `src/components/NativeHomeView.jsx`, `src/utils/homeView.js`, `src/styles.css`, the shared regression runner, and this handoff.
+
+### Automatic new-task assignment emails: backend activated, client release in progress
+
+- **Settings → Notifications** now contains two independent, Administrator-persisted switches: **Employees and administrators** and **Subcontractors and suppliers**. Both default off and are stored in the existing versioned `app_settings` JSON, so no database migration is required.
+- After a new task save succeeds, the existing authorized `send-project-notification` Edge Function re-reads the saved task, normalized task assignments, app settings, app users, and normalized People rows. It never trusts client-supplied recipients or task content for email delivery.
+- Internal delivery resolves employee People records plus internal Admin/Edit/View Only app accounts. External delivery resolves only subcontractor and supplier People records. Customers and consultants are excluded; missing/invalid emails are skipped; duplicate email addresses receive one message.
+- Each recipient receives an individual Resend API request with an event-scoped idempotency key, plain-text and escaped HTML bodies, project/task/due-date context, and no disclosure of other recipients. Required function secrets are `RESEND_API_KEY` and a verified `TASK_ASSIGNMENT_EMAIL_FROM` sender.
+- Task creation remains authoritative if notification delivery is unavailable. Task updates do not send these emails, and undo-restored tasks explicitly suppress creation notifications so restoration cannot resend an assignment email.
+- Local verification passes all 147 regression tests, the 694-module production Vite build, JavaScript syntax checks, Edge Function TypeScript parsing through esbuild, and `git diff --check`. The in-app browser-control runtime and Deno are unavailable in this session, so a signed-in visual smoke test and Deno type check were not run.
+- The verified Resend sender and required Supabase secrets were configured by the repository owner. On 2026-08-05, `send-project-notification` was deployed to production and confirmed **ACTIVE version 9** with JWT verification enabled. No live task or email was created during deployment, and both settings remain default-off until an Administrator enables them.
+- Production migration parity was confirmed through `20260804180000`; the Takeoff drawing-shapes migration was already present remotely, so this release required no additional database write.
+- Release commit `05dcd0a` contains the complete approved batch: Unified Action Center, task-assignment email settings/delivery, offline task and warranty synchronization, and Takeoff drawing tools. Local validation passed all 147 regression tests, all 16 Playwright journeys, the 694-module production build, production dependency audit with zero vulnerabilities, JavaScript syntax checks, and `git diff --check`. The web client is proceeding through the CI-gated `main`/Netlify release flow; Android will be validated by the repository CI build rather than a local full APK build.
 
 ## Completed priority: Recommendation roadmap #1 — automated testing
 
@@ -193,7 +218,7 @@ Updated: 2026-08-04
 - On 2026-08-04 CI-gated Netlify publishing was implemented in merge commit `6fe8e34`. `.github/workflows/publish-production.yml` runs only after a successful push-triggered `main` CI run, selects the ready Netlify deploy for that exact tested commit and fixed site, publishes it atomically, verifies production plus the deploy URL, and immediately re-locks it. `[skip netlify]` commits are intentionally ignored. The credential is stored only as `NETLIFY_AUTH_TOKEN` in GitHub's protected `production` environment. The controlled documentation release `a39165e` passed full CI, published only through the gated workflow, returned production/deploy HTTP 200, and remained locked. Its first deploy-specific URL check encountered transient propagation after publish/re-lock and failed closed; exact-commit local verification and workflow rerun `30922207629` passed, and bounded HTTP retries were added to cover that timing window.
 - Open owner decisions: design a server-enforced maintenance/write freeze covering Android clients; and assign a second recovery responder.
 
-## Current priority: Recommendation roadmap #4 — offline-first field operations
+## Completed implementation priority: Recommendation roadmap #4 — offline-first field operations
 
 ### Milestone 4.1 implementation checkpoint: queued daily logs and inspections
 
@@ -217,10 +242,11 @@ Updated: 2026-08-04
 - Checkpoint verification passes all 130 regression tests, the 682-module production build, all 10 Playwright journeys, JavaScript syntax checks, and `git diff --check`. One focused browser run initially tried to lazy-load the inspection dialog after network isolation; the fixture was corrected to load that application chunk before going offline, matching a field session that has opened the workflow while connected.
 - Milestone 4.2 changes no database migration, RLS policy, native plugin, or Android configuration. Its original local-only/deferred-release state is superseded by the deployment checkpoint below.
 
-### Next offline milestones
+### Offline scope status
 
-1. Extend the proven queue to task updates and warranty/punch items.
-2. Keep administration, access control, budgets, and destructive bulk operations online-only.
+1. Completed locally in milestone 4.4: extend the proven queue to existing task updates.
+2. Completed locally in milestone 4.5: extend the queue to staff warranty/punch-item creates and updates using the same version-preserving review model.
+3. Keep administration, access control, budgets, and destructive bulk operations online-only.
 
 ### Milestone 4.3 implementation checkpoint: conflict review and queued deletes
 
@@ -232,6 +258,33 @@ Updated: 2026-08-04
 - Feature commit `f3e2d64` merged through protected pull request #9 as `3b0205105e592d4d55c6a6f20a95379a3c463cd5`. Pull-request checks and merge-commit CI run `30931521392` passed the web, all 33 fresh-database authorization assertions, and Android debug-build gates.
 - Migration `20260804170000_add_focused_inspection_delete.sql` was applied after the protected database gate passed. A follow-up linked dry run confirmed complete local/production migration parity.
 - Exact-commit publisher run `30931693244` published `3b0205105e59`, returned HTTP 200 for both the production and immutable deploy URLs, and confirmed production is locked. Milestone 4.3 is deployed and complete.
+
+### Milestone 4.4 implementation checkpoint: queued task updates
+
+- Existing project task edits and completion toggles now save to the user-scoped device queue when offline or when connectivity is lost during the task save. Repeated edits coalesce while preserving the original task and normalized-attachment versions for conflict-safe reconnect synchronization.
+- Queued task payloads overlay the latest server tasks after startup and refresh. Task rows show **Saved on device**, **Syncing**, or **Needs attention**, and the global review dialog identifies task records with a bounded device-copy summary.
+- Reconnect synchronization uses the existing `save_task_with_attachments` RPC and its project edit authorization plus optimistic task/attachment version checks. Discard refreshes the current server copy; conflicts and access changes remain reviewable rather than overwriting server data.
+- This bounded slice keeps new task creation, moving tasks between projects, adding task attachments while disconnected, task deletion, administration, access control, budgets, and bulk destructive operations online-only. Existing remote attachment removals can queue their post-sync Storage cleanup.
+- Verification passes all 146 regression tests, the production build, `git diff --check`, and a focused Chromium journey that saves a task completion on-device, verifies its queued payload and expected versions, reconnects, synchronizes through the task RPC, and clears the queue.
+- Milestone 4.4 is local and uncommitted at the owner's request. It requires no Supabase migration or native configuration change; the complete Playwright suite, Capacitor sync, and APK build remain deferred to the commit checkpoint.
+
+### Milestone 4.5 implementation checkpoint: queued warranty/punch items
+
+- Staff can create or update warranty/punch items while offline or after a connectivity failure. Device operations are user- and project-scoped, coalesce by warranty record, preserve the original row version, and overlay the cached warranty list after reopening the workspace.
+- Warranty cards and the global review dialog show **Saved on device**, **Syncing**, or **Needs attention** with project and record context. Reconnect reuses the existing project-scoped, version-checked `project_warranty_items` write boundary; stale versions and authorization changes remain reviewable instead of overwriting server data.
+- Adding warranty attachments while disconnected and deleting a queued warranty item remain explicitly online-only. Remote attachment removals are retained as post-sync cleanup work. Closeout records remain readable from their last device cache while offline but are not added to the mutation queue.
+- Verification passes all 146 regression tests, the production build, `git diff --check`, and focused Chromium journeys for both task and warranty offline save/reconnect lifecycles. The warranty journey edits an existing punch item, verifies its on-device payload and expected version, reconnects through the version-qualified REST update, and confirms queue removal.
+- Recommendation #4's planned implementation scope is complete locally. Milestones 4.4 and 4.5 remain uncommitted at the owner's request, require no Supabase migration or native configuration change, and still need the complete Playwright/Android commit and release gates before deployment.
+
+### Takeoff drawing-tools implementation checkpoint
+
+- Takeoff now offers Line, Connected lines (stored internally as `multiline`), Rectangle, and Oval drawing tools alongside the existing Pen, Highlight, and Text markups. Rectangle and Oval drags honor Shift to create a square or circle; Connected lines finishes through double-click, Enter, or the existing Finish action.
+- The Takeoff tool strip uses compact icons instead of text buttons, including owner-supplied Scale, Area, and Connected lines glyphs and the Fluent ruler for Measure Length. Every tool retains an accessible name and hover tooltip, the active-tool treatment remains visible, and coarse-pointer devices receive 44px touch targets.
+- The Markup tool panel provides a shared drawing color and line-thickness control. Selecting an existing drawing loads its style, and style changes participate in the Takeoff undo/redo history.
+- New line, connected-lines, rectangle, and oval drawings can be selected and moved. Visible, touch-sized point handles resize their geometry; holding Shift while resizing a rectangle or oval preserves square/circle proportions.
+- Normalized Takeoff persistence carries shape type and `line_width`. Migration `20260804180000_add_takeoff_drawing_shapes.sql` expands the markup type constraint and replaces the existing version-checked save RPC without broadening project authorization.
+- Verification passes all 146 regression tests, the 691-module production build, `git diff --check`, and a focused Chromium journey that draws a line and connected lines, creates a Shift-square and Shift-circle, resizes a saved rectangle geometry, and changes its line thickness.
+- Migration `20260804180000_add_takeoff_drawing_shapes.sql` was applied to the linked production Supabase project on 2026-08-04 after a dry run showed it as the only pending migration. A follow-up dry run reports `upToDate:true` with no pending migrations. The source checkpoint remains local and uncommitted at the owner's request, no web deployment occurred, the complete Playwright suite remains deferred to the commit checkpoint, and no Android sync/APK build was run because native configuration did not change.
 
 ### Android field-entry and file-action checkpoint
 

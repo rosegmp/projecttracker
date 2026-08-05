@@ -6385,7 +6385,7 @@ button.calendar-chip {
 }
 
 .home-health-section,
-.home-attention-section,
+.home-action-center,
 .home-quick-task {
   display: grid;
   gap: var(--space-6);
@@ -6452,23 +6452,118 @@ button.calendar-chip {
   background: var(--surface-hover);
 }
 
-.home-attention-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-6) var(--space-10);
-}
-
-.home-attention-grid .home-summary-section {
-  padding: var(--space-5);
+.home-action-list {
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-top: 3px solid var(--brand);
   border-radius: var(--control-radius);
   background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
-.home-attention-grid .home-summary-section.tone-danger { border-top-color: var(--danger); }
-.home-attention-grid .home-summary-section.tone-warning { border-top-color: var(--warning); }
-.home-attention-grid .home-summary-section.tone-neutral { border-top-color: var(--muted); }
+.home-action-columns,
+.home-action-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(76px, 0.55fr) minmax(165px, 1.3fr) minmax(90px, 0.65fr) minmax(190px, auto);
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.home-action-columns {
+  padding: var(--space-3) var(--space-5);
+  color: var(--muted);
+  background: var(--surface-hover);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.home-action-row {
+  position: relative;
+  min-height: 70px;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.home-action-row::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--muted);
+  content: '';
+}
+
+.home-action-row.tone-danger::before { background: var(--danger); }
+.home-action-row.tone-warning::before { background: var(--warning); }
+
+.home-action-cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.home-action-title { color: var(--text); }
+.home-action-reason { color: var(--text); }
+
+.home-action-status {
+  display: inline-flex;
+  padding: 3px var(--space-3);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-hover);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.home-action-status.tone-danger { color: var(--danger); background: var(--danger-surface); }
+.home-action-status.tone-warning { color: var(--warning); background: var(--warning-surface); }
+
+.home-action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.home-action-buttons .button {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.home-action-toggle {
+  justify-self: end;
+}
+
+@media (max-width: 1000px) {
+  .home-action-columns { display: none; }
+
+  .home-action-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+
+  .home-action-cell::before {
+    display: block;
+    margin-bottom: var(--space-1);
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: var(--font-size-xs);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .home-action-title,
+  .home-action-reason,
+  .home-action-buttons {
+    grid-column: 1 / -1;
+  }
+
+  .home-action-buttons { justify-content: stretch; }
+  .home-action-buttons .button { flex: 1; }
+}
 
 .home-quick-task > div:first-child h2,
 .home-quick-task > div:first-child p,
@@ -6714,7 +6809,6 @@ button.calendar-chip {
 
   .home-day-grid,
   .home-change-grid,
-  .home-attention-grid,
   .home-health-grid,
   .home-quick-task-fields {
     grid-template-columns: minmax(0, 1fr);

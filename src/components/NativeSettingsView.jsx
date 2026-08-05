@@ -25,7 +25,7 @@ const SETTINGS_SECTIONS = [
   { id: 'scheduling', label: 'Scheduling', description: 'Work calendar and schedule display defaults.' },
   { id: 'calendar', label: 'Calendar & holidays', description: 'Calendar visibility, holidays, and closure periods.' },
   { id: 'inspections', label: 'Inspections', description: 'Inspection codes and editor defaults.' },
-  { id: 'notifications', label: 'Notifications', description: 'Android reminder and notification preferences.' },
+  { id: 'notifications', label: 'Notifications', description: 'Task assignment emails and Android reminder preferences.' },
   { id: 'users', label: 'Users & access', description: 'App roles and project assignments.' },
   { id: 'audit', label: 'Audit history', description: 'Recent project changes and responsible users.' },
   { id: 'display', label: 'Display preferences', description: 'Workspace navigation, People columns, and visual preferences.' },
@@ -43,6 +43,44 @@ function getLinkedPersonName(person, role) {
   const companyName = String(person?.company || '').trim();
   if (role === 'Subcontractor') return contactName || companyName || 'Unnamed subcontractor';
   return contactName || companyName || 'Unnamed customer';
+}
+
+function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal, onToggle }) {
+  return (
+    <section className="settings-card task-assignment-email-settings">
+      <div className="settings-card-header">
+        <div>
+          <h3>New task assignment emails</h3>
+          <p>Automatically email assignees after a new task is saved. Updates and restored tasks do not send another email.</p>
+        </div>
+      </div>
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={settings.emailNewTasksToInternalAssignees === true}
+          onChange={(event) => onToggle('emailNewTasksToInternalAssignees', event.target.checked)}
+          disabled={savingInternal}
+        />
+        <span>
+          <strong>Employees and administrators</strong>
+          <small>Email matching internal assignees that have a saved email address.</small>
+        </span>
+      </label>
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={settings.emailNewTasksToExternalAssignees === true}
+          onChange={(event) => onToggle('emailNewTasksToExternalAssignees', event.target.checked)}
+          disabled={savingExternal}
+        />
+        <span>
+          <strong>Subcontractors and suppliers</strong>
+          <small>Email matching subcontractor or supplier assignees that have a saved email address.</small>
+        </span>
+      </label>
+      <p className="panel-copy">Delivery uses the secured server email service. Task creation still succeeds if email delivery is temporarily unavailable.</p>
+    </section>
+  );
 }
 
 function getNthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
@@ -484,6 +522,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
   function handleToggle(field, value) {
     runSettingsMutation({ [field]: value });
+  }
+
+  function handleTaskAssignmentEmailToggle(field, value) {
+    runSettingsMutation({ [field]: value }, ['settings', 'taskAssignmentEmail', field]);
   }
 
   function handleSchedulingDraftToggle(field, value) {
@@ -1060,6 +1102,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     isMutating(['settings', 'peopleListColumns']) || isMutating(['settings', 'peopleListBoldColumns']);
   const navigationTabsSaving = isMutating(['settings', 'visibleTopLevelTabs']);
   const projectTabsSaving = isMutating(['settings', 'visibleProjectTabs']);
+  const internalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToInternalAssignees']);
+  const externalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToExternalAssignees']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1423,6 +1467,12 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
               </div>
             </div>
             <div className="settings-grid settings-grid-single">
+              <TaskAssignmentEmailSettings
+                settings={settings}
+                savingInternal={internalTaskEmailSaving}
+                savingExternal={externalTaskEmailSaving}
+                onToggle={handleTaskAssignmentEmailToggle}
+              />
               <section className="settings-card android-notification-settings">
                 <div className="settings-card-header">
                   <div>
@@ -1529,9 +1579,15 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         ) : (
           <section id="settings-panel-notifications" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-notifications" hidden={activeSettingsSection !== 'notifications'}>
             <div className="settings-section-header">
-              <div><h3>Notifications</h3><p>Manage reminders delivered by the Android app.</p></div>
+              <div><h3>Notifications</h3><p>Manage automatic task emails and reminders delivered by the Android app.</p></div>
             </div>
             <div className="settings-grid settings-grid-single">
+              <TaskAssignmentEmailSettings
+                settings={settings}
+                savingInternal={internalTaskEmailSaving}
+                savingExternal={externalTaskEmailSaving}
+                onToggle={handleTaskAssignmentEmailToggle}
+              />
               <section className="settings-card settings-platform-notice">
                 <FluentIcon name="warning" size={22} />
                 <div>

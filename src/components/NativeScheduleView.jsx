@@ -1446,7 +1446,11 @@ export default function NativeScheduleView({
       showUndoAction({
         message: `Deleted "${taskSnapshot.label}".`,
         onUndo: async () => {
-          const restoredState = await createTask(dataRef.current, taskSnapshot);
+          const restoredState = await createTask(
+            dataRef.current,
+            taskSnapshot,
+            { sendAssignmentNotifications: false },
+          );
           commitScheduleState(restoredState);
         },
         onCommit: async () => {

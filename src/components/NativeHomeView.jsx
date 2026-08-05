@@ -5,6 +5,7 @@ import { formatAuditValue } from '../utils/auditTrail.js';
 import { taskAssigneeFields } from '../utils/assignees.js';
 import {
   addLocalDays,
+  buildHomeActionCenterItems,
   buildHomeAttentionSummary,
   buildHomeOpenTasks,
   buildHomeRangeSummary,
@@ -17,6 +18,7 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import FluentIcon from './FluentIcon.jsx';
 
 const HOME_LIST_LIMIT = 5;
+const ACTION_CENTER_LIMIT = 8;
 
 function formatDayHeading(date) {
   return new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(date);
@@ -112,6 +114,54 @@ function HomeList({
         </div>
       ) : <p className="home-empty-row">{emptyMessage}</p>}
       {items.length > limit ? <p className="home-list-overflow">Showing {limit} of {items.length}</p> : null}
+    </section>
+  );
+}
+
+function formatActionStatus(value) {
+  return String(value || 'Open')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ActionCenter({ actions, canEdit, onOpen, onComplete }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleActions = showAll ? actions : actions.slice(0, ACTION_CENTER_LIMIT);
+
+  return (
+    <section className="home-action-center" aria-labelledby="home-action-center-title">
+      <header className="home-changes-heading">
+        <div><p className="eyebrow">Exceptions</p><h2 id="home-action-center-title">Action center</h2></div>
+        <span>{actions.length} open {actions.length === 1 ? 'item' : 'items'}</span>
+      </header>
+      {visibleActions.length ? (
+        <div className="home-action-list">
+          <div className="home-action-columns" aria-hidden="true">
+            <span>Work item</span><span>Project</span><span>Owner</span><span>Due</span><span>Reason</span><span>Status</span><span>Actions</span>
+          </div>
+          {visibleActions.map((action) => (
+            <article className={`home-action-row tone-${action.tone}`} key={action.sourceKey}>
+              <div className="home-action-cell home-action-title" data-label="Work item"><strong>{action.label}</strong></div>
+              <div className="home-action-cell" data-label="Project">{action.projectName}</div>
+              <div className="home-action-cell" data-label="Owner">{action.owner}</div>
+              <div className="home-action-cell" data-label="Due">{action.dueDate ? formatCompactDate(action.dueDate) : 'Not set'}</div>
+              <div className="home-action-cell home-action-reason" data-label="Reason">{action.reason}</div>
+              <div className="home-action-cell" data-label="Status"><span className={`home-action-status tone-${action.tone}`}>{formatActionStatus(action.status)}</span></div>
+              <div className="home-action-cell home-action-buttons" data-label="Actions">
+                <button className="button secondary" type="button" onClick={() => onOpen(action.item)}>Open</button>
+                {canEdit && action.item.type === 'task' ? (
+                  <button className="button secondary" type="button" onClick={() => onComplete(action.item)} aria-label={`Mark ${action.label} complete`}><FluentIcon name="check" />Complete</button>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : <p className="home-empty-row">No operational exceptions need attention.</p>}
+      {actions.length > ACTION_CENTER_LIMIT ? (
+        <button className="text-button home-action-toggle" type="button" onClick={() => setShowAll((current) => !current)}>
+          {showAll ? 'Show fewer' : `Show all ${actions.length}`}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -237,6 +287,7 @@ export default function NativeHomeView({
     () => buildHomeAttentionSummary(visibleProjects, scopedOpenTasks, todayIso, canEdit ? visibleTasks : []),
     [canEdit, scopedOpenTasks, todayIso, visibleProjects, visibleTasks],
   );
+  const actionCenterItems = useMemo(() => buildHomeActionCenterItems(attention), [attention]);
   const todaySummary = useMemo(() => buildHomeRangeSummary(visibleProjects, scopedOpenTasks, todayIso, todayIso), [scopedOpenTasks, todayIso, visibleProjects]);
   const nextSevenSummary = useMemo(
     () => buildHomeRangeSummary(visibleProjects, scopedOpenTasks, nextSevenStart, nextSevenEnd),
@@ -365,15 +416,7 @@ export default function NativeHomeView({
         </div>
       </section>
 
-      <section className="home-attention-section">
-        <header className="home-changes-heading"><div><p className="eyebrow">Exceptions</p><h2>Needs attention</h2></div><span>Act on the work most likely to cause delay</span></header>
-        <div className="home-attention-grid">
-          <HomeList title="Overdue tasks" items={attention.overdueTasks} emptyMessage="No overdue tasks." onOpen={onOpenItem} onComplete={taskComplete} onViewAll={() => onOpenCollection('tasks')} tone="danger" />
-          <HomeList title="Overdue inspections" items={attention.overdueInspections} emptyMessage="No overdue inspections." onOpen={onOpenItem} onViewAll={() => onOpenCollection('inspections')} tone="warning" />
-          <HomeList title="Blocked schedule" items={attention.blockedSteps} emptyMessage="No blocked schedule steps." onOpen={onOpenItem} onViewAll={() => onOpenCollection('schedule')} tone="warning" />
-          {canEdit ? <HomeList title="Unassigned work" items={attention.unassignedTasks} emptyMessage="No unassigned tasks." onOpen={onOpenItem} onComplete={taskComplete} onViewAll={() => onOpenCollection('tasks')} tone="neutral" /> : null}
-        </div>
-      </section>
+      <ActionCenter actions={actionCenterItems} canEdit={canEdit} onOpen={onOpenItem} onComplete={taskComplete} />
 
       {canEdit ? <QuickTaskForm draft={quickTask} projects={visibleProjects} assigneeOptions={assigneeOptions} saving={isMutating('home:task:create')} message={quickTaskMessage} onChange={(field, value) => setQuickTask((current) => ({ ...current, [field]: value }))} onSubmit={(event) => void submitQuickTask(event)} /> : null}
 

@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
+import { getStoredAuthSession } from '../services/trackerData.js';
 import { personAssignmentLabel } from '../utils/accessUi.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
@@ -158,10 +160,23 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
+  const [offlineRevision, setOfflineRevision] = useState(0);
   const records = recordsByType[activeType] || [];
   const meta = TYPES[activeType];
   const warranty = recordsByType.warrantyItems;
   const closeout = recordsByType.closeoutItems;
+  const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
+  const warrantyOperationById = useMemo(
+    () => new Map(getOfflineOperations(offlineUserId, {
+      kind: 'warranty-item.save', projectId: project.id,
+    }).map((operation) => [operation.entityId, operation])),
+    [offlineRevision, offlineUserId, project.id],
+  );
+
+  useEffect(
+    () => subscribeToOfflineOperations(offlineUserId, () => setOfflineRevision((current) => current + 1)),
+    [offlineUserId],
+  );
 
   const subcontractorOptions = useMemo(() => (data?.subs || [])
     .map((person) => ({ id: String(person.id || ''), label: companyFirstName(person) }))
@@ -196,6 +211,9 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
   }
 
   useEffect(() => { void loadRecords(); }, [service]);
+  useEffect(() => {
+    if (offlineRevision > 0) void loadRecords();
+  }, [offlineRevision]);
 
   function change(field, value) { setDraft((current) => ({ ...current, [field]: value })); }
   function addAttachments(fileList) { setDraft((current) => addPendingWorkflowAttachments(current, fileList)); }
@@ -217,10 +235,16 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
     setMessage('');
     let uploaded = [];
     try {
+      if (activeType === 'warrantyItems'
+        && draft.attachments?.some((attachment) => attachment.file)
+        && typeof navigator !== 'undefined'
+        && navigator.onLine === false) {
+        throw new Error('Adding warranty attachments requires a connection. Remove the pending files or reconnect and save again.');
+      }
       const preparedResult = await prepareWorkflowAttachments(project.id, activeType === 'warrantyItems' ? 'warranty-attachments' : 'closeout-attachments', draft);
       uploaded = preparedResult.uploaded;
-      const result = await service.save(activeType, preparedResult.prepared);
-      await deleteWorkflowAttachments(draft.deletedAttachments);
+      const result = await service.save(activeType, preparedResult.prepared, { cleanupFiles: draft.deletedAttachments });
+      if (!result.queued) await deleteWorkflowAttachments(draft.deletedAttachments);
       setSetupRequired(result.setupRequired === true);
       setDraft(null);
       await loadRecords();
@@ -233,6 +257,12 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
   }
 
   async function remove(record) {
+    if (activeType === 'warrantyItems' && (
+      warrantyOperationById.has(record.id) || (typeof navigator !== 'undefined' && navigator.onLine === false)
+    )) {
+      setMessage('Deleting a warranty item requires a connection and no pending device-saved changes. Sync or discard the device copy first.');
+      return;
+    }
     const confirmed = await showAppConfirm(`Delete ${record.number} ${record.title}?`, { title: `Delete ${meta.singular}`, confirmLabel: 'Delete', tone: 'danger' });
     if (!confirmed) return;
     setSaving(true);
@@ -318,7 +348,7 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true }) {
           {records.map((record) => (
             <article className="project-workflow-card" key={record.id}>
               <div className="project-workflow-card-heading">
-                <div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>
+                <div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span>{activeType === 'warrantyItems' && (warrantyOperationById.get(record.id) || record._offlineStatus) ? <span className={`status-pill offline-${warrantyOperationById.get(record.id)?.status || record._offlineStatus}`}>{(warrantyOperationById.get(record.id)?.status || record._offlineStatus) === 'needs-attention' ? 'Needs attention' : (warrantyOperationById.get(record.id)?.status || record._offlineStatus) === 'syncing' ? 'Syncing' : 'Saved on device'}</span> : null}<h3>{record.number} · {record.title}</h3></div>
                 {canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}
               </div>
               {activeType === 'warrantyItems' ? (

@@ -1,5 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { constrainDrawingEndpoint } from "../services/takeoffDrawing.js";
 
 const COLORS = {
   length: "#e4572e",
@@ -85,6 +86,7 @@ function createInitialState() {
   countSymbol: COUNT_SYMBOL_OPTIONS[0].value,
   countColor: COLORS.count,
   markupColor: "#e4572e",
+  markupThickness: 3,
   renderToken: 0,
   renderTask: null,
   countSymbolMenuOpen: false,
@@ -154,6 +156,8 @@ function applyReadOnlyMode(root) {
     "deleteSelected",
     "clearMarkups",
     "clearMeasurements",
+    "markupColor",
+    "markupThickness",
   ].forEach((id) => {
     if (els[id]) els[id].disabled = true;
   });
@@ -211,6 +215,7 @@ function bindElements(root) {
     "countSymbolMenu",
     "countColor",
     "markupColor",
+    "markupThickness",
     "deleteSelected",
     "selectionPanel",
     "markupsList",
@@ -328,8 +333,23 @@ function bindEvents() {
       renderAll();
     }
   });
-  on(els.markupColor, "input", (event) => {
+  on(els.markupColor, "change", (event) => {
+    const before = createHistorySnapshot();
     state.markupColor = event.target.value;
+    const markup = selectedMarkup();
+    if (markup) markup.color = state.markupColor;
+    pushUndoSnapshot(before);
+    renderAll();
+    if (markup) setStatus("Drawing color updated.");
+  });
+  on(els.markupThickness, "change", (event) => {
+    const before = createHistorySnapshot();
+    state.markupThickness = normalizeMarkupThickness(event.target.value);
+    const markup = selectedMarkup();
+    if (markup && markup.type !== "text") markup.thickness = state.markupThickness;
+    pushUndoSnapshot(before);
+    renderAll();
+    if (markup && markup.type !== "text") setStatus("Drawing line thickness updated.");
   });
 
   on(els.deleteSelected, "click", deleteSelected);
@@ -1056,6 +1076,10 @@ function statusForTool(tool) {
     length: "Pick start and end points. Hold Shift for horizontal or vertical.",
     area: "Pick polygon corners, then finish the area. Hold Shift for horizontal or vertical.",
     count: "Click the plan to place count markers.",
+    line: "Drag to draw a line.",
+    multiline: "Pick connected-line corners, then double-click or choose Finish.",
+    rectangle: "Drag to draw a rectangle. Hold Shift for a square.",
+    oval: "Drag to draw an oval. Hold Shift for a circle.",
     pen: "Drag on the plan to draw a markup.",
     highlight: "Drag on the plan to highlight plan areas.",
     text: "Click the plan to place markup text.",
@@ -1072,7 +1096,7 @@ function toggleSnapToLine() {
 function handleOverlayPointerDown(event) {
   if (state.moveDrag) return;
   if (event.button !== 0) return;
-  if (!state.pdfDoc || !isFreehandMarkupTool()) return;
+  if (!state.pdfDoc || !isPointerMarkupTool()) return;
   const target = event.target instanceof Element ? event.target : null;
   if (target?.closest("[data-measure-id], [data-markup-id]")) return;
 
@@ -1087,8 +1111,11 @@ function handleOverlayPointerDown(event) {
     type: state.tool,
     points: [point],
     color: state.markupColor,
+    thickness: state.markupThickness,
     createdAt: new Date().toISOString(),
+    beforeSnapshot: createHistorySnapshot(),
   };
+  if (isDragShapeTool()) state.activeMarkup.points.push(point);
   state.selectedId = null;
   state.selectedType = null;
   renderOverlay();
@@ -1103,11 +1130,22 @@ function handleOverlayClick(event) {
   if (event.button !== 0) return;
   const target = event.target instanceof Element ? event.target : null;
   if (!state.pdfDoc || target?.closest("[data-measure-id], [data-markup-id]")) return;
-  if (isFreehandMarkupTool()) return;
+  if (isPointerMarkupTool()) return;
 
   if (state.tool === "text") {
     const point = eventToPagePoint(event);
     if (point) addTextMarkup(point);
+    return;
+  }
+
+  if (state.tool === "multiline") {
+    if (event.detail > 1) return;
+    const point = eventToMeasurementPoint(event, { constrain: event.shiftKey });
+    if (point) {
+      state.draft.push(point);
+      state.previewPoint = null;
+      renderAll();
+    }
     return;
   }
 
@@ -1135,7 +1173,8 @@ function handleOverlayClick(event) {
 }
 
 function handleOverlayDoubleClick(event) {
-  if (state.tool === "area" && state.draft.length >= 3) {
+  if ((state.tool === "area" && state.draft.length >= 3)
+    || (state.tool === "multiline" && state.draft.length >= 2)) {
     event.preventDefault();
     finishDraft();
   }
@@ -1170,6 +1209,11 @@ function addActiveMarkupPoint(event) {
   if (!point) return;
 
   const points = state.activeMarkup.points;
+  if (isDragShapeTool(state.activeMarkup.type)) {
+    points[1] = constrainDrawingEndpoint(points[0], point, state.activeMarkup.type, event.shiftKey);
+    renderOverlay();
+    return;
+  }
   const previous = points.at(-1);
   if (previous && distance(previous, point) < scaled(2)) return;
 
@@ -1191,11 +1235,13 @@ function finishActiveMarkup(event) {
 
   const markup = state.activeMarkup;
   state.activeMarkup = null;
-  if (markup.points.length >= 2) {
-    state.markups.push(markup);
-    state.selectedId = markup.id;
+  const { beforeSnapshot, ...savedMarkup } = markup;
+  if (isDrawableMarkup(savedMarkup)) {
+    state.markups.push(savedMarkup);
+    state.selectedId = savedMarkup.id;
     state.selectedType = "markup";
-    setStatus(`${capitalize(markup.type)} markup added.`);
+    pushUndoSnapshot(beforeSnapshot);
+    setStatus(`${markupTypeLabel(savedMarkup.type)} added.`);
   }
   renderAll();
 }
@@ -1219,6 +1265,14 @@ function handleOverlayContextMenu(event) {
 
 function isFreehandMarkupTool() {
   return ["pen", "highlight"].includes(state.tool);
+}
+
+function isDragShapeTool(tool = state.tool) {
+  return ["line", "rectangle", "oval"].includes(tool);
+}
+
+function isPointerMarkupTool() {
+  return isFreehandMarkupTool() || isDragShapeTool();
 }
 
 function eventToPagePoint(event) {
@@ -1254,7 +1308,9 @@ function shouldConstrainCurrentTool(options = {}) {
 }
 
 function canPreviewCurrentTool() {
-  return ["scale", "length", "area"].includes(state.tool) && state.draft.length > 0 && !isDraftComplete();
+  return ["scale", "length", "area", "multiline"].includes(state.tool)
+    && state.draft.length > 0
+    && !isDraftComplete();
 }
 
 function isDraftComplete() {
@@ -1516,6 +1572,24 @@ function feetPerUnit(unit) {
 }
 
 function finishDraft() {
+  if (state.tool === "multiline" && state.draft.length >= 2) {
+    const before = createHistorySnapshot();
+    const markup = {
+      id: createId(),
+      pageNumber: state.pageNumber,
+      type: "multiline",
+      points: [...state.draft],
+      color: state.markupColor,
+      thickness: state.markupThickness,
+      createdAt: new Date().toISOString(),
+    };
+    state.markups.push(markup);
+    state.selectedId = markup.id;
+    state.selectedType = "markup";
+    pushUndoSnapshot(before);
+    setStatus("Connected lines added.");
+  }
+
   if (state.tool === "length" && state.draft.length >= 2) {
     addMeasurement({
       type: "length",
@@ -1611,6 +1685,7 @@ function addTextMarkup(point) {
     text,
     points: [point],
     color: state.markupColor,
+    thickness: state.markupThickness,
     createdAt: new Date().toISOString(),
   };
   state.markups.push(markup);
@@ -1699,6 +1774,7 @@ function createProjectSnapshot() {
     countSymbol: state.countSymbol,
     countColor: state.countColor,
     markupColor: state.markupColor,
+    markupThickness: state.markupThickness,
   };
 }
 
@@ -1718,6 +1794,7 @@ function createHistorySnapshot() {
     countSymbol: state.countSymbol,
     countColor: state.countColor,
     markupColor: state.markupColor,
+    markupThickness: state.markupThickness,
   };
 }
 
@@ -1743,7 +1820,7 @@ function applyHistorySnapshot(snapshot) {
   state.measurements = Array.isArray(snapshot.measurements)
     ? snapshot.measurements.map((measurement) => normalizeMeasurement(measurement))
     : [];
-  state.markups = Array.isArray(snapshot.markups) ? snapshot.markups : [];
+  state.markups = normalizeMarkups(snapshot.markups);
   state.scales = normalizeScalesPayload(snapshot.scales || null);
   setProjectMeasurementUnit(snapshot.projectUnit || inferProjectUnitFromScales(state.scales), {
     convertScales: false,
@@ -1754,11 +1831,13 @@ function applyHistorySnapshot(snapshot) {
   state.countSymbol = normalizeCountSymbol(snapshot.countSymbol);
   state.countColor = snapshot.countColor || COLORS.count;
   state.markupColor = snapshot.markupColor || "#e4572e";
+  state.markupThickness = normalizeMarkupThickness(snapshot.markupThickness);
   state.draft = [];
   state.previewPoint = null;
   state.activeMarkup = null;
   els.countColor.value = state.countColor;
   els.markupColor.value = state.markupColor;
+  els.markupThickness.value = String(state.markupThickness);
   els.toolButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === state.tool);
   });
@@ -1800,6 +1879,11 @@ function selectMarkup(id, options = {}) {
   state.selectedType = "markup";
   state.selectedPointIndex = null;
   state.suppressOverlayClickOnce = Boolean(options.suppressOverlayClickOnce);
+  const markup = selectedMarkup();
+  if (markup) {
+    state.markupColor = markup.color || state.markupColor;
+    state.markupThickness = normalizeMarkupThickness(markup.thickness);
+  }
   renderAll();
 }
 
@@ -1873,6 +1957,19 @@ function updateMoveDrag(event) {
     }
   }
 
+  if (state.moveDrag.type === "markup-point") {
+    const markup = state.markups.find((item) => item.id === state.moveDrag.markupId);
+    if (markup?.points?.[state.moveDrag.pointIndex]) {
+      let nextPoint = point;
+      if (["rectangle", "oval"].includes(markup.type) && event.shiftKey) {
+        const anchorIndex = state.moveDrag.pointIndex === 0 ? 1 : 0;
+        const anchor = markup.points[anchorIndex];
+        nextPoint = constrainDrawingEndpoint(anchor, point, markup.type, true);
+      }
+      markup.points[state.moveDrag.pointIndex] = nextPoint;
+    }
+  }
+
   state.moveDrag.lastPoint = point;
   state.moveDrag.moved = true;
   renderAll();
@@ -1892,7 +1989,11 @@ function finishMoveDrag(event) {
   state.moveDrag = null;
   if (moved) {
     pushUndoSnapshot(drag.beforeSnapshot);
-    setStatus(dragType === "markup" ? "Markup moved." : "Count item moved.");
+    setStatus(dragType === "markup"
+      ? "Drawing moved."
+      : dragType === "markup-point"
+        ? "Drawing resized."
+        : "Count item moved.");
   } else if (dragType === "markup") {
     selectMarkup(drag.markupId, { suppressOverlayClickOnce: true });
     return;
@@ -2055,7 +2156,7 @@ async function hydrateProject(project, options = {}) {
   state.measurements = Array.isArray(project.measurements)
     ? project.measurements.map((measurement) => normalizeMeasurement(measurement))
     : [];
-  state.markups = Array.isArray(project.markups) ? project.markups : [];
+  state.markups = normalizeMarkups(project.markups);
   state.activeMarkup = null;
   state.selectedId = null;
   state.selectedType = null;
@@ -2068,9 +2169,11 @@ async function hydrateProject(project, options = {}) {
   state.countSymbol = normalizeCountSymbol(project.countSymbol);
   state.countColor = project.countColor || COLORS.count;
   state.markupColor = project.markupColor || "#e4572e";
+  state.markupThickness = normalizeMarkupThickness(project.markupThickness);
 
   els.countColor.value = state.countColor;
   els.markupColor.value = state.markupColor;
+  els.markupThickness.value = String(state.markupThickness);
   els.scaleUnit.value = state.projectUnit;
   els.manualScaleUnit.value = state.projectUnit;
   els.projectUnitSelect.value = state.projectUnit;
@@ -2165,6 +2268,11 @@ function renderChrome() {
   els.emptyState.hidden = hasPlan;
   els.pageStage.hidden = !hasPlan;
   els.measureOverlay.className.baseVal = `measure-overlay is-${state.tool}`;
+  const activeMarkup = selectedMarkup();
+  els.markupColor.value = activeMarkup?.color || state.markupColor;
+  els.markupThickness.value = String(normalizeMarkupThickness(activeMarkup?.thickness || state.markupThickness));
+  els.markupThickness.disabled = readOnly || activeMarkup?.type === "text";
+  els.markupColor.disabled = readOnly;
   syncCountControls();
 
   [...els.pagesList.querySelectorAll(".page-thumb")].forEach((button) => {
@@ -2323,6 +2431,7 @@ function renderMeasurement(measurement) {
 }
 
 function renderMarkup(markup, options = {}) {
+  const thickness = normalizeMarkupThickness(markup.thickness);
   const group = svg("g", {
     class: markup.id === state.selectedId && state.selectedType === "markup" ? "selected" : "",
     "data-markup-id": markup.id,
@@ -2354,13 +2463,72 @@ function renderMarkup(markup, options = {}) {
       class: markup.type === "highlight" ? "markup-highlight" : "markup-path",
       points: pointsAttribute(markup.points),
       stroke: markup.color,
-      "stroke-width": markup.type === "highlight" ? "10" : "3",
+      "stroke-width": markup.type === "highlight" ? thickness * 3.25 : thickness,
     });
     const hit = svg("polyline", {
       class: "markup-hit",
       points: pointsAttribute(markup.points),
     });
     group.append(path);
+    if (!options.isDraft) group.append(hit);
+  }
+
+  if (markup.type === "line" || markup.type === "multiline") {
+    const path = svg("polyline", {
+      class: "markup-path",
+      points: pointsAttribute(markup.points),
+      stroke: markup.color,
+      "stroke-width": thickness,
+    });
+    const hit = svg("polyline", {
+      class: "markup-hit",
+      points: pointsAttribute(markup.points),
+    });
+    group.append(path);
+    if (!options.isDraft) group.append(hit);
+  }
+
+  if (markup.type === "rectangle") {
+    const bounds = boundsFromPoints(markup.points);
+    const shape = svg("rect", {
+      class: "markup-shape",
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      stroke: markup.color,
+      "stroke-width": thickness,
+    });
+    const hit = svg("rect", {
+      class: "markup-hit markup-shape-hit",
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    });
+    group.append(shape);
+    if (!options.isDraft) group.append(hit);
+  }
+
+  if (markup.type === "oval") {
+    const bounds = boundsFromPoints(markup.points);
+    const shape = svg("ellipse", {
+      class: "markup-shape",
+      cx: bounds.x + bounds.width / 2,
+      cy: bounds.y + bounds.height / 2,
+      rx: bounds.width / 2,
+      ry: bounds.height / 2,
+      stroke: markup.color,
+      "stroke-width": thickness,
+    });
+    const hit = svg("ellipse", {
+      class: "markup-hit markup-shape-hit",
+      cx: bounds.x + bounds.width / 2,
+      cy: bounds.y + bounds.height / 2,
+      rx: bounds.width / 2,
+      ry: bounds.height / 2,
+    });
+    group.append(shape);
     if (!options.isDraft) group.append(hit);
   }
 
@@ -2428,10 +2596,69 @@ function renderMarkupSelectionIndicator(markup) {
     });
   }
 
-  return svg(markup.type === "highlight" ? "polyline" : "polyline", {
-    class: "selection-indicator",
-    points: pointsAttribute(markup.points),
-  });
+  const selection = svg("g", { class: "drawing-selection" });
+  if (["rectangle", "oval"].includes(markup.type)) {
+    const bounds = boundsFromPoints(markup.points);
+    selection.append(svg("rect", {
+      class: "selection-indicator",
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    }));
+  } else {
+    selection.append(svg("polyline", {
+      class: "selection-indicator",
+      points: pointsAttribute(markup.points),
+    }));
+  }
+
+  if (["line", "multiline", "rectangle", "oval"].includes(markup.type)) {
+    markup.points.forEach((point, pointIndex) => {
+      const handle = svg("g", {
+        class: "drawing-edit-handle",
+        tabindex: "0",
+        role: "button",
+        "aria-label": `Resize ${markupTypeLabel(markup.type)} point ${pointIndex + 1}`,
+      });
+      handle.append(
+        svg("circle", {
+          class: "drawing-edit-handle-hit",
+          cx: point.x,
+          cy: point.y,
+          r: scaled(18),
+        }),
+        svg("circle", {
+          class: "drawing-edit-handle-knob",
+          cx: point.x,
+          cy: point.y,
+          r: scaled(6),
+        }),
+      );
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || state.tool !== "select") return;
+        event.stopPropagation();
+        startMoveDrag(event, {
+          type: "markup-point",
+          markupId: markup.id,
+          pointIndex,
+        });
+      });
+      selection.append(handle);
+    });
+  }
+
+  return selection;
+}
+
+function boundsFromPoints(points = []) {
+  const [first = { x: 0, y: 0 }, second = first] = points;
+  return {
+    x: Math.min(first.x, second.x),
+    y: Math.min(first.y, second.y),
+    width: Math.abs(second.x - first.x),
+    height: Math.abs(second.y - first.y),
+  };
 }
 
 function renderCountSymbol(measurement, point, index = 0) {
@@ -2752,8 +2979,9 @@ function renderPoints(group, points, color) {
 }
 
 function renderDraft() {
-  const group = svg("g", { style: `color: ${COLORS[state.tool] || COLORS.length}` });
-  const color = COLORS[state.tool] || COLORS.length;
+  const drawingDraft = state.tool === "multiline";
+  const color = drawingDraft ? state.markupColor : (COLORS[state.tool] || COLORS.length);
+  const group = svg("g", { style: `color: ${color}` });
   const draftPoints = draftRenderPoints();
 
   if (state.tool === "area" && draftPoints.length >= 3) {
@@ -2766,8 +2994,12 @@ function renderDraft() {
   } else if (draftPoints.length >= 2) {
     group.append(
       svg("polyline", {
-        class: "draft-line",
+        class: drawingDraft ? "markup-path drawing-draft" : "draft-line",
         points: pointsAttribute(draftPoints),
+        ...(drawingDraft ? {
+          stroke: color,
+          "stroke-width": state.markupThickness,
+        } : {}),
       }),
     );
   }
@@ -2896,6 +3128,7 @@ function renderSelection() {
       <div class="selection-grid">
         <span>Type: ${markupTypeLabel(markup.type)}</span>
         <span>Color: ${escapeHtml(markup.color)}</span>
+        ${markup.type === "text" ? "" : `<span>Line: ${normalizeMarkupThickness(markup.thickness)} px</span>`}
         <span>Points: ${markup.points.length}</span>
       </div>
     `;
@@ -3023,7 +3256,8 @@ function fileStem(filename) {
 }
 
 function canFinishDraft() {
-  return (state.tool === "area" && state.draft.length >= 3) || (state.tool === "length" && state.draft.length >= 2);
+  return (state.tool === "area" && state.draft.length >= 3)
+    || (["length", "multiline"].includes(state.tool) && state.draft.length >= 2);
 }
 
 function draftSummary() {
@@ -3031,6 +3265,7 @@ function draftSummary() {
   if (state.tool === "scale") return `${state.draft.length} / 2 scale points`;
   if (state.tool === "area") return `${state.draft.length} area points`;
   if (state.tool === "length") return `${state.draft.length} line points`;
+  if (state.tool === "multiline") return `${state.draft.length} drawing points`;
   return "";
 }
 
@@ -3079,6 +3314,29 @@ function selectedMarkup() {
   return state.markups.find((item) => item.id === state.selectedId);
 }
 
+function normalizeMarkupThickness(value) {
+  return clamp(Number(value) || 3, 1, 24);
+}
+
+function normalizeMarkups(markups) {
+  return (Array.isArray(markups) ? markups : []).map((markup) => ({
+    ...markup,
+    thickness: normalizeMarkupThickness(markup?.thickness),
+  }));
+}
+
+function isDrawableMarkup(markup) {
+  if (!markup?.points?.length) return false;
+  if (["rectangle", "oval"].includes(markup.type)) {
+    const [first, second] = markup.points;
+    return Boolean(second && Math.abs(second.x - first.x) > scaled(2) && Math.abs(second.y - first.y) > scaled(2));
+  }
+  if (["line", "multiline", "pen", "highlight"].includes(markup.type)) {
+    return markup.points.length >= 2 && polylineLength(markup.points) > scaled(2);
+  }
+  return markup.type === "text";
+}
+
 function markupLabel(markup) {
   return markup.type === "text" ? markup.text || "Text note" : markupTypeLabel(markup.type);
 }
@@ -3088,6 +3346,10 @@ function markupTypeLabel(type) {
     pen: "Pen",
     highlight: "Highlight",
     text: "Text note",
+    line: "Line",
+    multiline: "Connected lines",
+    rectangle: "Rectangle",
+    oval: "Oval",
   };
   return labels[type] || capitalize(type);
 }

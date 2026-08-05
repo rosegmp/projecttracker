@@ -1,6 +1,7 @@
 import { createConstructionWorkflowService } from './constructionWorkflows.js';
 import {
   deleteProjectFileFromStorage,
+  syncQueuedTask,
   syncQueuedProjectInspection,
   syncQueuedProjectInspectionDelete,
   uploadProjectFileToStorage,
@@ -105,6 +106,15 @@ async function syncOperation(operation) {
       ...operation,
       payload: await materializeInspection(operation, storedAttachments),
     });
+  }
+  if (operation.kind === 'task.save') return syncQueuedTask(operation);
+  if (operation.kind === 'warranty-item.save') {
+    const service = createConstructionWorkflowService({
+      projectId: operation.projectId,
+      canEdit: true,
+      offlineQueueEnabled: false,
+    });
+    return service.save('warrantyItems', operation.payload);
   }
   throw new Error(`Unsupported offline operation: ${operation.kind}`);
 }

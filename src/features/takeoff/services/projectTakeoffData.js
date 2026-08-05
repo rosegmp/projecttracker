@@ -310,7 +310,7 @@ export function createProjectTakeoffDataService({ projectId, canEdit = true }) {
               ),
               fetchAuthorizedSupabase(
                 `/rest/v1/${TAKEOFF_MARKUPS_TABLE}?${query}`
-                  + '&select=id,page_number,type,text,color,points,source_created_at&order=created_at.asc',
+                  + '&select=id,page_number,type,text,color,line_width,points,source_created_at&order=created_at.asc',
                 { method: 'GET', headers: { Accept: 'application/json' } },
                 'Takeoff markup load',
               ),
