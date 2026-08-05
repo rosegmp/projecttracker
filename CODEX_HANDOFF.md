@@ -2,6 +2,15 @@
 
 Updated: 2026-08-05
 
+## Production release: Unified Action Center
+
+- Recommendation 1 is released to `https://projecthub.destinyhomesnj.com`. Implementation commit `3bbb45f` was merged through PR #16 as `main` commit `5e80fd4`.
+- The Action Center consolidates overdue tasks and inspections, blocked schedule work, unassigned work, certificate exceptions, selection and portal actions, overdue RFIs and submittals, change-order and budget exceptions, warranty and closeout deadlines, and offline sync failures. Rows use the shared work item, project, owner, due date, reason, status, and action contract.
+- Release gates passed on PR CI run `31050904885`, exact-main CI run `31051087215`, and production publisher run `31051235639`. The publisher released and locked the tested Netlify deploy. No database migration or manual APK build was required.
+- A signed-in, read-only production smoke test passed after publication. Home loaded 67 live exceptions with no browser console errors; opening Royal Stonework's expired-certificate action navigated to Certificates with **Expired** and **Royal Stonework** selected. No production data or setting was changed.
+- Administrator settings currently hide Change Orders, RFIs & Submittals, Budget & Commitments, and Warranty & Closeout. The Action Center intentionally suppresses reads and actions for those hidden destinations. Automated coverage verifies those sources; enabling the project tabs is a separate product/settings decision.
+- This section supersedes the historical local-only status notes in the incremental checkpoints below.
+
 ## Signed-in browser QA: Action Center checkpoint
 
 - Signed-in testing ran against the local worktree at `http://127.0.0.1:5173` using the existing Administrator account and live read-only data. No task, workflow record, setting, offline operation, or other production data was created or changed.
@@ -9,7 +18,7 @@ Updated: 2026-08-05
 - The first certificate drill-through exposed a local regression: `NativeCertificatesView` still called the newly shared `certificateRequired` helper but no longer imported it, so Certificates hit the application error boundary. The helper import was restored and the certificate workspace regression assertion now guards it.
 - The same certificate action was retested successfully: it opened Certificates with **Royal Stonework** and **Expired** selected. The overdue inspection action opened **630 Hope Chapel → Inspections**, and the unassigned-task action opened Tasks scoped to **630 Hope Chapel** with the affected task present. No post-fix browser error was recorded.
 - Administrator settings currently hide Change Orders, RFIs & Submittals, Budget & Commitments, and Warranty & Closeout. Home correctly showed no actions or visible project destinations for those sources; they were not enabled for UI smoke testing because changing the shared setting would be a production write. Their focused pure-behavior and static navigation coverage remains in the 153-test regression suite.
-- Post-fix verification passes all 153 regression tests, the 695-module production Vite build, and `git diff --check`. The accumulated work remains local and uncommitted on `agent/fix-projectless-task-email`; it has not been pushed or deployed.
+- Post-fix verification passed all 153 regression tests, the 695-module production Vite build, and `git diff --check`. The accumulated work was subsequently committed, reviewed, and released as recorded above.
 
 ## Current checkpoint: offline sync failures complete the Unified Action Center source roadmap
 
