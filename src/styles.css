@@ -7033,6 +7033,16 @@ button.calendar-chip {
   box-shadow: 0 0 0 3px rgba(61, 66, 120, 0.08);
 }
 
+.project-workflow-card.highlighted {
+  border-color: rgba(61, 66, 120, 0.36);
+  box-shadow: 0 0 0 3px rgba(61, 66, 120, 0.08);
+}
+
+.offline-review-item.highlighted {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
 .selection-modal-file-list {
   margin-top: 10px;
 }

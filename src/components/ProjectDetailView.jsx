@@ -531,25 +531,40 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'change-orders' ? (
         <section id="project-panel-change-orders" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-change-orders">
-          <ProjectWorkflowManager project={project} canEdit={canEdit} workflowType="changeOrders" />
+          <ProjectWorkflowManager
+            project={project}
+            canEdit={canEdit}
+            workflowType="changeOrders"
+            navigationTarget={selectionNavigationRequest}
+          />
         </section>
       ) : null}
 
       {activeDetailTab === 'rfis-submittals' ? (
         <section id="project-panel-rfis-submittals" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-rfis-submittals">
-          <ProjectRfiSubmittalsManager project={project} data={data} canEdit={canEdit} />
+          <ProjectRfiSubmittalsManager
+            project={project}
+            data={data}
+            canEdit={canEdit}
+            navigationTarget={selectionNavigationRequest}
+          />
         </section>
       ) : null}
 
       {activeDetailTab === 'budget-commitments' ? (
         <section id="project-panel-budget-commitments" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-budget-commitments">
-          <ProjectBudgetCommitmentsManager project={project} data={data} canEdit={canEdit} />
+          <ProjectBudgetCommitmentsManager
+            project={project}
+            data={data}
+            canEdit={canEdit}
+            navigationTarget={selectionNavigationRequest}
+          />
         </section>
       ) : null}
 
       {activeDetailTab === 'warranty-closeout' ? (
         <section id="project-panel-warranty-closeout" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-warranty-closeout">
-          <ProjectWarrantyCloseoutManager project={project} data={data} canEdit={canEdit} customerMode={customerReadOnly} activeUser={activeUser} />
+          <ProjectWarrantyCloseoutManager project={project} data={data} canEdit={canEdit} customerMode={customerReadOnly} activeUser={activeUser} navigationTarget={selectionNavigationRequest} />
         </section>
       ) : null}
 

@@ -29,8 +29,14 @@ import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import {
   buildHomeActionCenterItems,
   buildHomeAttentionSummary,
+  buildHomeCertificateExceptions,
+  buildHomeFinancialExceptions,
+  buildHomeOfflineSyncExceptions,
+  buildHomeWarrantyCloseoutExceptions,
   buildHomeDaySummary,
   buildHomeOpenTasks,
+  buildHomeOverdueDocumentExceptions,
+  buildHomePendingDecisionExceptions,
   buildHomeRangeSummary,
   getLocalIsoDate,
   getProjectOperationalHealth,
@@ -622,6 +628,225 @@ const tests = [
       assert.deepEqual(userTasks.map((task) => task.id), ['t2', 't1']);
       const adminTasks = buildHomeOpenTasks(tasks, projects, { name: 'Admin', role: 'Admin' }, people);
       assert.deepEqual(adminTasks.map((task) => task.id), ['t2', 't3', 't1']);
+    },
+  },
+  {
+    name: 'home action center adds only actionable certificate exceptions with portfolio drill-through data',
+    run() {
+      const subcontractors = [
+        { id: 'expired-sub', company: 'Expired Electric' },
+        { id: 'expiring-sub', company: 'Expiring HVAC' },
+        { id: 'missing-sub', company: 'Missing Plumbing' },
+        { id: 'missing-date-sub', company: 'No Date Roofing' },
+        { id: 'active-sub', company: 'Active Concrete' },
+        { id: 'newer-active-sub', company: 'Renewed Framing' },
+        { id: 'inactive-sub', company: 'Inactive Landscaping', inactive: true },
+        { id: 'not-required-sub', company: 'No Certificate Needed', certificateRequirement: 'not_required' },
+      ];
+      const certificates = [
+        { id: 'expired-cert', subcontractorId: 'expired-sub', expirationDate: '2026-07-15' },
+        { id: 'expiring-cert', subcontractorId: 'expiring-sub', expirationDate: '2026-08-15' },
+        { id: 'missing-date-cert', subcontractorId: 'missing-date-sub', expirationDate: '' },
+        { id: 'active-cert', subcontractorId: 'active-sub', expirationDate: '2026-09-01' },
+        { id: 'renewed-old-cert', subcontractorId: 'newer-active-sub', expirationDate: '2026-07-01' },
+        { id: 'renewed-active-cert', subcontractorId: 'newer-active-sub', expirationDate: '2026-09-15' },
+      ];
+      const certificateExceptions = buildHomeCertificateExceptions(subcontractors, certificates, '2026-07-16');
+      assert.deepEqual(certificateExceptions.map((item) => item.statusId), ['expired', 'expiring', 'missing', 'missing']);
+      assert.deepEqual(certificateExceptions.map((item) => item.ownerLabel), [
+        'Expired Electric',
+        'Expiring HVAC',
+        'Missing Plumbing',
+        'No Date Roofing',
+      ]);
+      assert.ok(certificateExceptions.every((item) => item.projectName === 'Portfolio' && item.type === 'certificate'));
+      const actions = buildHomeActionCenterItems({ certificateExceptions });
+      assert.deepEqual(actions.map((action) => action.reason), [
+        'Certificate is expired',
+        'Certificate expires within 30 days',
+        'Required certificate is missing',
+        'Certificate expiration is missing',
+      ]);
+      assert.deepEqual(actions.map((action) => action.owner), [
+        'Expired Electric',
+        'Expiring HVAC',
+        'Missing Plumbing',
+        'No Date Roofing',
+      ]);
+    },
+  },
+  {
+    name: 'home action center consolidates pending selection approvals and portal response requests',
+    run() {
+      const projects = [{
+        id: 'p1',
+        name: 'Maple House',
+        selections: [
+          { id: 'selection-open', itemName: 'Kitchen faucet', status: 'needs decision' },
+          { id: 'selection-approval', itemName: 'Exterior color', status: 'needs decision' },
+          { id: 'selection-done', itemName: 'Roof color', status: 'selected' },
+        ],
+      }];
+      const portalItems = [
+        {
+          id: 'approval-current', projectId: 'p1', selectionId: 'selection-approval', itemType: 'approval',
+          audience: 'customer', status: 'response_requested', title: 'Selection approval: Exterior color',
+          dueDate: '2026-07-17', updatedAt: '2026-07-16T15:00:00Z',
+        },
+        {
+          id: 'approval-old', projectId: 'p1', selectionId: 'selection-approval', itemType: 'approval',
+          audience: 'customer', status: 'response_requested', title: 'Old approval request',
+          dueDate: '2026-07-14', updatedAt: '2026-07-15T15:00:00Z',
+        },
+        {
+          id: 'portal-overdue', projectId: 'p1', itemType: 'request', audience: 'subcontractor',
+          status: 'response_requested', title: 'Confirm mobilization', dueDate: '2026-07-15', updatedAt: '2026-07-16T14:00:00Z',
+        },
+        {
+          id: 'portal-answered', projectId: 'p1', itemType: 'request', audience: 'customer',
+          status: 'answered', title: 'Answered question', dueDate: '2026-07-14', updatedAt: '2026-07-16T13:00:00Z',
+        },
+      ];
+      const pending = buildHomePendingDecisionExceptions(projects, portalItems, '2026-07-16');
+      assert.equal(pending.length, 3);
+      const byId = new Map(pending.map((item) => [item.id, item]));
+      assert.equal(byId.get('selection-open').attentionReason, 'Selection needs a decision');
+      assert.equal(byId.get('selection-open').ownerLabel, 'Unassigned');
+      assert.equal(byId.get('selection-approval').attentionReason, 'Customer approval is pending');
+      assert.equal(byId.get('selection-approval').ownerLabel, 'Customer');
+      assert.equal(byId.get('portal-overdue').attentionReason, 'Portal response is overdue');
+      assert.equal(byId.get('portal-overdue').attentionTone, 'danger');
+      assert.ok(!byId.has('approval-current'));
+      assert.ok(!byId.has('approval-old'));
+      assert.ok(!byId.has('portal-answered'));
+
+      const withoutSelections = buildHomePendingDecisionExceptions(
+        projects,
+        portalItems,
+        '2026-07-16',
+        { includeSelections: false },
+      );
+      assert.deepEqual(withoutSelections.map((item) => item.id).sort(), ['approval-current', 'portal-overdue']);
+      const actions = buildHomeActionCenterItems({ pendingDecisions: pending });
+      assert.deepEqual(actions.map((action) => action.projectName), ['Maple House', 'Maple House', 'Maple House']);
+      assert.ok(actions.every((action) => ['warning', 'danger'].includes(action.tone)));
+    },
+  },
+  {
+    name: 'home action center includes only overdue unresolved RFIs and submittals with actionable owners',
+    run() {
+      const projects = [{ id: 'p1', name: 'Maple House' }];
+      const rfis = [
+        { id: 'rfi-open', projectId: 'p1', number: 'RFI-001', title: 'Beam size', status: 'open', dueDate: '2026-07-15', responsibleName: 'Project Engineer' },
+        { id: 'rfi-answered', projectId: 'p1', number: 'RFI-002', title: 'Door detail', status: 'answered', dueDate: '2026-07-14', responsibleName: 'Architect' },
+        { id: 'rfi-draft', projectId: 'p1', number: 'RFI-003', title: 'Draft question', status: 'draft', dueDate: '2026-07-13' },
+        { id: 'rfi-today', projectId: 'p1', number: 'RFI-004', title: 'Due today', status: 'open', dueDate: '2026-07-16' },
+      ];
+      const submittals = [
+        { id: 'sub-review', projectId: 'p1', number: 'SUB-001', title: 'Windows', status: 'under_review', dueDate: '2026-07-14', reviewer: 'Architect', subcontractorName: 'Window Co' },
+        { id: 'sub-resubmit', projectId: 'p1', number: 'SUB-002', title: 'Roofing', status: 'revise_resubmit', dueDate: '2026-07-13', reviewer: 'Architect', subcontractorName: 'Roofing Co' },
+        { id: 'sub-rejected', projectId: 'p1', number: 'SUB-003', title: 'Hardware', status: 'rejected', dueDate: '2026-07-12', subcontractorName: '' },
+        { id: 'sub-approved', projectId: 'p1', number: 'SUB-004', title: 'Tile', status: 'approved', dueDate: '2026-07-11', reviewer: 'Designer' },
+        { id: 'sub-draft', projectId: 'p1', number: 'SUB-005', title: 'Draft package', status: 'draft', dueDate: '2026-07-10' },
+      ];
+      const overdue = buildHomeOverdueDocumentExceptions(projects, rfis, submittals, '2026-07-16');
+      assert.deepEqual(overdue.map((item) => item.id), ['rfi-open', 'sub-review', 'sub-resubmit', 'sub-rejected']);
+      const byId = new Map(overdue.map((item) => [item.id, item]));
+      assert.equal(byId.get('rfi-open').ownerLabel, 'Project Engineer');
+      assert.equal(byId.get('rfi-open').attentionReason, 'RFI response is overdue');
+      assert.equal(byId.get('sub-review').ownerLabel, 'Architect');
+      assert.equal(byId.get('sub-review').attentionReason, 'Submittal review is overdue');
+      assert.equal(byId.get('sub-resubmit').ownerLabel, 'Roofing Co');
+      assert.equal(byId.get('sub-resubmit').attentionReason, 'Submittal resubmission is overdue');
+      assert.equal(byId.get('sub-rejected').ownerLabel, 'Unassigned');
+      const actions = buildHomeActionCenterItems({ overdueDocuments: overdue });
+      assert.ok(actions.every((action) => action.tone === 'danger' && action.projectName === 'Maple House'));
+      assert.deepEqual(actions.map((action) => action.status).sort(), ['open', 'rejected', 'revise_resubmit', 'under_review'].sort());
+    },
+  },
+  {
+    name: 'home action center reports threshold-free change-order and budget exceptions without resolved history',
+    run() {
+      const projects = [{ id: 'p1', name: 'Maple House' }];
+      const changeOrders = [
+        { id: 'co-overdue', projectId: 'p1', number: 'CO-001', title: 'Foundation change', status: 'proposed', dueDate: '2026-07-15' },
+        { id: 'co-approved', projectId: 'p1', number: 'CO-002', title: 'Approved change', status: 'approved', dueDate: '2026-07-14' },
+        { id: 'co-draft', projectId: 'p1', number: 'CO-003', title: 'Draft change', status: 'draft', dueDate: '2026-07-13' },
+        { id: 'co-future', projectId: 'p1', number: 'CO-004', title: 'Future response', status: 'proposed', dueDate: '2026-07-17' },
+      ];
+      const budgetItems = [
+        { id: 'budget-over', projectId: 'p1', number: '03', title: 'Concrete', status: 'active', originalBudget: 100, approvedChanges: 20, forecastCost: 130, actualCost: 140 },
+        { id: 'budget-ok', projectId: 'p1', number: '04', title: 'Framing', status: 'active', originalBudget: 80, approvedChanges: 0, forecastCost: 75, actualCost: 70 },
+        { id: 'budget-closed', projectId: 'p1', number: '05', title: 'Closed history', status: 'closed', originalBudget: 20, forecastCost: 40, actualCost: 50 },
+      ];
+      const commitments = [
+        { id: 'commitment-issued', projectId: 'p1', number: 'COM-001', title: 'Concrete contract', status: 'issued', vendorName: 'Concrete Co', committedAmount: 100, paidAmount: 110, endDate: '2026-07-15' },
+        { id: 'commitment-complete', projectId: 'p1', number: 'COM-002', title: 'Framing contract', status: 'complete', vendorName: 'Framing Co', committedAmount: 50, paidAmount: 55, endDate: '2026-07-14' },
+        { id: 'commitment-proposed', projectId: 'p1', number: 'COM-003', title: 'Proposed contract', status: 'proposed', vendorName: 'Vendor', committedAmount: 100, paidAmount: 120, endDate: '2026-07-13' },
+        { id: 'commitment-void', projectId: 'p1', number: 'COM-004', title: 'Void contract', status: 'void', committedAmount: 500, paidAmount: 600, endDate: '2026-07-12' },
+      ];
+      const exceptions = buildHomeFinancialExceptions(projects, changeOrders, budgetItems, commitments, '2026-07-16');
+      assert.equal(exceptions.length, 7);
+      assert.ok(!exceptions.some((item) => ['co-approved', 'co-draft', 'co-future', 'budget-closed', 'commitment-void'].includes(item.id)));
+      const actions = buildHomeActionCenterItems({ financialExceptions: exceptions });
+      assert.equal(actions.length, 5);
+      const byId = new Map(actions.map((action) => [action.item.id, action]));
+      assert.equal(byId.get('co-overdue').reason, 'Change-order response is overdue');
+      assert.equal(byId.get('budget-over').reason, 'Actual cost exceeds current budget · Forecast exceeds current budget');
+      assert.equal(byId.get('commitment-issued').reason, 'Commitment is past its end date · Payments exceed committed amount');
+      assert.equal(byId.get('commitment-issued').owner, 'Concrete Co');
+      assert.equal(byId.get('commitment-complete').reason, 'Payments exceed committed amount');
+      assert.equal(byId.get('budget-summary-p1').reason, 'Commitments exceed current budget');
+      assert.ok(actions.every((action) => action.tone === 'danger' && action.projectName === 'Maple House'));
+    },
+  },
+  {
+    name: 'home action center includes only overdue unresolved warranty and required closeout deadlines',
+    run() {
+      const projects = [{ id: 'p1', name: 'Maple House' }];
+      const warrantyItems = [
+        { id: 'war-open', projectId: 'p1', number: 'WAR-001', title: 'Door adjustment', status: 'open', dueDate: '2026-07-15', responsibleName: 'Finish Carpenter' },
+        { id: 'war-progress', projectId: 'p1', number: 'WAR-002', title: 'HVAC callback', status: 'in_progress', dueDate: '2026-07-14', responsibleName: '' },
+        { id: 'war-complete', projectId: 'p1', number: 'WAR-003', title: 'Resolved leak', status: 'completed', dueDate: '2026-07-13', responsibleName: 'Plumber' },
+        { id: 'war-today', projectId: 'p1', number: 'WAR-004', title: 'Due today', status: 'scheduled', dueDate: '2026-07-16' },
+      ];
+      const closeoutItems = [
+        { id: 'closeout-punch', projectId: 'p1', number: 'CLS-001', title: 'Paint touchups', category: 'Punch list', required: true, status: 'blocked', dueDate: '2026-07-13', responsibleName: 'Painter' },
+        { id: 'closeout-doc', projectId: 'p1', number: 'CLS-002', title: 'Owner manuals', category: 'Document', required: true, status: 'in_progress', dueDate: '2026-07-14', responsibleName: 'Project Manager' },
+        { id: 'closeout-optional', projectId: 'p1', number: 'CLS-003', title: 'Optional photos', category: 'Other', required: false, status: 'not_started', dueDate: '2026-07-12' },
+        { id: 'closeout-complete', projectId: 'p1', number: 'CLS-004', title: 'Final inspection', category: 'Final inspection', required: true, status: 'complete', dueDate: '2026-07-11' },
+        { id: 'closeout-na', projectId: 'p1', number: 'CLS-005', title: 'Training', category: 'Training', required: true, status: 'not_applicable', dueDate: '2026-07-10' },
+      ];
+      const exceptions = buildHomeWarrantyCloseoutExceptions(projects, warrantyItems, closeoutItems, '2026-07-16');
+      assert.deepEqual(exceptions.map((item) => item.id), ['war-open', 'war-progress', 'closeout-punch', 'closeout-doc']);
+      const actions = buildHomeActionCenterItems({ warrantyCloseoutExceptions: exceptions });
+      const byId = new Map(actions.map((action) => [action.item.id, action]));
+      assert.equal(byId.get('war-open').owner, 'Finish Carpenter');
+      assert.equal(byId.get('war-progress').owner, 'Unassigned');
+      assert.equal(byId.get('war-open').reason, 'Warranty target date is overdue');
+      assert.equal(byId.get('closeout-punch').reason, 'Punch-list deadline is overdue');
+      assert.equal(byId.get('closeout-doc').reason, 'Closeout deadline is overdue');
+      assert.ok(actions.every((action) => action.tone === 'danger' && action.projectName === 'Maple House'));
+    },
+  },
+  {
+    name: 'home action center includes only visible offline sync failures with review-safe details',
+    run() {
+      const projects = [{ id: 'p1', name: 'Maple House' }];
+      const operations = [
+        { id: 'offline-task', projectId: 'p1', kind: 'task.save', entityId: 'task-1', status: 'needs-attention', payload: { label: 'Order windows' }, lastError: 'private server detail' },
+        { id: 'offline-delete', projectId: 'p1', kind: 'inspection.save', entityId: 'inspection-1', action: 'delete', status: 'needs-attention', payload: { subcode: 'FRAME-220' } },
+        { id: 'offline-pending', projectId: 'p1', kind: 'daily-log.save', entityId: 'log-1', status: 'pending', payload: { date: '2026-07-15' } },
+        { id: 'offline-hidden', projectId: 'p2', kind: 'warranty-item.save', entityId: 'war-1', status: 'needs-attention', payload: { number: 'WAR-001', title: 'Hidden' } },
+      ];
+      const exceptions = buildHomeOfflineSyncExceptions(projects, operations, 'Aaron Admin');
+      assert.deepEqual(exceptions.map((item) => item.id), ['offline-task', 'offline-delete']);
+      assert.equal(exceptions[0].label, 'Order windows');
+      assert.equal(exceptions[1].label, 'Delete FRAME-220');
+      assert.ok(exceptions.every((item) => item.ownerLabel === 'Aaron Admin' && item.status === 'Needs attention'));
+      assert.ok(exceptions.every((item) => !Object.hasOwn(item, 'lastError')));
+      const actions = buildHomeActionCenterItems({ offlineSyncExceptions: exceptions });
+      assert.ok(actions.every((action) => action.reason === 'Device-saved change failed to sync' && action.tone === 'danger'));
     },
   },
   {
@@ -4256,6 +4481,7 @@ const tests = [
       assert.match(componentSource, /Subcontractor compliance/);
       assert.match(componentSource, /data\.subs/);
       assert.match(componentSource, /All subcontractors/);
+      assert.match(componentSource, /certificateRequired,/);
       assert.match(componentSource, /No cert needed/);
       assert.match(componentSource, /Mark inactive/);
       assert.match(componentSource, /updatePerson\(data, 'sub'/);

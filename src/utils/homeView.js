@@ -1,6 +1,12 @@
 import { buildAuditTrailEntries } from './auditTrail.js';
 import { getScheduleAssignees, getTaskAssignees } from './assignees.js';
 import { personAssignmentLabel } from './accessUi.js';
+import {
+  certificateEligible,
+  sortCertificatesByExpiration,
+  subcontractorCertificateStatus,
+  subcontractorLabel,
+} from './certificateStatus.js';
 
 export function getLocalIsoDate(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -301,6 +307,14 @@ function actionOwner(item) {
     return getScheduleAssignees(item).join(', ') || 'Unassigned';
   }
   if (item.type === 'inspection') return String(item.agency || '').trim() || 'Unassigned';
+  if (item.type === 'certificate') return item.ownerLabel || 'Unassigned';
+  if (item.type === 'selection' || item.type === 'portal') return item.ownerLabel || 'Unassigned';
+  if (item.type === 'rfi' || item.type === 'submittal') return item.ownerLabel || 'Unassigned';
+  if (['change-order', 'budget', 'commitment', 'budget-summary'].includes(item.type)) {
+    return item.ownerLabel || 'Unassigned';
+  }
+  if (item.type === 'warranty' || item.type === 'closeout') return item.ownerLabel || 'Unassigned';
+  if (item.type === 'offline-sync') return item.ownerLabel || 'You';
   return 'Unassigned';
 }
 
@@ -312,22 +326,61 @@ function actionStatus(item) {
 
 export function buildHomeActionCenterItems(attention = {}) {
   const sources = [
+    {
+      items: attention.offlineSyncExceptions,
+      reason: 'Device-saved change failed to sync',
+      tone: 'danger',
+      rank: 0,
+    },
     { items: attention.overdueTasks, reason: 'Task is past due', tone: 'danger', rank: 0 },
     { items: attention.overdueInspections, reason: 'Inspection is past due', tone: 'danger', rank: 1 },
-    { items: attention.blockedSteps, reason: 'Schedule is blocked or delayed', tone: 'warning', rank: 2 },
-    { items: attention.unassignedTasks, reason: 'Work has no owner', tone: 'neutral', rank: 3 },
+    {
+      items: attention.overdueDocuments,
+      reason: (item) => item.attentionReason,
+      tone: 'danger',
+      rank: 1,
+    },
+    {
+      items: attention.financialExceptions,
+      reason: (item) => item.attentionReason,
+      tone: (item) => item.attentionTone || 'danger',
+      rank: (item) => item.attentionRank ?? 2,
+    },
+    {
+      items: attention.warrantyCloseoutExceptions,
+      reason: (item) => item.attentionReason,
+      tone: 'danger',
+      rank: 1,
+    },
+    {
+      items: attention.pendingDecisions,
+      reason: (item) => item.attentionReason,
+      tone: (item) => item.attentionTone,
+      rank: (item) => item.attentionRank,
+    },
+    {
+      items: attention.certificateExceptions,
+      reason: (item) => item.attentionReason,
+      tone: (item) => item.attentionTone,
+      rank: (item) => item.attentionRank,
+    },
+    { items: attention.blockedSteps, reason: 'Schedule is blocked or delayed', tone: 'warning', rank: 4 },
+    { items: attention.unassignedTasks, reason: 'Work has no owner', tone: 'neutral', rank: 5 },
   ];
   const actionsBySource = new Map();
 
   sources.forEach(({ items = [], reason, tone, rank }) => {
     items.forEach((item) => {
+      const itemReason = typeof reason === 'function' ? reason(item) : reason;
+      const itemTone = typeof tone === 'function' ? tone(item) : tone;
+      const itemRank = typeof rank === 'function' ? rank(item) : rank;
       const sourceKey = `${item.type}-${item.projectId || 'general'}-${item.id}`;
       const current = actionsBySource.get(sourceKey);
       if (current) {
-        current.reasons.push(reason);
+        current.reasons.push(itemReason);
         current.reason = current.reasons.join(' · ');
-        current.rank = Math.min(current.rank, rank);
-        if (tone === 'danger') current.tone = tone;
+        current.rank = Math.min(current.rank, itemRank);
+        if (itemTone === 'danger') current.tone = itemTone;
         return;
       }
       actionsBySource.set(sourceKey, {
@@ -337,11 +390,11 @@ export function buildHomeActionCenterItems(attention = {}) {
         projectName: item.projectName || 'General',
         owner: actionOwner(item),
         dueDate: item.due || item.date || item.start || '',
-        reasons: [reason],
-        reason,
+        reasons: [itemReason],
+        reason: itemReason,
         status: actionStatus(item),
-        tone,
-        rank,
+        tone: itemTone,
+        rank: itemRank,
       });
     });
   });
@@ -353,6 +406,337 @@ export function buildHomeActionCenterItems(attention = {}) {
     if (left.rank !== right.rank) return left.rank - right.rank;
     return `${left.projectName}\u0000${left.label}`.localeCompare(`${right.projectName}\u0000${right.label}`);
   });
+}
+
+export function buildHomeCertificateExceptions(subcontractors = [], certificates = [], todayIso = getLocalIsoDate()) {
+  const certificatesBySubcontractor = new Map();
+  (certificates || []).forEach((certificate) => {
+    const subcontractorId = String(certificate?.subcontractorId || '').trim();
+    if (!subcontractorId) return;
+    if (!certificatesBySubcontractor.has(subcontractorId)) certificatesBySubcontractor.set(subcontractorId, []);
+    certificatesBySubcontractor.get(subcontractorId).push(certificate);
+  });
+
+  return (subcontractors || [])
+    .filter(certificateEligible)
+    .map((subcontractor) => {
+      const subcontractorCertificates = sortCertificatesByExpiration(certificatesBySubcontractor.get(subcontractor.id) || []);
+      const latestCertificate = subcontractorCertificates[0] || null;
+      const status = subcontractorCertificateStatus(subcontractor, subcontractorCertificates, todayIso);
+      if (!['expired', 'expiring', 'missing'].includes(status.id)) return null;
+      const reasonByStatus = {
+        expired: 'Certificate is expired',
+        expiring: 'Certificate expires within 30 days',
+        missing: latestCertificate ? 'Certificate expiration is missing' : 'Required certificate is missing',
+      };
+      return {
+        id: latestCertificate?.id || `missing-${subcontractor.id}`,
+        type: 'certificate',
+        label: 'Insurance certificate',
+        projectName: 'Portfolio',
+        projectId: '',
+        subcontractorId: subcontractor.id,
+        ownerLabel: subcontractorLabel(subcontractor),
+        expirationDate: latestCertificate?.expirationDate || '',
+        due: latestCertificate?.expirationDate || '',
+        status: status.label,
+        statusId: status.id,
+        attentionReason: reasonByStatus[status.id],
+        attentionTone: status.id === 'expiring' ? 'warning' : 'danger',
+        attentionRank: status.id === 'expired' ? 2 : status.id === 'missing' ? 3 : 4,
+      };
+    })
+    .filter(Boolean);
+}
+
+function portalAudienceOwner(audience) {
+  if (audience === 'customer') return 'Customer';
+  if (audience === 'subcontractor') return 'Subcontractor';
+  return 'Customers and subcontractors';
+}
+
+function newestPortalItemBySelection(portalItems = []) {
+  const result = new Map();
+  [...portalItems]
+    .sort((left, right) => String(right?.updatedAt || '').localeCompare(String(left?.updatedAt || '')))
+    .forEach((item) => {
+      const selectionId = String(item?.selectionId || '').trim();
+      if (!selectionId || item?.itemType !== 'approval' || result.has(selectionId)) return;
+      result.set(selectionId, item);
+    });
+  return result;
+}
+
+export function buildHomePendingDecisionExceptions(
+  projects = [],
+  portalItems = [],
+  todayIso = getLocalIsoDate(),
+  { includeSelections = true } = {},
+) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
+  const latestApprovalBySelection = newestPortalItemBySelection(portalItems);
+  const representedPortalIds = new Set();
+  const selectionItems = [];
+
+  if (includeSelections) {
+    (projects || []).forEach((project) => {
+      (project?.selections || []).forEach((selection) => {
+        if (String(selection?.status || 'needs decision').trim().toLowerCase() !== 'needs decision') return;
+        const approval = latestApprovalBySelection.get(String(selection.id));
+        const approvalPending = approval?.status === 'response_requested';
+        if (approvalPending) representedPortalIds.add(approval.id);
+        selectionItems.push({
+          id: selection.id,
+          type: 'selection',
+          label: selection.itemName || 'Selection',
+          projectId: project.id,
+          projectName: project.name || 'Project',
+          ownerLabel: approvalPending ? portalAudienceOwner(approval.audience) : 'Unassigned',
+          due: approvalPending ? approval.dueDate || '' : '',
+          status: approvalPending ? 'Response requested' : 'Needs decision',
+          attentionReason: approvalPending ? 'Customer approval is pending' : 'Selection needs a decision',
+          attentionTone: approvalPending && approval.dueDate && approval.dueDate < todayIso ? 'danger' : 'warning',
+          attentionRank: approvalPending && approval.dueDate && approval.dueDate < todayIso ? 2 : 4,
+          portalItemId: approvalPending ? approval.id : '',
+        });
+      });
+    });
+  }
+
+  const portalActionItems = (portalItems || [])
+    .filter((item) => item?.status === 'response_requested' && !representedPortalIds.has(item.id))
+    .filter((item) => {
+      const selectionId = String(item?.selectionId || '').trim();
+      if (!selectionId || item?.itemType !== 'approval') return true;
+      return latestApprovalBySelection.get(selectionId)?.id === item.id;
+    })
+    .filter((item) => projectNames.has(item.projectId))
+    .map((item) => {
+      const overdue = !!item.dueDate && item.dueDate < todayIso;
+      return {
+        ...item,
+        type: 'portal',
+        label: item.title || item.number || 'Portal request',
+        projectName: projectNames.get(item.projectId) || 'Project',
+        ownerLabel: portalAudienceOwner(item.audience),
+        due: item.dueDate || '',
+        status: 'Response requested',
+        attentionReason: overdue ? 'Portal response is overdue' : 'Portal response is pending',
+        attentionTone: overdue ? 'danger' : 'warning',
+        attentionRank: overdue ? 2 : 4,
+      };
+    });
+
+  return [...selectionItems, ...portalActionItems];
+}
+
+export function buildHomeOverdueDocumentExceptions(
+  projects = [],
+  rfis = [],
+  submittals = [],
+  todayIso = getLocalIsoDate(),
+) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
+  const overdueRfis = (rfis || [])
+    .filter((item) => item?.dueDate && item.dueDate < todayIso && item.status === 'open')
+    .filter((item) => projectNames.has(item.projectId))
+    .map((item) => ({
+      ...item,
+      type: 'rfi',
+      label: [item.number, item.title].filter(Boolean).join(' · ') || 'RFI',
+      projectName: projectNames.get(item.projectId) || 'Project',
+      ownerLabel: String(item.responsibleName || '').trim() || 'Unassigned',
+      due: item.dueDate,
+      attentionReason: 'RFI response is overdue',
+    }));
+  const actionableSubmittalStatuses = new Set(['submitted', 'under_review', 'revise_resubmit', 'rejected']);
+  const overdueSubmittals = (submittals || [])
+    .filter((item) => item?.dueDate && item.dueDate < todayIso && actionableSubmittalStatuses.has(item.status))
+    .filter((item) => projectNames.has(item.projectId))
+    .map((item) => {
+      const needsResubmission = ['revise_resubmit', 'rejected'].includes(item.status);
+      return {
+        ...item,
+        type: 'submittal',
+        label: [item.number, item.title].filter(Boolean).join(' · ') || 'Submittal',
+        projectName: projectNames.get(item.projectId) || 'Project',
+        ownerLabel: needsResubmission
+          ? String(item.subcontractorName || '').trim() || 'Unassigned'
+          : String(item.reviewer || '').trim() || 'Unassigned',
+        due: item.dueDate,
+        attentionReason: needsResubmission ? 'Submittal resubmission is overdue' : 'Submittal review is overdue',
+      };
+    });
+  return [...overdueRfis, ...overdueSubmittals];
+}
+
+function workflowNumberLabel(item, fallback) {
+  return [item?.number, item?.title].filter(Boolean).join(' · ') || fallback;
+}
+
+function numericAmount(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+export function buildHomeFinancialExceptions(
+  projects = [],
+  changeOrders = [],
+  budgetItems = [],
+  commitments = [],
+  todayIso = getLocalIsoDate(),
+) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
+  const visibleRecord = (item) => projectNames.has(item?.projectId);
+  const exceptions = (changeOrders || [])
+    .filter((item) => visibleRecord(item) && item.status === 'proposed' && item.dueDate && item.dueDate < todayIso)
+    .map((item) => ({
+      ...item,
+      type: 'change-order',
+      label: workflowNumberLabel(item, 'Change order'),
+      projectName: projectNames.get(item.projectId),
+      ownerLabel: 'Unassigned',
+      due: item.dueDate,
+      attentionReason: 'Change-order response is overdue',
+      attentionTone: 'danger',
+      attentionRank: 1,
+    }));
+
+  (budgetItems || [])
+    .filter((item) => visibleRecord(item) && item.status === 'active')
+    .forEach((item) => {
+      const currentBudget = numericAmount(item.originalBudget) + numericAmount(item.approvedChanges);
+      const shared = {
+        ...item,
+        type: 'budget',
+        label: workflowNumberLabel(item, 'Budget item'),
+        projectName: projectNames.get(item.projectId),
+        ownerLabel: 'Unassigned',
+        status: 'over_budget',
+        attentionTone: 'danger',
+        attentionRank: 3,
+      };
+      if (numericAmount(item.actualCost) > currentBudget) {
+        exceptions.push({ ...shared, attentionReason: 'Actual cost exceeds current budget' });
+      }
+      if (numericAmount(item.forecastCost) > currentBudget) {
+        exceptions.push({ ...shared, attentionReason: 'Forecast exceeds current budget' });
+      }
+    });
+
+  const activeCommitmentStatuses = new Set(['approved', 'issued', 'complete']);
+  (commitments || [])
+    .filter((item) => visibleRecord(item) && activeCommitmentStatuses.has(item.status))
+    .forEach((item) => {
+      const shared = {
+        ...item,
+        type: 'commitment',
+        label: workflowNumberLabel(item, 'Commitment'),
+        projectName: projectNames.get(item.projectId),
+        ownerLabel: String(item.vendorName || '').trim() || 'Unassigned',
+        attentionTone: 'danger',
+        attentionRank: 3,
+      };
+      if (['approved', 'issued'].includes(item.status) && item.endDate && item.endDate < todayIso) {
+        exceptions.push({ ...shared, due: item.endDate, attentionReason: 'Commitment is past its end date' });
+      }
+      if (numericAmount(item.paidAmount) > numericAmount(item.committedAmount)) {
+        exceptions.push({ ...shared, status: 'overpaid', attentionReason: 'Payments exceed committed amount' });
+      }
+    });
+
+  (projects || []).forEach((project) => {
+    const projectBudgetItems = (budgetItems || []).filter((item) => item.projectId === project.id);
+    const projectCommitments = (commitments || []).filter((item) => item.projectId === project.id && item.status !== 'void');
+    const currentBudget = projectBudgetItems.reduce(
+      (sum, item) => sum + numericAmount(item.originalBudget) + numericAmount(item.approvedChanges),
+      0,
+    );
+    const committed = projectCommitments.reduce((sum, item) => sum + numericAmount(item.committedAmount), 0);
+    if (committed <= currentBudget || committed <= 0) return;
+    exceptions.push({
+      id: `budget-summary-${project.id}`,
+      type: 'budget-summary',
+      label: 'Budget commitments',
+      projectId: project.id,
+      projectName: project.name || 'Project',
+      ownerLabel: 'Unassigned',
+      status: 'overcommitted',
+      attentionReason: 'Commitments exceed current budget',
+      attentionTone: 'danger',
+      attentionRank: 3,
+    });
+  });
+
+  return exceptions;
+}
+
+export function buildHomeWarrantyCloseoutExceptions(
+  projects = [],
+  warrantyItems = [],
+  closeoutItems = [],
+  todayIso = getLocalIsoDate(),
+) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
+  const visibleRecord = (item) => projectNames.has(item?.projectId);
+  const actionableWarrantyStatuses = new Set(['open', 'scheduled', 'in_progress']);
+  const overdueWarranty = (warrantyItems || [])
+    .filter((item) => visibleRecord(item) && actionableWarrantyStatuses.has(item.status))
+    .filter((item) => item.dueDate && item.dueDate < todayIso)
+    .map((item) => ({
+      ...item,
+      type: 'warranty',
+      label: workflowNumberLabel(item, 'Warranty item'),
+      projectName: projectNames.get(item.projectId),
+      ownerLabel: String(item.responsibleName || '').trim() || 'Unassigned',
+      due: item.dueDate,
+      attentionReason: 'Warranty target date is overdue',
+    }));
+  const actionableCloseoutStatuses = new Set(['not_started', 'in_progress', 'blocked']);
+  const overdueCloseout = (closeoutItems || [])
+    .filter((item) => visibleRecord(item) && item.required !== false && actionableCloseoutStatuses.has(item.status))
+    .filter((item) => item.dueDate && item.dueDate < todayIso)
+    .map((item) => ({
+      ...item,
+      type: 'closeout',
+      label: workflowNumberLabel(item, 'Closeout item'),
+      projectName: projectNames.get(item.projectId),
+      ownerLabel: String(item.responsibleName || '').trim() || 'Unassigned',
+      due: item.dueDate,
+      attentionReason: item.category === 'Punch list'
+        ? 'Punch-list deadline is overdue'
+        : 'Closeout deadline is overdue',
+    }));
+  return [...overdueWarranty, ...overdueCloseout];
+}
+
+export function buildHomeOfflineSyncExceptions(
+  projects = [],
+  operations = [],
+  ownerLabel = 'You',
+) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
+  return (operations || [])
+    .filter((operation) => operation?.status === 'needs-attention' && projectNames.has(operation.projectId))
+    .map((operation) => {
+      const record = operation.payload || {};
+      let fallback = 'Device-saved change';
+      if (operation.kind === 'daily-log.save') fallback = record.date || record.title || 'Daily log';
+      else if (operation.kind === 'task.save') fallback = record.label || 'Task';
+      else if (operation.kind === 'warranty-item.save') fallback = workflowNumberLabel(record, 'Warranty item');
+      else if (operation.kind === 'inspection.save') fallback = record.subcode || record.inspectionType || 'Inspection';
+      return {
+        id: operation.id,
+        type: 'offline-sync',
+        label: operation.action === 'delete' ? `Delete ${fallback}` : fallback,
+        projectId: operation.projectId,
+        projectName: projectNames.get(operation.projectId),
+        ownerLabel: String(ownerLabel || '').trim() || 'You',
+        status: 'Needs attention',
+        operationKind: operation.kind,
+        entityId: operation.entityId,
+      };
+    });
 }
 
 export function getProjectOperationalHealth(project, tasks = [], todayIso = getLocalIsoDate()) {

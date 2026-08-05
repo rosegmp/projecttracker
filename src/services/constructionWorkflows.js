@@ -56,7 +56,16 @@ function normalize(type, row) {
     updatedAt: String(row?.updated_at || data.updatedAt || ''),
     ...(type === 'dailyLogs'
       ? { date: String(row?.log_date || data.date || ''), title: String(row?.title || data.title || 'Daily log') }
-      : { number: String(row?.[config.numberColumn] || data.number || ''), title: String(row?.title || data.title || ''), status: String(row?.status || data.status || 'proposed') }),
+      : type === 'portalItems'
+        ? {
+          number: String(row?.item_number || data.number || ''),
+          title: String(row?.title || data.title || ''),
+          itemType: String(row?.item_type || data.itemType || 'update'),
+          audience: String(row?.audience || data.audience || 'all'),
+          status: String(row?.status || data.status || 'published'),
+          dueDate: String(row?.due_date || data.dueDate || ''),
+        }
+        : { number: String(row?.[config.numberColumn] || data.number || ''), title: String(row?.title || data.title || ''), status: String(row?.status || data.status || 'proposed') }),
   };
 }
 
@@ -68,6 +77,25 @@ async function responseJson(response, fallback) {
 
 function missingTable(error) {
   return /project_daily_logs|project_change_orders|project_rfis|project_submittals|project_budget_items|project_commitments|project_portal_items|project_warranty_items|project_closeout_items|respond_to_project_portal_item|list_customer_warranty_requests|submit_customer_warranty_request|PGRST205|42P01|schema cache|does not exist|404/i.test(String(error?.message || error || ''));
+}
+
+export async function loadWorkflowItemsForProjects(type, projectIds = []) {
+  const config = CONFIG[type];
+  if (!config) throw new Error('Unknown project workflow.');
+  const ids = Array.from(new Set((projectIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!ids.length || !getSupabaseDiagnosticsInfo().configured) return [];
+  const projectFilter = ids.map((id) => encodeURIComponent(id)).join(',');
+  const response = await fetchAuthorizedSupabase(
+    `/rest/v1/${config.table}?project_id=in.(${projectFilter})&select=*&order=${config.order}`,
+    { method: 'GET' },
+    'Workflow action center load',
+  );
+  const rows = await responseJson(response, 'Unable to load workflow action items.');
+  return (Array.isArray(rows) ? rows : []).map((row) => normalize(type, row));
+}
+
+export async function loadPortalItemsForProjects(projectIds = []) {
+  return loadWorkflowItemsForProjects('portalItems', projectIds);
 }
 
 function remoteBody(type, projectId, record) {

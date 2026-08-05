@@ -2,6 +2,79 @@
 
 Updated: 2026-08-05
 
+## Signed-in browser QA: Action Center checkpoint
+
+- Signed-in testing ran against the local worktree at `http://127.0.0.1:5173` using the existing Administrator account and live read-only data. No task, workflow record, setting, offline operation, or other production data was created or changed.
+- Home rendered 67 real actions. Every expanded row had a work item, project, owner, reason, status, and one **Open** action. The current visible sources were certificates, one overdue inspection, blocked schedule work, and one unassigned task.
+- The first certificate drill-through exposed a local regression: `NativeCertificatesView` still called the newly shared `certificateRequired` helper but no longer imported it, so Certificates hit the application error boundary. The helper import was restored and the certificate workspace regression assertion now guards it.
+- The same certificate action was retested successfully: it opened Certificates with **Royal Stonework** and **Expired** selected. The overdue inspection action opened **630 Hope Chapel → Inspections**, and the unassigned-task action opened Tasks scoped to **630 Hope Chapel** with the affected task present. No post-fix browser error was recorded.
+- Administrator settings currently hide Change Orders, RFIs & Submittals, Budget & Commitments, and Warranty & Closeout. Home correctly showed no actions or visible project destinations for those sources; they were not enabled for UI smoke testing because changing the shared setting would be a production write. Their focused pure-behavior and static navigation coverage remains in the 153-test regression suite.
+- Post-fix verification passes all 153 regression tests, the 695-module production Vite build, and `git diff --check`. The accumulated work remains local and uncommitted on `agent/fix-projectless-task-email`; it has not been pushed or deployed.
+
+## Current checkpoint: offline sync failures complete the Unified Action Center source roadmap
+
+- Home now adds one Action Center row for each signed-in user's device-saved operation in **Needs attention** state. Pending and actively syncing changes are left to the existing global sync banner and do not create false failure actions.
+- Offline actions are local-only and filtered to projects the user can currently see. Each row identifies the device copy, visible project, signed-in owner, **Needs attention** status, and **Device-saved change failed to sync** reason. Raw server error text is deliberately excluded from Home.
+- **Open** launches the existing device-saved change review dialog, scrolls to the exact operation, and briefly highlights it. The established Retry and confirmed Discard affordances remain authoritative; Home adds no second sync or deletion path.
+- Task, inspection, daily-log, and warranty operation labels reuse their saved device payload without exposing notes, attachments, or error details. Delete operations are explicitly labeled as deletes.
+- This source requires no server read, database change, migration, remote write, notification, or Android-native change. It reacts to the existing per-user offline-operation subscription owned by the application shell.
+- Focused verification passes all 153 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The accumulated Unified Action Center implementation now covers the original operational exceptions plus certificates, selection/portal actions, RFIs/submittals, financial exceptions, warranty/closeout deadlines, and offline sync failures. All changes remain local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed.
+
+## Current checkpoint: warranty and punch/closeout deadlines in the Unified Action Center
+
+- Home now adds overdue warranty and closeout deadlines for visible projects when the Administrator-configured **Warranty & Closeout** project tab is available. A hidden tab produces neither actions nor background reads.
+- Warranty items qualify only when their explicit target date is before today and status remains **open**, **scheduled**, or **in progress**. Completed and not-covered history, future/today dates, and records without a target date are excluded.
+- Closeout items qualify only when they are required, their explicit due date is before today, and status remains **not started**, **in progress**, or **blocked**. Optional, complete, and not-applicable records are excluded. Punch-list categories use a specific **Punch-list deadline is overdue** reason; other required records use **Closeout deadline is overdue**.
+- Owners use the saved responsible subcontractor/person, with missing responsibility explicitly shown as **Unassigned**. Every qualifying record uses its saved target/due date and danger treatment; no deadline is inferred from reported, scheduled, completed, or warranty-end metadata.
+- The two workflow tables are loaded through the shared read-only, RLS-filtered multi-project loader. Failure leaves every other Action Center source available and shows a bounded warning; Home refresh retries both reads.
+- **Open** selects the exact project and Warranty & Closeout tab, switches to the correct Warranty or Closeout list, scrolls to the record, and briefly highlights it.
+- The checkpoint adds no database change, migration, write path, notification, or Android-native change. Focused verification passes all 152 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The accumulated Action Center changes remain local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed. The next planned source is offline sync failures.
+
+## Current checkpoint: change-order and budget exceptions in the Unified Action Center
+
+- Home now adds financial exceptions for visible projects when the corresponding Administrator-configured **Change Orders** or **Budget & Commitments** project tab is available. Hidden tabs produce neither actions nor background reads.
+- Proposed change orders qualify when their response due date is before today. Draft, approved, rejected, void, and future-due change orders are excluded.
+- Active budget lines qualify when actual cost or forecast cost strictly exceeds the current budget. If both conditions apply, Home consolidates them into one action while preserving both reasons. Closed budget lines are excluded.
+- Approved or issued commitments qualify when their end date is before today, and approved, issued, or complete commitments qualify when paid amounts exceed committed amounts. Proposed and void commitments are excluded from record-level exceptions.
+- A project-level budget summary qualifies when total nonvoid commitments exceed the project's current budget. The calculation deliberately matches the existing Budget workspace totals and uses no arbitrary dollar or percentage tolerance: every strict overrun is actionable.
+- Financial records are loaded through the shared read-only, RLS-filtered multi-project workflow loader. Failure leaves every other Action Center source available and shows a bounded warning; Home refresh retries the applicable reads.
+- **Open** selects the exact project and financial tab. Record-level actions switch to the correct list, scroll to the record, and briefly highlight it; project-level overcommitment opens the Budget list summary.
+- The checkpoint adds no database change, migration, write path, notification, or Android-native change. Focused verification passes all 151 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The accumulated Action Center changes remain local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed. The next planned source is warranty and punch/closeout deadlines.
+
+## Current checkpoint: overdue RFIs and submittals in the Unified Action Center
+
+- Home now adds overdue unresolved RFIs and submittals for visible projects when the Administrator-configured **RFIs & Submittals** project tab is available. Hidden tabs produce neither actions nor background reads.
+- RFIs qualify only when the response due date is before today and status remains **open**. Draft, answered, closed, and cancelled RFIs are excluded.
+- Submittals qualify only when the review due date is before today and status is **submitted**, **under review**, **revise and resubmit**, or **rejected**. Draft, approved, approved-as-noted, and closed submittals are excluded.
+- RFI ownership uses the responsible person. Submitted/under-review submittals use the reviewer; revise/resubmit and rejected submittals use the subcontractor. Missing responsibility remains explicitly **Unassigned**.
+- The RFI and submittal tables are loaded through the shared read-only, RLS-filtered multi-project workflow loader. Failure leaves every other Action Center source available and shows a bounded warning; Home refresh retries both reads.
+- **Open** selects the exact project and combined RFIs & Submittals tab, switches to the correct RFI or Submittals list, scrolls to the record, and briefly highlights it. The shared workflow-card highlight matches the existing task and selection drill-through treatment.
+- The checkpoint adds no database change, migration, write path, notification, or Android-native change. Focused verification passes all 150 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The accumulated Action Center changes remain local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed. The next planned source is change-order and budget exceptions.
+
+## Current checkpoint: pending selection and portal actions in the Unified Action Center
+
+- Home now adds project-scoped selection and portal exceptions for projects already visible to the signed-in user. Only selections explicitly marked **needs decision** and portal records explicitly marked **response requested** qualify; ordinary published updates, drafts, answered/approved/declined records, and closed records remain excluded.
+- A current customer approval request linked to a needs-decision selection is consolidated into one selection action with **Customer approval is pending**. Older approval requests for that selection are ignored, matching the Selections workspace's newest-request behavior. Needs-decision selections without a current request remain visible as **Selection needs a decision**.
+- Other response-requested portal records remain separate actions. Portal requests past their response due date use a danger treatment and **Portal response is overdue**; open requests without an overdue date use the warning treatment and **Portal response is pending**.
+- Selection actions open the exact project Selections tab and highlight the selection. Portal actions open the project's required Portal tab. If an Administrator has hidden Selections, linked approval requests fall back to Portal actions instead of producing an unavailable destination.
+- Portal records are loaded in one read-only, RLS-filtered request scoped to visible project ids. Failure leaves all other Action Center sources available and shows a bounded warning; Home refresh retries the portal read.
+- The checkpoint adds no database change, migration, write path, notification, or Android-native change. Focused verification passes all 149 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The accumulated certificate and selection/portal Action Center changes remain local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed. The next planned source is overdue RFIs and submittals.
+
+## Current checkpoint: certificate exceptions in the Unified Action Center
+
+- Home now adds portfolio-wide insurance certificate exceptions to the existing Action Center for internal users who are authorized to open the top-level Certificates workspace.
+- The checkpoint covers required certificates that are missing, certificates with a missing expiration date, expired certificates, and certificates expiring within the existing 30-day window. Inactive subcontractors and People records explicitly marked **No cert needed** remain excluded.
+- Home and Certificates now share one certificate-status utility, including newest-certificate selection, eligibility, expiration status, and subcontractor display labels, so the two workspaces cannot classify the same record differently.
+- Certificate rows use the established Action Center contract: **Insurance certificate** work item, **Portfolio** project context, the subcontractor as owner, expiration as due date when available, a specific reason/status, and an **Open** action. Drill-through opens Certificates filtered to the exact subcontractor and exception status.
+- Certificate data is loaded independently and read-only on Home. A certificate read failure leaves the existing operational exceptions available and shows a bounded warning; Home refresh retries the certificate read alongside the existing tracker, audit, and weather refreshes.
+- This checkpoint adds no database change, migration, write path, notification, or Android-native change. Focused verification passes all 148 regression tests, the 695-module production Vite build, and `git diff --check`.
+- The changes are local and uncommitted on `agent/fix-projectless-task-email`; they have not been pushed or deployed. The next planned Unified Action Center source remains pending selection and portal actions.
+
 ## Current fix: projectless task assignment emails
 
 - Production feedback showed that new-task emails were skipped when the saved task had no project. The client notification queue and Edge Function validation both previously required `projectId` for every event.
