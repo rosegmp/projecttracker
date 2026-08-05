@@ -2,6 +2,15 @@
 
 Updated: 2026-08-05
 
+## Current fix: projectless task assignment emails
+
+- Production feedback showed that new-task emails were skipped when the saved task had no project. The client notification queue and Edge Function validation both previously required `projectId` for every event.
+- The bounded fix permits only `task-created` events without a project. The existing function still authenticates the caller, requires an internal Admin/Edit role, re-reads the saved task and normalized assignments, verifies the task is genuinely projectless, applies the same Administrator email settings and recipient rules, and sends email only. All push and non-creation events remain project-scoped.
+- Projectless emails use **General tasks** for context and link to `?tab=tasks&task=<task-id>`. The top-level Tasks workspace now opens and highlights that exact task, including after sign-in. Project-linked task email behavior is unchanged.
+- Projectless delivery returns before the project push/event path; Resend still receives the per-request event idempotency key, while no schema change or synthetic project record is required.
+- Local verification passes all 147 regression tests, both project-linked and projectless task-link Playwright journeys, the 694-module production build, Edge Function TypeScript parsing through esbuild, and `git diff --check`. No live task or email was created during validation.
+- On 2026-08-05, `send-project-notification` was deployed and confirmed **ACTIVE version 11** with JWT verification enabled. No task or email was created during deployment; the client queue change remains in the CI-gated release flow.
+
 ## Current checkpoint: task links in assignment emails
 
 - New-task assignment emails now include the exact task URL in plain text and an **Open task in Destiny Project Hub** link in HTML.

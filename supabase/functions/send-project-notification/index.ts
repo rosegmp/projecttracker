@@ -152,9 +152,11 @@ function escapeHtml(value: unknown) {
 
 function buildTaskDeepLink(projectId: string, taskId: string) {
   const url = new URL('https://projecthub.destinyhomesnj.com/');
-  url.searchParams.set('tab', 'projects');
-  url.searchParams.set('project', projectId);
-  url.searchParams.set('projectTab', 'tasks');
+  url.searchParams.set('tab', projectId ? 'projects' : 'tasks');
+  if (projectId) {
+    url.searchParams.set('project', projectId);
+    url.searchParams.set('projectTab', 'tasks');
+  }
   url.searchParams.set('task', taskId);
   return url.toString();
 }
@@ -250,7 +252,7 @@ Deno.serve(async (request) => {
       : [];
     let taskLabel = String(payload.taskLabel || '').trim().slice(0, 240);
     let taskDue = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.due || '')) ? String(payload.due) : '';
-    if (!eventId || !projectId || !allowedKinds.has(kind) || (kind === 'task-created' && !entityId)) {
+    if (!eventId || !allowedKinds.has(kind) || (!projectId && kind !== 'task-created') || (kind === 'task-created' && !entityId)) {
       return fail('Invalid notification event.', 400, operation, 'invalid_event');
     }
 
@@ -262,6 +264,66 @@ Deno.serve(async (request) => {
     );
     if (!callerAppUser || !['Admin', 'Edit'].includes(normalizeRole(callerAppUser.data?.role))) {
       return fail('Only project editors can send project notifications.', 403, 'authorization.check', 'editor_required');
+    }
+
+    if (kind === 'task-created' && !projectId) {
+      operation = 'task_email.projectless_task.read';
+      const [taskResult, assignmentResult, settingsResult, peopleResult] = await Promise.all([
+        admin.from('tasks').select('id,data').eq('id', entityId).maybeSingle(),
+        admin.from('task_assignments').select('assignee').eq('task_id', entityId).order('position'),
+        admin.from('settings').select('data').eq('id', 'app_settings').maybeSingle(),
+        admin.from('people').select('data,people_type'),
+      ]);
+      if (taskResult.error) throw taskResult.error;
+      if (assignmentResult.error) throw assignmentResult.error;
+      if (settingsResult.error) throw settingsResult.error;
+      if (peopleResult.error) throw peopleResult.error;
+      if (!taskResult.data || String(taskResult.data.data?.projectId || '').trim()) {
+        return fail('Projectless task not found.', 400, operation, 'task_project_mismatch');
+      }
+      taskAssignees = (assignmentResult.data || [])
+        .map((row) => String(row.assignee || '').trim().slice(0, 240))
+        .filter(Boolean)
+        .slice(0, 30);
+      taskLabel = String(taskResult.data.data?.label || '').trim().slice(0, 240);
+      taskDue = /^\d{4}-\d{2}-\d{2}$/.test(String(taskResult.data.data?.due || ''))
+        ? String(taskResult.data.data.due)
+        : '';
+      const recipients = taskAssignees.length && taskLabel
+        ? resolveTaskEmailRecipients({
+          assignees: taskAssignees,
+          settingsData: settingsResult.data?.data || {},
+          appUsers: appUsers || [],
+          people: peopleResult.data || [],
+        })
+        : [];
+      operation = 'task_email.projectless_deliver';
+      const emailResult = await sendTaskAssignmentEmails({
+        recipients,
+        eventId,
+        projectId: '',
+        taskId: entityId,
+        projectName: 'General tasks',
+        taskLabel,
+        due: taskDue,
+      });
+      if (emailResult.failed) {
+        logEdgeFailure({
+          code: emailResult.status === 'unconfigured' ? 'task_email_unconfigured' : 'partial_delivery',
+          functionName: 'send-project-notification',
+          operation,
+          requestId,
+          status: 200,
+        });
+      }
+      return respond({
+        ok: true,
+        sent: 0,
+        failed: 0,
+        emailSent: emailResult.sent,
+        emailFailed: emailResult.failed,
+        emailStatus: emailResult.status,
+      });
     }
 
     operation = 'project.read';

@@ -165,7 +165,8 @@ export async function addAndroidPushActionListener(listener) {
 }
 
 export async function sendProjectPushNotification(event) {
-  if (!event?.projectId || !event?.kind) return { status: 'skipped' };
+  const projectlessTaskCreation = event?.kind === 'task-created' && !!event?.entityId;
+  if ((!event?.projectId && !projectlessTaskCreation) || !event?.kind) return { status: 'skipped' };
   try {
     const response = await fetchAuthorizedSupabase(
       '/functions/v1/send-project-notification',
@@ -174,7 +175,7 @@ export async function sendProjectPushNotification(event) {
         headers: JSON_HEADERS,
         body: JSON.stringify({
           eventId: event.eventId || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
-          projectId: String(event.projectId),
+          projectId: String(event.projectId || ''),
           kind: String(event.kind),
           entityId: String(event.entityId || ''),
           title: String(event.title || '').slice(0, 120),

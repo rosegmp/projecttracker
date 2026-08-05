@@ -1408,7 +1408,10 @@ const tests = [
       assert.match(trackerSource, /emailNewTasksToInternalAssignees: false/);
       assert.match(trackerSource, /emailNewTasksToExternalAssignees: false/);
       assert.match(trackerSource, /assignees: eventKind === 'task-created'/);
+      assert.match(trackerSource, /projectlessTaskCreation = event\?\.kind === 'task-created'/);
+      assert.match(trackerSource, /project\?\.name \|\| 'General tasks'/);
       assert.match(pushSource, /assignees: Array\.isArray\(event\.assignees\)/);
+      assert.match(pushSource, /projectlessTaskCreation = event\?\.kind === 'task-created'/);
       assert.match(functionSource, /admin\.from\('settings'\)/);
       assert.match(functionSource, /admin\.from\('people'\)/);
       assert.match(functionSource, /admin\.from\('tasks'\)/);
@@ -1423,8 +1426,13 @@ const tests = [
       assert.match(functionSource, /buildTaskDeepLink/);
       assert.match(functionSource, /url\.searchParams\.set\('projectTab', 'tasks'\)/);
       assert.match(functionSource, /Open task in Destiny Project Hub/);
+      assert.match(functionSource, /task_email\.projectless_task\.read/);
+      assert.match(functionSource, /projectName: 'General tasks'/);
+      assert.match(functionSource, /url\.searchParams\.set\('tab', projectId \? 'projects' : 'tasks'\)/);
       assert.match(appSource, /getTaskIdFromLocation/);
-      assert.match(appSource, /hasTaskDeepLink \? 'projects' : 'home'/);
+      assert.match(appSource, /hasTaskDeepLink \? \(linkedProjectId \? 'projects' : 'tasks'\) : 'home'/);
+      assert.match(appSource, /activeTab !== 'tasks'/);
+      assert.match(appSource, /token: `deep-link-\$\{taskId\}`/);
       assert.match(projectDetailSource, /getSearchParam\('task'\)/);
       assert.match(projectDetailSource, /deep-link-\$\{project\.id\}-\$\{taskId\}/);
       assert.match(tasksSource, /sendAssignmentNotifications: false/);

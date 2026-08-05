@@ -221,6 +221,24 @@ test('task deep link opens the authorized project task and highlights it', async
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
 
+test('projectless task deep link opens the top-level task and highlights it', async ({ page }) => {
+  const appUserId = 'general-task-link-admin';
+  const taskId = 'general-task-link-task';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'general-task-link-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000008',
+    tasks: [taskRow(taskId, '')],
+  });
+
+  await page.goto(`/?tab=tasks&task=${taskId}`);
+
+  await expect(page.getByRole('button', { name: /^Tasks:/ })).toHaveAttribute('aria-current', 'page');
+  const linkedTask = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
+  await expect(linkedTask).toHaveClass(/highlighted/);
+});
+
 test('maintenance mode keeps staff workspace readable and disables project changes', async ({ page }) => {
   const appUserId = 'maintenance-admin';
   await mockStaffBackend(page, {
