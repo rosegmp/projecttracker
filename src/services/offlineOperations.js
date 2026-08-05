@@ -200,3 +200,40 @@ export function applyQueuedInspectionOperations(state, operations) {
     }),
   };
 }
+
+export function mergeQueuedWarrantyItems(records, operations) {
+  const byId = new Map((records || []).map((record) => [String(record.id), record]));
+  (operations || [])
+    .filter((operation) => operation.kind === 'warranty-item.save')
+    .forEach((operation) => {
+      const serverRecord = byId.get(operation.entityId) || null;
+      byId.set(operation.entityId, {
+        ...(serverRecord || {}),
+        ...operation.payload,
+        _offlineStatus: operation.status,
+        _offlineQueuedAt: operation.queuedAt,
+        _offlineServerRecord: serverRecord?._offlineServerRecord || serverRecord,
+      });
+    });
+  return [...byId.values()].sort((left, right) =>
+    String(right.updatedAt || right._offlineQueuedAt || '').localeCompare(String(left.updatedAt || left._offlineQueuedAt || '')));
+}
+
+export function applyQueuedTaskOperations(state, operations) {
+  if (!state?.tasks || !Array.isArray(operations) || !operations.length) return state;
+  const queued = operations.filter((operation) => operation.kind === 'task.save');
+  if (!queued.length) return state;
+  const tasks = new Map((state.tasks || []).map((task) => [String(task.id), task]));
+  queued.forEach((operation) => {
+    const serverRecord = tasks.get(operation.entityId) || null;
+    tasks.set(operation.entityId, {
+      ...(serverRecord || {}),
+      ...operation.payload,
+      _offlineAction: operation.action || 'save',
+      _offlineStatus: operation.status,
+      _offlineQueuedAt: operation.queuedAt,
+      _offlineServerRecord: serverRecord?._offlineServerRecord || serverRecord,
+    });
+  });
+  return { ...state, tasks: [...tasks.values()] };
+}

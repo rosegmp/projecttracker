@@ -2,8 +2,9 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { buildTaskAssigneeDirectory, buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
   createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
-  updatePerson, updateTask, uploadProjectFileToStorage,
+  getStoredAuthSession, queueTaskUpdateOffline, updatePerson, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
+import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { isOverdue } from '../utils/schedule.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
@@ -113,6 +114,7 @@ export default function NativeTasksView({
   const { runMutation, isMutating } = useEntityMutations();
   const [taskSaveMessage, setTaskSaveMessage] = useState('');
   const [activeHighlightTaskId, setActiveHighlightTaskId] = useState('');
+  const [offlineRevision, setOfflineRevision] = useState(0);
   const createAttachmentInputRef = useRef(null);
   const editAttachmentInputRef = useRef(null);
   const createTaskNameInputRef = useRef(null);
@@ -120,6 +122,18 @@ export default function NativeTasksView({
   const dataRef = useRef(data);
   const taskSaveMessageTimerRef = useRef(0);
   const lastCreateRequestTokenRef = useRef('');
+  const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
+
+  useEffect(
+    () => subscribeToOfflineOperations(offlineUserId, () => setOfflineRevision((current) => current + 1)),
+    [offlineUserId],
+  );
+
+  const offlineTaskOperationById = useMemo(
+    () => new Map(getOfflineOperations(offlineUserId, { kind: 'task.save' })
+      .map((operation) => [operation.entityId, operation])),
+    [offlineRevision, offlineUserId],
+  );
 
   useEffect(() => {
     dataRef.current = data;
@@ -427,6 +441,24 @@ export default function NativeTasksView({
     });
   }
 
+  async function updateTaskWithOfflineFallback(currentState, task, updates, cleanupFiles = []) {
+    const queueUpdate = () => {
+      const nextState = queueTaskUpdateOffline(currentState, task.id, updates, cleanupFiles);
+      showTaskSaveMessage('Task saved on device');
+      return nextState;
+    };
+    const alreadyQueued = offlineTaskOperationById.has(task.id);
+    if (alreadyQueued || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return queueUpdate();
+    }
+    try {
+      return await updateTask(currentState, task.id, updates);
+    } catch (error) {
+      if (isOfflineNetworkError(error)) return queueUpdate();
+      throw error;
+    }
+  }
+
   function appendTaskFiles(currentFiles, fileList) {
     const nextFiles = Array.from(fileList || []);
     if (!nextFiles.length) return currentFiles;
@@ -486,6 +518,9 @@ export default function NativeTasksView({
     if (isMutating('task:create') || !newTask.label.trim()) return;
     await runMutation('task:create', async () => {
       try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('Creating a task requires a connection. Reconnect and try again.');
+      }
       const targetProjectId = newTask.projectId || defaultTaskProjectId;
       const taskId = `t${Date.now()}`;
       const attachments = await createTaskAttachmentRecords(targetProjectId, taskId, newTaskFiles);
@@ -548,7 +583,8 @@ export default function NativeTasksView({
   }
 
   async function handleToggle(task, done) {
-    await runTaskMutation(['task', task.id, 'save'], (currentState) => updateTask(currentState, task.id, { done }));
+    await runTaskMutation(['task', task.id, 'save'], (currentState) =>
+      updateTaskWithOfflineFallback(currentState, task, { done }));
   }
 
   function handleEditStart(task) {
@@ -611,17 +647,24 @@ export default function NativeTasksView({
     if (isMutating(mutationKey) || !editDraft.label.trim()) return;
     await runMutation(mutationKey, async () => {
       try {
+      if (editPendingFiles.length && typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('Adding task attachments requires a connection. Remove the pending files or reconnect and save again.');
+      }
       const nextAttachments = [
         ...(editDraft.attachments || []),
         ...(await createTaskAttachmentRecords(editDraft.projectId || task.projectId || '', task.id, editPendingFiles)),
       ];
-      const nextState = await updateTask(dataRef.current, task.id, {
+      const nextAttachmentIds = new Set(nextAttachments.map((attachment) => attachment.id));
+      const cleanupFiles = (task.attachments || []).filter(
+        (attachment) => attachment?.storagePath && !nextAttachmentIds.has(attachment.id),
+      );
+      const nextState = await updateTaskWithOfflineFallback(dataRef.current, task, {
         label: editDraft.label.trim(),
         projectId: editDraft.projectId || '',
         due: editDraft.due,
         ...taskAssigneeFields(editDraft.assignees),
         attachments: nextAttachments,
-      });
+      }, cleanupFiles);
       commitTaskState(nextState);
       handleEditCancel();
       } catch (error) {
@@ -631,6 +674,10 @@ export default function NativeTasksView({
   }
 
   async function handleDelete(task) {
+    if (offlineTaskOperationById.has(task.id) || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      await showAppAlert('Deleting a task requires a connection and no pending device-saved changes. Sync or discard the device copy first.', 'Connection required');
+      return;
+    }
     const confirmed = await showAppConfirm(`Delete "${task.label}"?`, {
       title: 'Delete task',
       confirmLabel: 'Delete',
@@ -646,7 +693,10 @@ export default function NativeTasksView({
       commitTaskState(nextState);
       showUndoAction({
         message: `Deleted "${task.label}".`,
-        onUndo: () => runTaskMutation(['task', task.id, 'restore'], (currentState) => createTask(currentState, deletedTask)),
+        onUndo: () => runTaskMutation(
+          ['task', task.id, 'restore'],
+          (currentState) => createTask(currentState, deletedTask, { sendAssignmentNotifications: false }),
+        ),
         onCommit: async () => {
           for (const attachment of deletedTask.attachments) {
             if (attachment?.storagePath) await deleteProjectFileFromStorage(attachment);
@@ -931,6 +981,7 @@ export default function NativeTasksView({
                       onSelect={toggleTaskSelection}
                       selected={selectedTaskIds.has(task.id)}
                       showShare={nativeAndroid}
+                      offlineOperation={offlineTaskOperationById.get(task.id) || null}
                       onAttachmentDownload={handleDownloadTaskAttachment}
                       onOpenSelection={handleOpenTaskSelection}
                       onDelete={handleDelete}
@@ -991,6 +1042,7 @@ export default function NativeTasksView({
                   onSelect={toggleTaskSelection}
                   selected={selectedTaskIds.has(task.id)}
                   showShare={nativeAndroid}
+                  offlineOperation={offlineTaskOperationById.get(task.id) || null}
                   onAttachmentDownload={handleDownloadTaskAttachment}
                   onOpenSelection={handleOpenTaskSelection}
                   onDelete={handleDelete}

@@ -10,6 +10,7 @@ import { DEFAULT_VISIBLE_PROJECT_TABS, getVisibleProjectTabs } from './utils/pro
 import { reportError } from './services/observability.js';
 import {
   applyQueuedInspectionOperations,
+  applyQueuedTaskOperations,
   getOfflineOperations,
   getOfflineOperationSummary,
   removeOfflineOperation,
@@ -22,6 +23,10 @@ import {
   DEFAULT_RUNTIME_STATUS,
   maintenanceDisplayMessage,
 } from './services/runtimeStatus.js';
+
+function applyQueuedFieldOperations(state, operations) {
+  return applyQueuedTaskOperations(applyQueuedInspectionOperations(state, operations), operations);
+}
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
 const NativeHomeView = lazy(() => import('./components/NativeHomeView.jsx'));
@@ -314,7 +319,7 @@ export default function App() {
         });
         if (requestId !== refreshRequestIdRef.current) return;
         initialWorkspaceLoadedRef.current = true;
-        setTrackerState(applyQueuedInspectionOperations(
+        setTrackerState(applyQueuedFieldOperations(
           startup.data,
           getOfflineOperations(authSession?.user?.id),
         ));
@@ -323,7 +328,7 @@ export default function App() {
           void loadTrackerData({ force: true })
             .then((completeState) => {
               if (requestId !== refreshRequestIdRef.current) return;
-              setTrackerState(applyQueuedInspectionOperations(
+              setTrackerState(applyQueuedFieldOperations(
                 { ...completeState, deferredDataStatus: 'ready' },
                 getOfflineOperations(authSession?.user?.id),
               ));
@@ -345,7 +350,7 @@ export default function App() {
         ? await loadPortalTrackerData({ profile, force: options?.force !== false })
         : await loadTrackerData({ force: options?.force !== false });
       if (requestId === refreshRequestIdRef.current) {
-        setTrackerState(applyQueuedInspectionOperations(
+        setTrackerState(applyQueuedFieldOperations(
           { ...next, deferredDataStatus: 'ready' },
           getOfflineOperations(authSession?.user?.id),
         ));
@@ -519,10 +524,18 @@ export default function App() {
     const record = operation.payload || {};
     const recordName = operation.kind === 'daily-log.save'
       ? record.date || record.title || 'Daily log'
-      : record.subcode || record.inspectionType || 'Inspection';
+      : operation.kind === 'task.save'
+        ? record.label || 'Task'
+        : operation.kind === 'warranty-item.save'
+          ? record.number || record.title || 'Warranty item'
+          : record.subcode || record.inspectionType || 'Inspection';
     const deviceSummary = operation.kind === 'daily-log.save'
       ? [record.weather, record.notes, record.delays, record.issues].find((value) => String(value || '').trim())
-      : [record.status, record.date, record.notes].filter((value) => String(value || '').trim()).join(' · ');
+      : operation.kind === 'task.save'
+        ? [record.done ? 'Done' : 'Open', record.due, ...(record.assignees || [])].filter((value) => String(value || '').trim()).join(' · ')
+        : operation.kind === 'warranty-item.save'
+          ? [record.title, record.status, record.dueDate, record.responsibleName].filter((value) => String(value || '').trim()).join(' · ')
+          : [record.status, record.date, record.notes].filter((value) => String(value || '').trim()).join(' · ');
     return { projectName, recordName, deviceSummary: String(deviceSummary || '').trim().slice(0, 240) };
   }
 
@@ -1186,7 +1199,7 @@ export default function App() {
                       <div>
                         <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.status === 'syncing' ? 'Syncing' : 'Saved on device'}</span>
                         <h3>{operation.action === 'delete' ? `Delete ${recordName}` : recordName}</h3>
-                        <p>{projectName} · {operation.kind === 'daily-log.save' ? 'Daily log' : 'Inspection'}</p>
+                        <p>{projectName} · {operation.kind === 'daily-log.save' ? 'Daily log' : operation.kind === 'task.save' ? 'Task' : operation.kind === 'warranty-item.save' ? 'Warranty item' : 'Inspection'}</p>
                         {deviceSummary ? <p><strong>Device copy:</strong> {deviceSummary}</p> : null}
                         {operation.lastError ? <p className="offline-review-error">{operation.lastError}</p> : null}
                         <small>Saved {operation.updatedAt ? new Date(operation.updatedAt).toLocaleString() : 'on this device'}</small>

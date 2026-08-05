@@ -5,6 +5,7 @@ import {
   getOfflineOperations,
   isOfflineNetworkError,
   mergeQueuedDailyLogs,
+  mergeQueuedWarrantyItems,
   removeOfflineOperationsForEntity,
 } from './offlineOperations.js';
 import {
@@ -225,6 +226,42 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
     return { record: tombstone, local: true, offline: true, queued: true };
   }
 
+  function queueWarrantyItemRecord(draft, cleanupFiles = []) {
+    assertEdit();
+    if (!configured || !userId) throw new Error('Sign in before saving a warranty item on this device.');
+    const record = { ...draft, id: draft.id || createId('warranty') };
+    const existingOperation = getOfflineOperations(userId, {
+      kind: 'warranty-item.save', projectId: scopedProjectId,
+    }).find((operation) => operation.entityId === record.id);
+    const queued = enqueueOfflineOperation(userId, {
+      id: existingOperation?.id || createOfflineOperationId(),
+      kind: 'warranty-item.save',
+      action: 'save',
+      projectId: scopedProjectId,
+      entityId: record.id,
+      payload: { ...remoteBody('warrantyItems', scopedProjectId, record).data, version: Number(record.version) || 0 },
+      expected: existingOperation?.expected || { version: Number(record.version) || 0 },
+      cleanupFiles: [
+        ...(existingOperation?.cleanupFiles || []),
+        ...(cleanupFiles || []),
+      ].filter((file, index, files) =>
+        file?.storagePath && files.findIndex((item) => item?.storagePath === file.storagePath) === index),
+      attachmentIds: [],
+    });
+    const queuedRecord = {
+      ...record,
+      projectId: scopedProjectId,
+      version: Number(record.version) || 0,
+      _offlineStatus: queued.status,
+      _offlineQueuedAt: queued.queuedAt,
+    };
+    writeLocal('warrantyItems', scopedProjectId, [
+      queuedRecord,
+      ...readLocal('warrantyItems', scopedProjectId).filter((item) => item.id !== queuedRecord.id),
+    ]);
+    return { record: queuedRecord, local: true, offline: true, queued: true };
+  }
+
   return {
     queueDailyLog: queueDailyLogRecord,
     queueDailyLogDelete,
@@ -238,7 +275,9 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         writeLocal(type, scopedProjectId, remoteRecords);
         const records = type === 'dailyLogs'
           ? mergeQueuedDailyLogs(remoteRecords, getOfflineOperations(userId, { kind: 'daily-log.save', projectId: scopedProjectId }))
-          : remoteRecords;
+          : type === 'warrantyItems'
+            ? mergeQueuedWarrantyItems(remoteRecords, getOfflineOperations(userId, { kind: 'warranty-item.save', projectId: scopedProjectId }))
+            : remoteRecords;
         return { records, local: false };
       } catch (error) {
         if (missingTable(error)) return { records: readLocal(type, scopedProjectId), local: true, setupRequired: true };
@@ -252,16 +291,37 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
             offline: true,
           };
         }
+        if (type === 'warrantyItems' && isOfflineNetworkError(error)) {
+          return {
+            records: mergeQueuedWarrantyItems(
+              readLocal(type, scopedProjectId),
+              getOfflineOperations(userId, { kind: 'warranty-item.save', projectId: scopedProjectId }),
+            ),
+            local: true,
+            offline: true,
+          };
+        }
+        if (type === 'closeoutItems' && isOfflineNetworkError(error)) {
+          return { records: readLocal(type, scopedProjectId), local: true, offline: true };
+        }
         throw error;
       }
     },
 
-    async save(type, draft) {
+    async save(type, draft, options = {}) {
       assertEdit();
       const config = CONFIG[type];
       const idPrefix = { dailyLogs: 'log', changeOrders: 'co', rfis: 'rfi', submittals: 'submittal', budgetItems: 'budget', commitments: 'commitment', portalItems: 'portal', warrantyItems: 'warranty', closeoutItems: 'closeout' }[type] || 'workflow';
       const record = { ...draft, id: draft.id || createId(idPrefix) };
       if (!configured) return { record: saveLocal(type, record), local: true };
+      const queuedWarranty = type === 'warrantyItems' && getOfflineOperations(userId, {
+        kind: 'warranty-item.save', projectId: scopedProjectId,
+      }).some((operation) => operation.entityId === record.id);
+      if (type === 'warrantyItems' && offlineQueueEnabled && (
+        queuedWarranty || (typeof navigator !== 'undefined' && navigator.onLine === false)
+      )) {
+        return queueWarrantyItemRecord(record, options.cleanupFiles);
+      }
       try {
         const body = remoteBody(type, scopedProjectId, record);
         const existing = Number(draft.version) > 0;
@@ -297,6 +357,9 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         if (missingTable(error)) return { record: saveLocal(type, record), local: true, setupRequired: true };
         if (type === 'dailyLogs' && offlineQueueEnabled && isOfflineNetworkError(error)) {
           return queueDailyLogRecord(record);
+        }
+        if (type === 'warrantyItems' && offlineQueueEnabled && isOfflineNetworkError(error)) {
+          return queueWarrantyItemRecord(record, options.cleanupFiles);
         }
         throw error;
       }

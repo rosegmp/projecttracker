@@ -77,9 +77,11 @@ export default function TaskRow({
   deleting = false,
   selected = false,
   showShare = false,
+  offlineOperation = null,
 }) {
   const overdue = isOverdue(task.due, task.done);
   const isEditing = editingTaskId === task.id;
+  const offlineStatus = offlineOperation?.status || task._offlineStatus || '';
 
   if (isEditing) {
     return (
@@ -196,6 +198,11 @@ export default function TaskRow({
         <input type="checkbox" checked={!!task.done} onChange={(event) => onToggle(task, event.target.checked)} disabled={saving} />
         <span className="task-main-copy">
           <strong>{task.label}</strong>
+          {offlineStatus ? (
+            <span className={`status-pill offline-${offlineStatus}`}>
+              {offlineStatus === 'needs-attention' ? 'Needs attention' : offlineStatus === 'syncing' ? 'Syncing' : 'Saved on device'}
+            </span>
+          ) : null}
           <small>{projectName || 'No project assigned'}</small>
         </span>
       </div>

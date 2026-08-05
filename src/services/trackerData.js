@@ -97,6 +97,8 @@ const EMPTY_SETTINGS = {
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
   peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
+  emailNewTasksToInternalAssignees: false,
+  emailNewTasksToExternalAssignees: false,
   users: [
     {
       id: 'user-admin',
@@ -470,6 +472,8 @@ function normalizeSettings(settings) {
     inspectionSubcodes: Array.isArray(settings?.inspectionSubcodes) ? settings.inspectionSubcodes : EMPTY_SETTINGS.inspectionSubcodes,
     peopleListColumns: Array.isArray(settings?.peopleListColumns) ? settings.peopleListColumns : EMPTY_SETTINGS.peopleListColumns,
     peopleListBoldColumns: Array.isArray(settings?.peopleListBoldColumns) ? settings.peopleListBoldColumns : EMPTY_SETTINGS.peopleListBoldColumns,
+    emailNewTasksToInternalAssignees: settings?.emailNewTasksToInternalAssignees === true,
+    emailNewTasksToExternalAssignees: settings?.emailNewTasksToExternalAssignees === true,
     visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     visibleProjectTabs: normalizeVisibleProjectTabs(settings?.visibleProjectTabs),
     users,
@@ -2731,7 +2735,7 @@ export async function loadAuditEvents({ limit = 50, beforeId = null, projectId =
   return Array.isArray(rows) ? rows : [];
 }
 
-function queueProjectPushNotification(currentState, event) {
+function queueProjectNotification(currentState, event) {
   if (currentState?.storageMode !== 'supabase' || !event?.projectId || typeof window === 'undefined') return;
   void import('../utils/androidPushNotifications.js')
     .then(({ sendProjectPushNotification }) => sendProjectPushNotification(event))
@@ -2769,10 +2773,13 @@ function taskNotificationEvent(currentState, previousTask, nextTask, kind) {
     body: nextTask.done ? `${nextTask.label} was marked complete.` : `${nextTask.label}${nextTask.due ? ` · Due ${nextTask.due}` : ''}`,
     tab: 'tasks',
     recipientAppUserIds: eventKind === 'task-assigned' ? assignedAppUserIds(currentState.settings, nextTask) : [],
+    assignees: eventKind === 'task-created' ? (nextTask.assignees || []) : [],
+    taskLabel: eventKind === 'task-created' ? nextTask.label : '',
+    due: eventKind === 'task-created' ? nextTask.due || '' : '',
   };
 }
 
-export async function createTask(currentState, payload) {
+export async function createTask(currentState, payload, options = {}) {
   const task = normalizeTask({
     id: payload.id || `t${Date.now()}`,
     label: payload.label.trim(),
@@ -2791,7 +2798,9 @@ export async function createTask(currentState, payload) {
   if (currentState.storageMode === 'supabase' && currentState.concurrencyEnabled) {
     const normalizedTask = await persistTaskWithNormalizedAttachments(null, task);
     if (normalizedTask) {
-      queueProjectPushNotification(currentState, taskNotificationEvent(currentState, null, normalizedTask, 'task-created'));
+      if (options.sendAssignmentNotifications !== false) {
+        queueProjectNotification(currentState, taskNotificationEvent(currentState, null, normalizedTask, 'task-created'));
+      }
       return { ...currentState, tasks: [...currentState.tasks, normalizedTask], storageMode: 'supabase' };
     }
   }
@@ -2799,7 +2808,9 @@ export async function createTask(currentState, payload) {
     table: 'tasks', nextItems: tasks, previousItems: currentState.tasks,
     storageMode: currentState.storageMode, concurrencyEnabled: currentState.concurrencyEnabled,
   });
-  queueProjectPushNotification(currentState, taskNotificationEvent(currentState, null, task, 'task-created'));
+  if (options.sendAssignmentNotifications !== false) {
+    queueProjectNotification(currentState, taskNotificationEvent(currentState, null, task, 'task-created'));
+  }
   return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
@@ -2834,8 +2845,57 @@ export async function updateTask(currentState, taskId, updates) {
       console.warn('Task attachment metadata was saved, but storage cleanup failed.', error);
     }
   }
-  queueProjectPushNotification(currentState, taskNotificationEvent(currentState, existingTask, nextTask, 'task-updated'));
+  queueProjectNotification(currentState, taskNotificationEvent(currentState, existingTask, nextTask, 'task-updated'));
   return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
+}
+
+export function queueTaskUpdateOffline(currentState, taskId, updates, cleanupFiles = []) {
+  const currentTask = currentState.tasks.find((task) => task.id === taskId) || null;
+  if (!currentTask) throw new Error('Task was not found.');
+  const serverTask = currentTask._offlineServerRecord || currentTask;
+  const nextTask = normalizeTask({ ...currentTask, ...updates });
+  if (!nextTask.projectId) {
+    throw new Error('Saving an unassigned task requires a connection. Assign it to a project or reconnect and save again.');
+  }
+  if (String(nextTask.projectId) !== String(serverTask.projectId || '')) {
+    throw new Error('Moving a task to another project requires a connection. Reconnect and save again.');
+  }
+  if (!serverTask._normalizedVersions?.attachments) {
+    throw new Error('This task must be refreshed online before it can be saved on this device.');
+  }
+  const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+  if (!userId) throw new Error('Sign in before saving a task on this device.');
+  const existingOperation = getOfflineOperations(userId, { kind: 'task.save' })
+    .find((operation) => operation.entityId === taskId);
+  const mergedCleanup = [
+    ...(existingOperation?.cleanupFiles || []),
+    ...(cleanupFiles || []),
+  ].filter((file, index, files) =>
+    file?.storagePath && files.findIndex((item) => item?.storagePath === file.storagePath) === index);
+  const queued = enqueueOfflineOperation(userId, {
+    id: existingOperation?.id || createOfflineOperationId(),
+    kind: 'task.save',
+    action: 'save',
+    projectId: nextTask.projectId,
+    entityId: nextTask.id,
+    payload: stripRecordMetadata(nextTask),
+    expected: existingOperation?.expected || {
+      version: Number(serverTask._version) || 0,
+      attachmentVersions: serverTask._normalizedVersions.attachments,
+    },
+    cleanupFiles: mergedCleanup,
+    attachmentIds: [],
+  });
+  const queuedTask = {
+    ...nextTask,
+    _offlineStatus: queued.status,
+    _offlineQueuedAt: queued.queuedAt,
+    _offlineServerRecord: serverTask,
+  };
+  return {
+    ...currentState,
+    tasks: currentState.tasks.map((task) => task.id === taskId ? queuedTask : task),
+  };
 }
 
 export async function deleteTask(currentState, taskId, options = {}) {
@@ -2923,7 +2983,7 @@ export async function updateProject(currentState, projectId, updates) {
   const inspectionsChanged = JSON.stringify(previousProject?.inspections || []) !== JSON.stringify(nextProject?.inspections || []);
   const notifyInspectionChange = () => {
     if (!inspectionsChanged || !nextProject) return;
-    queueProjectPushNotification(currentState, {
+    queueProjectNotification(currentState, {
       projectId,
       kind: 'inspection-updated',
       entityId: '',
@@ -3299,6 +3359,18 @@ export async function syncQueuedProjectInspection(operation) {
       report: Number(operation.expected?.fileVersions?.report) || 0,
     },
   }, 'Queued inspection sync');
+}
+
+export async function syncQueuedTask(operation) {
+  if (!operation?.entityId || !operation?.payload?.id) {
+    throw new Error('Queued task is missing its task identifier.');
+  }
+  return callPortalVisibilityRpc('save_task_with_attachments', {
+    p_task_id: operation.entityId,
+    p_task_data: stripRecordMetadata(operation.payload),
+    p_expected_version: Number(operation.expected?.version) || 0,
+    p_expected_attachment_versions: operation.expected?.attachmentVersions || {},
+  }, 'Queued task sync');
 }
 
 export async function syncQueuedProjectInspectionDelete(operation) {

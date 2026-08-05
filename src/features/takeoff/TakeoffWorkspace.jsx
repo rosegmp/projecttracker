@@ -6,16 +6,27 @@ import {
   Checkmark24Regular,
   ChevronLeft24Regular,
   ChevronRight24Regular,
+  Circle24Regular,
+  Cursor24Regular,
   Document24Regular,
   DocumentSave24Regular,
   FolderOpen24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
+  Highlight24Regular,
   Line24Regular,
+  NumberSymbol24Regular,
+  Pen24Regular,
+  RectangleLandscape24Regular,
+  Ruler24Regular,
   Save24Regular,
+  TextT24Regular,
   ZoomIn24Regular,
   ZoomOut24Regular,
 } from "@fluentui/react-icons";
+import areaIconUrl from "./assets/area.png";
+import connectedLinesIconUrl from "./assets/connected-lines.png";
+import scaleIconUrl from "./assets/scale.png";
 import { formatFileSize } from "../../utils/fileUi.js";
 import { initTakeoffApp } from "./lib/takeoffApp.js";
 import {
@@ -311,14 +322,19 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
 
         <section className="drawing-pane">
           <div className="tool-strip" role="toolbar" aria-label="Takeoff tools">
-            <button className="tool-button active" type="button" data-tool="select">Select</button>
-            <button className="tool-button" type="button" data-tool="scale">Scale</button>
-            <button className="tool-button" type="button" data-tool="length">Length</button>
-            <button className="tool-button" type="button" data-tool="area">Area</button>
-            <button className="tool-button" type="button" data-tool="count">Count</button>
-            <button className="tool-button" type="button" data-tool="pen">Pen</button>
-            <button className="tool-button" type="button" data-tool="highlight">Highlight</button>
-            <button className="tool-button" type="button" data-tool="text">Text</button>
+            <button className="tool-button active" type="button" data-tool="select" aria-label="Select" title="Select"><Cursor24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="scale" aria-label="Scale" title="Set drawing scale"><span className="tool-custom-icon" style={{ "--tool-icon-mask": `url(${scaleIconUrl})` }} aria-hidden="true"></span></button>
+            <button className="tool-button" type="button" data-tool="length" aria-label="Length" title="Measure length"><Ruler24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="area" aria-label="Area" title="Measure area"><span className="tool-custom-icon" style={{ "--tool-icon-mask": `url(${areaIconUrl})` }} aria-hidden="true"></span></button>
+            <button className="tool-button" type="button" data-tool="count" aria-label="Count" title="Place count markers"><NumberSymbol24Regular aria-hidden="true" /></button>
+            <span className="tool-strip-divider" aria-hidden="true"></span>
+            <button className="tool-button" type="button" data-tool="line" aria-label="Line" title="Draw line"><Line24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="multiline" aria-label="Connected lines" title="Draw connected lines"><span className="tool-custom-icon" style={{ "--tool-icon-mask": `url(${connectedLinesIconUrl})` }} aria-hidden="true"></span></button>
+            <button className="tool-button" type="button" data-tool="rectangle" aria-label="Rectangle" title="Draw rectangle; hold Shift for square"><RectangleLandscape24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="oval" aria-label="Oval" title="Draw oval; hold Shift for circle"><Circle24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="pen" aria-label="Pen" title="Draw freehand"><Pen24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="highlight" aria-label="Highlight" title="Highlight"><Highlight24Regular aria-hidden="true" /></button>
+            <button className="tool-button" type="button" data-tool="text" aria-label="Text" title="Add text note"><TextT24Regular aria-hidden="true" /></button>
             <div className="tool-spacer"></div>
             <button id="undoPoint" className="button compact" type="button" disabled>Undo point</button>
           </div>
@@ -413,6 +429,19 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
               <label>
                 <span className="field-label">Color</span>
                 <input id="markupColor" className="color-input" type="color" defaultValue="#e4572e" />
+              </label>
+              <label>
+                <span className="field-label">Line</span>
+                <input
+                  id="markupThickness"
+                  className="text-input compact-input"
+                  type="number"
+                  min="1"
+                  max="24"
+                  step="1"
+                  defaultValue="3"
+                  aria-label="Drawing line thickness"
+                />
               </label>
             </div>
           </section>

@@ -80,6 +80,113 @@ function normalizeRole(value: unknown) {
   return String(value || '').trim();
 }
 
+function cleanEmail(value: unknown) {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function personAssignmentKeys(data: Record<string, unknown> = {}) {
+  const first = String(data.first || '').trim();
+  const last = String(data.last || '').trim();
+  const name = `${first} ${last}`.trim();
+  const company = String(data.company || '').trim();
+  const label = name && company ? `${name} (${company})` : name || company;
+  return [label, name, cleanEmail(data.email)]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function resolveTaskEmailRecipients({
+  assignees,
+  settingsData,
+  appUsers,
+  people,
+}: {
+  assignees: string[];
+  settingsData: Record<string, unknown>;
+  appUsers: Array<{ data?: Record<string, unknown> }>;
+  people: Array<{ data?: Record<string, unknown>; people_type?: string }>;
+}) {
+  const requested = new Set(assignees.map((value) => value.trim().toLowerCase()).filter(Boolean));
+  if (!requested.size) return [];
+  const includeInternal = settingsData.emailNewTasksToInternalAssignees === true;
+  const includeExternal = settingsData.emailNewTasksToExternalAssignees === true;
+  const recipients = new Map<string, { email: string; name: string }>();
+  const add = (data: Record<string, unknown> = {}, keys: string[] = []) => {
+    if (!keys.some((key) => requested.has(key))) return;
+    const email = cleanEmail(data.email);
+    if (!email) return;
+    const name = String(data.name || `${data.first || ''} ${data.last || ''}`).trim()
+      || String(data.company || '').trim()
+      || 'Task assignee';
+    recipients.set(email, { email, name });
+  };
+
+  if (includeInternal) {
+    appUsers
+      .filter((user) => ['Admin', 'Edit', 'View Only'].includes(normalizeRole(user.data?.role)))
+      .forEach((user) => {
+        const data = user.data || {};
+        add(data, [String(data.name || '').trim().toLowerCase(), cleanEmail(data.email)].filter(Boolean));
+      });
+    people
+      .filter((row) => String(row.people_type || row.data?.peopleType || '') === 'emp')
+      .forEach((row) => add(row.data || {}, personAssignmentKeys(row.data || {})));
+  }
+  if (includeExternal) {
+    people
+      .filter((row) => ['sub', 'supplier'].includes(String(row.people_type || row.data?.peopleType || '')))
+      .forEach((row) => add(row.data || {}, personAssignmentKeys(row.data || {})));
+  }
+  return [...recipients.values()].sort((left, right) => left.email.localeCompare(right.email));
+}
+
+function escapeHtml(value: unknown) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+async function sendTaskAssignmentEmails({
+  recipients,
+  eventId,
+  projectName,
+  taskLabel,
+  due,
+}: {
+  recipients: Array<{ email: string; name: string }>;
+  eventId: string;
+  projectName: string;
+  taskLabel: string;
+  due: string;
+}) {
+  if (!recipients.length) return { sent: 0, failed: 0, status: 'disabled' };
+  const apiKey = Deno.env.get('RESEND_API_KEY') || '';
+  const from = Deno.env.get('TASK_ASSIGNMENT_EMAIL_FROM') || '';
+  if (!apiKey || !from) return { sent: 0, failed: recipients.length, status: 'unconfigured' };
+  const subject = `New task assignment · ${projectName}`.slice(0, 240);
+  const dueLine = due ? `Due: ${due}` : 'Due date: Not set';
+  const results = await Promise.all(recipients.map(async (recipient, index) => {
+    const text = `Hello ${recipient.name},\n\nYou were assigned a new task in ${projectName}.\n\nTask: ${taskLabel}\n${dueLine}\n\nOpen Destiny Project Hub to review the task.`;
+    const html = `<p>Hello ${escapeHtml(recipient.name)},</p><p>You were assigned a new task in <strong>${escapeHtml(projectName)}</strong>.</p><p><strong>Task:</strong> ${escapeHtml(taskLabel)}<br><strong>${escapeHtml(dueLine)}</strong></p><p>Open Destiny Project Hub to review the task.</p>`;
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `${eventId}:task-assignment:${index}`,
+      },
+      body: JSON.stringify({ from, to: [recipient.email], subject, text, html }),
+    });
+    return response.ok;
+  }));
+  const sent = results.filter(Boolean).length;
+  return { sent, failed: results.length - sent, status: sent === results.length ? 'sent' : 'partial' };
+}
+
 Deno.serve(async (request) => {
   const requestId = getRequestId(request);
   const respond = (body: Record<string, unknown>, status = 200) =>
@@ -123,7 +230,13 @@ Deno.serve(async (request) => {
     const eventId = String(payload.eventId || '').slice(0, 160);
     const projectId = String(payload.projectId || '').slice(0, 160);
     const kind = String(payload.kind || '');
-    if (!eventId || !projectId || !allowedKinds.has(kind)) {
+    const entityId = String(payload.entityId || '').slice(0, 160);
+    let taskAssignees = Array.isArray(payload.assignees)
+      ? payload.assignees.map((value: unknown) => String(value || '').trim().slice(0, 240)).filter(Boolean).slice(0, 30)
+      : [];
+    let taskLabel = String(payload.taskLabel || '').trim().slice(0, 240);
+    let taskDue = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.due || '')) ? String(payload.due) : '';
+    if (!eventId || !projectId || !allowedKinds.has(kind) || (kind === 'task-created' && !entityId)) {
       return fail('Invalid notification event.', 400, operation, 'invalid_event');
     }
 
@@ -150,6 +263,43 @@ Deno.serve(async (request) => {
       return fail('You cannot notify users for this project.', 403, 'authorization.check', 'project_access_required');
     }
 
+    let taskEmailRecipients: Array<{ email: string; name: string }> = [];
+    if (kind === 'task-created') {
+      operation = 'task_email.task.read';
+      const [taskResult, assignmentResult] = await Promise.all([
+        admin.from('tasks').select('id,data').eq('id', entityId).maybeSingle(),
+        admin.from('task_assignments').select('assignee').eq('task_id', entityId).order('position'),
+      ]);
+      if (taskResult.error) throw taskResult.error;
+      if (assignmentResult.error) throw assignmentResult.error;
+      if (!taskResult.data || String(taskResult.data.data?.projectId || '') !== projectId) {
+        return fail('Task not found for this project.', 400, operation, 'task_project_mismatch');
+      }
+      taskAssignees = (assignmentResult.data || [])
+        .map((row) => String(row.assignee || '').trim().slice(0, 240))
+        .filter(Boolean)
+        .slice(0, 30);
+      taskLabel = String(taskResult.data.data?.label || '').trim().slice(0, 240);
+      taskDue = /^\d{4}-\d{2}-\d{2}$/.test(String(taskResult.data.data?.due || ''))
+        ? String(taskResult.data.data.due)
+        : '';
+    }
+    if (kind === 'task-created' && taskAssignees.length && taskLabel) {
+      operation = 'task_email.recipients.read';
+      const [settingsResult, peopleResult] = await Promise.all([
+        admin.from('settings').select('data').eq('id', 'app_settings').maybeSingle(),
+        admin.from('people').select('data,people_type'),
+      ]);
+      if (settingsResult.error) throw settingsResult.error;
+      if (peopleResult.error) throw peopleResult.error;
+      taskEmailRecipients = resolveTaskEmailRecipients({
+        assignees: taskAssignees,
+        settingsData: settingsResult.data?.data || {},
+        appUsers: appUsers || [],
+        people: peopleResult.data || [],
+      });
+    }
+
     const requestedRecipients = new Set(
       Array.isArray(payload.recipientAppUserIds) ? payload.recipientAppUserIds.map(String) : [],
     );
@@ -170,13 +320,44 @@ Deno.serve(async (request) => {
       actor_app_user_id: callerAppUser.id,
       project_id: projectId,
       kind,
-      entity_id: String(payload.entityId || '').slice(0, 160),
-      recipient_count: recipientIds.length,
+      entity_id: entityId,
+      recipient_count: recipientIds.length + taskEmailRecipients.length,
     });
-    if (eventError?.code === '23505') return respond({ ok: true, duplicate: true, sent: 0 });
+    if (eventError?.code === '23505') return respond({ ok: true, duplicate: true, sent: 0, emailSent: 0 });
     if (eventError) throw eventError;
 
-    if (!recipientIds.length) return respond({ ok: true, sent: 0 });
+    operation = 'task_email.deliver';
+    const emailResult = await sendTaskAssignmentEmails({
+      recipients: taskEmailRecipients,
+      eventId,
+      projectName: String(project.data?.name || 'Project').slice(0, 160),
+      taskLabel,
+      due: taskDue,
+    });
+    if (emailResult.status === 'unconfigured') {
+      logEdgeFailure({
+        code: 'task_email_unconfigured',
+        functionName: 'send-project-notification',
+        operation,
+        requestId,
+        status: 200,
+      });
+    }
+
+    if (!recipientIds.length) {
+      await admin.from('push_notification_events').update({
+        sent_count: emailResult.sent,
+        failed_count: emailResult.failed,
+      }).eq('id', eventId);
+      return respond({
+        ok: true,
+        sent: 0,
+        failed: 0,
+        emailSent: emailResult.sent,
+        emailFailed: emailResult.failed,
+        emailStatus: emailResult.status,
+      });
+    }
     operation = 'notification.tokens.read';
     const { data: tokenRows, error: tokenError } = await admin
       .from('device_push_tokens')
@@ -184,7 +365,20 @@ Deno.serve(async (request) => {
       .in('app_user_id', recipientIds)
       .eq('enabled', true);
     if (tokenError) throw tokenError;
-    if (!tokenRows?.length) return respond({ ok: true, sent: 0 });
+    if (!tokenRows?.length) {
+      await admin.from('push_notification_events').update({
+        sent_count: emailResult.sent,
+        failed_count: emailResult.failed,
+      }).eq('id', eventId);
+      return respond({
+        ok: true,
+        sent: 0,
+        failed: 0,
+        emailSent: emailResult.sent,
+        emailFailed: emailResult.failed,
+        emailStatus: emailResult.status,
+      });
+    }
 
     operation = 'notification.deliver';
     const serviceAccount = JSON.parse(requiredEnv('FIREBASE_SERVICE_ACCOUNT_JSON'));
@@ -198,9 +392,9 @@ Deno.serve(async (request) => {
       tab: String(payload.tab || 'projects'),
       detailTab: String(payload.detailTab || ''),
       projectId,
-      entityId: String(payload.entityId || ''),
-      selectionId: kind === 'selection-approval-requested' ? String(payload.entityId || '') : '',
-      taskId: kind.startsWith('task-') ? String(payload.entityId || '') : '',
+      entityId,
+      selectionId: kind === 'selection-approval-requested' ? entityId : '',
+      taskId: kind.startsWith('task-') ? entityId : '',
     };
 
     const results = await Promise.all(tokenRows.map(async (row) => {
@@ -227,8 +421,11 @@ Deno.serve(async (request) => {
     const sent = results.filter((result) => result.ok).length;
     const failed = results.length - sent;
     operation = 'notification.record';
-    await admin.from('push_notification_events').update({ sent_count: sent, failed_count: failed }).eq('id', eventId);
-    if (failed) {
+    await admin.from('push_notification_events').update({
+      sent_count: sent + emailResult.sent,
+      failed_count: failed + emailResult.failed,
+    }).eq('id', eventId);
+    if (failed || emailResult.failed) {
       logEdgeFailure({
         code: 'partial_delivery',
         functionName: 'send-project-notification',
@@ -237,7 +434,14 @@ Deno.serve(async (request) => {
         status: 200,
       });
     }
-    return respond({ ok: true, sent, failed });
+    return respond({
+      ok: true,
+      sent,
+      failed,
+      emailSent: emailResult.sent,
+      emailFailed: emailResult.failed,
+      emailStatus: emailResult.status,
+    });
   } catch (error) {
     return fail(
       'Unexpected notification error.',

@@ -1,5 +1,5 @@
 import { buildAuditTrailEntries } from './auditTrail.js';
-import { getTaskAssignees } from './assignees.js';
+import { getScheduleAssignees, getTaskAssignees } from './assignees.js';
 import { personAssignmentLabel } from './accessUi.js';
 
 export function getLocalIsoDate(value = new Date()) {
@@ -293,6 +293,66 @@ export function buildHomeAttentionSummary(projects = [], scopedTasks = [], today
     blockedSteps: blockedSteps.sort(byDueDate),
     unassignedTasks: unassignedTasks.sort(byDueDate),
   };
+}
+
+function actionOwner(item) {
+  if (item.type === 'task') return getTaskAssignees(item).join(', ') || 'Unassigned';
+  if (item.type === 'step' || item.type === 'phase') {
+    return getScheduleAssignees(item).join(', ') || 'Unassigned';
+  }
+  if (item.type === 'inspection') return String(item.agency || '').trim() || 'Unassigned';
+  return 'Unassigned';
+}
+
+function actionStatus(item) {
+  if (item.type === 'task') return item.done ? 'Complete' : 'Open';
+  if (item.type === 'step') return item.attentionKind || item.status || 'Blocked';
+  return item.status || 'Open';
+}
+
+export function buildHomeActionCenterItems(attention = {}) {
+  const sources = [
+    { items: attention.overdueTasks, reason: 'Task is past due', tone: 'danger', rank: 0 },
+    { items: attention.overdueInspections, reason: 'Inspection is past due', tone: 'danger', rank: 1 },
+    { items: attention.blockedSteps, reason: 'Schedule is blocked or delayed', tone: 'warning', rank: 2 },
+    { items: attention.unassignedTasks, reason: 'Work has no owner', tone: 'neutral', rank: 3 },
+  ];
+  const actionsBySource = new Map();
+
+  sources.forEach(({ items = [], reason, tone, rank }) => {
+    items.forEach((item) => {
+      const sourceKey = `${item.type}-${item.projectId || 'general'}-${item.id}`;
+      const current = actionsBySource.get(sourceKey);
+      if (current) {
+        current.reasons.push(reason);
+        current.reason = current.reasons.join(' · ');
+        current.rank = Math.min(current.rank, rank);
+        if (tone === 'danger') current.tone = tone;
+        return;
+      }
+      actionsBySource.set(sourceKey, {
+        sourceKey,
+        item,
+        label: item.label || 'Work item',
+        projectName: item.projectName || 'General',
+        owner: actionOwner(item),
+        dueDate: item.due || item.date || item.start || '',
+        reasons: [reason],
+        reason,
+        status: actionStatus(item),
+        tone,
+        rank,
+      });
+    });
+  });
+
+  return [...actionsBySource.values()].sort((left, right) => {
+    const leftDate = left.dueDate || '9999-12-31';
+    const rightDate = right.dueDate || '9999-12-31';
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    if (left.rank !== right.rank) return left.rank - right.rank;
+    return `${left.projectName}\u0000${left.label}`.localeCompare(`${right.projectName}\u0000${right.label}`);
+  });
 }
 
 export function getProjectOperationalHealth(project, tasks = [], todayIso = getLocalIsoDate()) {

@@ -48,6 +48,29 @@ function taskRow(taskId, projectId) {
   };
 }
 
+function blankPdfBuffer() {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
+
 async function mockStaffBackend(page, {
   role,
   email,
@@ -58,8 +81,10 @@ async function mockStaffBackend(page, {
   subs = [],
   certificateRows = [],
   coverageRows = [],
+  warrantyRows = [],
   runtimeStatus = { writesFrozen: false, message: '', changedAt: '' },
   handleRpc = async () => null,
+  handleRest = async () => null,
 }) {
   const settings = {
     users: [{ id: appUserId, name: `${role} Browser User`, email, role }],
@@ -134,6 +159,16 @@ async function mockStaffBackend(page, {
       return;
     }
 
+    const restResponse = await handleRest({ request, url });
+    if (restResponse) {
+      await route.fulfill({
+        contentType: 'application/json',
+        ...restResponse,
+        body: JSON.stringify(restResponse.body),
+      });
+      return;
+    }
+
     let body = [];
     if (url.pathname.endsWith('/settings')) {
       body = [{ id: 'app_settings', data: settings, version: 1 }];
@@ -159,6 +194,8 @@ async function mockStaffBackend(page, {
       body = certificateRows;
     } else if (url.pathname.endsWith('/insurance_certificate_coverages')) {
       body = coverageRows;
+    } else if (url.pathname.endsWith('/project_warranty_items')) {
+      body = warrantyRows;
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -232,6 +269,149 @@ test('staff can review and discard one conflicted device copy', async ({ page })
   await confirmDialog.getByRole('button', { name: 'Discard' }).click();
   await expect(reviewDialog.getByText('No device-saved changes')).toBeVisible();
   await expect(page.getByText('device-saved change need attention')).toHaveCount(0);
+});
+
+test('staff task updates save on device offline and synchronize after reconnect', async ({ page, context }) => {
+  const appUserId = 'offline-task-editor';
+  const authUserId = '40000000-0000-4000-8000-000000000012';
+  const projectId = 'offline-task-project';
+  const taskId = 'offline-task-1';
+  let syncedTask = null;
+  await mockStaffBackend(page, {
+    role: 'Edit',
+    email: 'offline-task@example.test',
+    appUserId,
+    authUserId,
+    projects: [projectRow(projectId, appUserId)],
+    tasks: [taskRow(taskId, projectId)],
+    handleRpc: async ({ request, url }) => {
+      if (!url.pathname.endsWith('/rpc/save_task_with_attachments')) return null;
+      syncedTask = request.postDataJSON();
+      return {
+        status: 200,
+        body: { version: 2, normalizedVersions: { attachments: {} } },
+      };
+    },
+  });
+
+  await page.goto('/?tab=tasks');
+  const taskCard = page.locator('article.task-row-card').filter({ hasText: 'Existing staff task' });
+  await expect(taskCard).toBeVisible();
+  await context.setOffline(true);
+  await taskCard.locator('input[type="checkbox"]').check();
+  await expect(taskCard.getByText('Saved on device')).toBeVisible();
+
+  const queued = await page.evaluate((userId) => JSON.parse(
+    window.localStorage.getItem(`project-tracker:offline-operations:v1:${userId}`) || '[]',
+  ), authUserId);
+  expect(queued).toHaveLength(1);
+  expect(queued[0]).toMatchObject({
+    kind: 'task.save',
+    projectId,
+    entityId: taskId,
+    status: 'pending',
+    payload: { id: taskId, done: true },
+    expected: { version: 1, attachmentVersions: {} },
+  });
+
+  await context.setOffline(false);
+  await expect.poll(() => syncedTask).not.toBeNull();
+  expect(syncedTask).toMatchObject({
+    p_task_id: taskId,
+    p_task_data: { id: taskId, done: true },
+    p_expected_version: 1,
+    p_expected_attachment_versions: {},
+  });
+  await expect.poll(() => page.evaluate((userId) => JSON.parse(
+    window.localStorage.getItem(`project-tracker:offline-operations:v1:${userId}`) || '[]',
+  ).length, authUserId)).toBe(0);
+});
+
+test('staff warranty updates save on device offline and synchronize after reconnect', async ({ page, context }) => {
+  const appUserId = 'offline-warranty-editor';
+  const authUserId = '40000000-0000-4000-8000-000000000013';
+  const projectId = 'offline-warranty-project';
+  const warrantyId = 'offline-warranty-1';
+  const warrantyRow = {
+    id: warrantyId,
+    project_id: projectId,
+    item_number: 'WAR-001',
+    title: 'Original punch item',
+    status: 'open',
+    data: {
+      id: warrantyId,
+      projectId,
+      number: 'WAR-001',
+      title: 'Original punch item',
+      status: 'open',
+      category: 'Interior',
+      priority: 'normal',
+      attachments: [],
+    },
+    version: 1,
+    created_at: '2026-08-04T12:00:00.000Z',
+    updated_at: '2026-08-04T12:00:00.000Z',
+  };
+  let syncedWarranty = null;
+  await mockStaffBackend(page, {
+    role: 'Edit',
+    email: 'offline-warranty@example.test',
+    appUserId,
+    authUserId,
+    projects: [projectRow(projectId, appUserId)],
+    warrantyRows: [warrantyRow],
+    handleRest: async ({ request, url }) => {
+      if (!url.pathname.endsWith('/project_warranty_items') || request.method() !== 'PATCH') return null;
+      syncedWarranty = request.postDataJSON();
+      return {
+        status: 200,
+        body: [{
+          ...warrantyRow,
+          title: syncedWarranty.title,
+          status: syncedWarranty.status,
+          data: syncedWarranty.data,
+          version: 2,
+          updated_at: '2026-08-04T13:00:00.000Z',
+        }],
+      };
+    },
+  });
+
+  await page.goto('/?tab=projects');
+  await page.getByRole('button', { name: 'Staff Test Project', exact: true }).click();
+  await page.getByRole('tab', { name: 'Warranty & Closeout' }).click();
+  await expect(page.getByText('WAR-001 · Original punch item')).toBeVisible();
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Edit WAR-001' }).click();
+  const editor = page.getByRole('heading', { name: 'Edit warranty item' }).locator('xpath=ancestor::section[1]');
+  await editor.getByLabel('Title').fill('Updated device punch item');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved on device')).toBeVisible();
+
+  const queued = await page.evaluate((userId) => JSON.parse(
+    window.localStorage.getItem(`project-tracker:offline-operations:v1:${userId}`) || '[]',
+  ), authUserId);
+  expect(queued).toHaveLength(1);
+  expect(queued[0]).toMatchObject({
+    kind: 'warranty-item.save',
+    projectId,
+    entityId: warrantyId,
+    status: 'pending',
+    payload: { id: warrantyId, title: 'Updated device punch item', version: 1 },
+    expected: { version: 1 },
+  });
+
+  await context.setOffline(false);
+  await expect.poll(() => syncedWarranty).not.toBeNull();
+  expect(syncedWarranty).toMatchObject({
+    id: warrantyId,
+    project_id: projectId,
+    title: 'Updated device punch item',
+    data: { id: warrantyId, title: 'Updated device punch item' },
+  });
+  await expect.poll(() => page.evaluate((userId) => JSON.parse(
+    window.localStorage.getItem(`project-tracker:offline-operations:v1:${userId}`) || '[]',
+  ).length, authUserId)).toBe(0);
 });
 
 test('administrator creates a project through the versioned mutation boundary', async ({ page }) => {
@@ -360,6 +540,89 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
   const alert = page.getByRole('dialog', { name: 'Save failed' });
   await expect(alert).toContainText('This record was changed by someone else.', { timeout: 20_000 });
   await expect(alert).toContainText('Refresh data, review the latest changes, and try again.');
+});
+
+test('Takeoff drawing shapes support constrained geometry and editable styles', async ({ page }) => {
+  const appUserId = 'takeoff-drawing-editor';
+  const projectId = 'takeoff-drawing-project';
+  await mockStaffBackend(page, {
+    role: 'Edit',
+    email: 'takeoff-drawing@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000012',
+    projects: [projectRow(projectId, appUserId)],
+  });
+
+  await page.goto(`/?tab=projects&project=${projectId}`);
+  await page.getByRole('tab', { name: 'Takeoff', exact: true }).click();
+  await page.locator('#pdfInput').setInputFiles({
+    name: 'blank-plan.pdf',
+    mimeType: 'application/pdf',
+    buffer: blankPdfBuffer(),
+  });
+  await expect(page.locator('#pageLabel')).toHaveText('Page 1 / 1');
+
+  await page.locator('[data-tool="rectangle"]').click();
+  const overlay = page.locator('#measureOverlay');
+  let box = await overlay.boundingBox();
+  expect(box).toBeTruthy();
+  const start = { x: box.x + 120, y: box.y + 120 };
+  const end = { x: box.x + 230, y: box.y + 180 };
+  await page.keyboard.down('Shift');
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+
+  const rectangle = page.locator('.markup-shape');
+  await expect(rectangle).toHaveCount(1);
+  const width = Number(await rectangle.getAttribute('width'));
+  const height = Number(await rectangle.getAttribute('height'));
+  expect(Math.abs(width - height)).toBeLessThan(0.1);
+
+  await page.locator('[data-tool="select"]').click();
+  await page.locator('.markup-shape-hit').click();
+  await expect(page.locator('.drawing-edit-handle')).toHaveCount(2);
+  const resizeHandle = page.getByRole('button', { name: 'Resize Rectangle point 2' });
+  const handleBox = await resizeHandle.boundingBox();
+  expect(handleBox).toBeTruthy();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 25, handleBox.y + handleBox.height / 2 + 15, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => Number(await rectangle.getAttribute('width'))).toBeGreaterThan(width);
+  await page.locator('#markupThickness').fill('7');
+  await page.locator('#markupThickness').press('Tab');
+  await expect(rectangle).toHaveAttribute('stroke-width', '7');
+  box = await overlay.boundingBox();
+  expect(box).toBeTruthy();
+
+  await page.locator('[data-tool="oval"]').click();
+  await page.keyboard.down('Shift');
+  await page.mouse.move(box.x + 280, box.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 350, box.y + 170, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const oval = page.locator('ellipse.markup-shape');
+  await expect(oval).toHaveCount(1);
+  expect(Math.abs(Number(await oval.getAttribute('rx')) - Number(await oval.getAttribute('ry')))).toBeLessThan(0.1);
+
+  await page.locator('[data-tool="line"]').click();
+  await page.mouse.move(box.x + 280, box.y + 250);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 380, box.y + 290, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator('polyline.markup-path')).toHaveCount(1);
+
+  await page.locator('[data-tool="multiline"]').click();
+  await page.mouse.click(box.x + 300, box.y + 160);
+  await page.mouse.click(box.x + 360, box.y + 210);
+  await page.mouse.click(box.x + 420, box.y + 170);
+  await page.locator('#finishMeasure').click();
+  await expect(page.locator('polyline.markup-path')).toHaveCount(2);
+  await expect(page.locator('#statusText')).toHaveText('Connected lines added.');
 });
 
 test('administrator creates a subcontractor insurance certificate without project scope', async ({ page }) => {

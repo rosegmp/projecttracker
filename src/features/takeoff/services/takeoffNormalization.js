@@ -49,6 +49,7 @@ export function splitTakeoffSnapshot(snapshot = {}) {
       type: String(markup?.type || ''),
       text: String(markup?.text || ''),
       color: String(markup?.color || ''),
+      line_width: Math.min(24, Math.max(1, Number(markup?.thickness) || 3)),
       points: Array.isArray(markup?.points) ? markup.points : [],
       source_created_at: markup?.createdAt || null,
     })).filter((markup) => markup.id),
@@ -81,6 +82,7 @@ export function hydrateNormalizedTakeoff(snapshot = {}, sheets = [], measurement
       type: String(markup?.type || ''),
       ...(markup?.text ? { text: String(markup.text) } : {}),
       color: String(markup?.color || ''),
+      thickness: Math.min(24, Math.max(1, Number(markup?.line_width) || 3)),
       points: Array.isArray(markup?.points) ? markup.points : [],
       ...(markup?.source_created_at ? { createdAt: markup.source_created_at } : {}),
     }))
