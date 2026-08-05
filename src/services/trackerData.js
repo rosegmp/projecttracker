@@ -2736,7 +2736,8 @@ export async function loadAuditEvents({ limit = 50, beforeId = null, projectId =
 }
 
 function queueProjectNotification(currentState, event) {
-  if (currentState?.storageMode !== 'supabase' || !event?.projectId || typeof window === 'undefined') return;
+  const projectlessTaskCreation = event?.kind === 'task-created' && !!event?.entityId;
+  if (currentState?.storageMode !== 'supabase' || (!event?.projectId && !projectlessTaskCreation) || typeof window === 'undefined') return;
   void import('../utils/androidPushNotifications.js')
     .then(({ sendProjectPushNotification }) => sendProjectPushNotification(event))
     .catch(() => console.warn('The project change was saved, but live notification delivery failed.'));
@@ -2761,12 +2762,13 @@ function assignedAppUserIds(settings, task) {
 
 function taskNotificationEvent(currentState, previousTask, nextTask, kind) {
   const project = currentState.projects?.find((item) => item.id === nextTask?.projectId);
-  if (!nextTask?.projectId || !project) return null;
-  const projectName = project.name || 'Project';
+  if (nextTask?.projectId && !project) return null;
+  if (!nextTask?.projectId && kind !== 'task-created') return null;
+  const projectName = project?.name || 'General tasks';
   const assigneesChanged = JSON.stringify(previousTask?.assignees || []) !== JSON.stringify(nextTask.assignees || []);
   const eventKind = kind === 'task-created' ? kind : assigneesChanged ? 'task-assigned' : 'task-updated';
   return {
-    projectId: nextTask.projectId,
+    projectId: nextTask.projectId || '',
     kind: eventKind,
     entityId: nextTask.id,
     title: eventKind === 'task-created' ? `New task · ${projectName}` : eventKind === 'task-assigned' ? `Task assignment · ${projectName}` : `Task updated · ${projectName}`,

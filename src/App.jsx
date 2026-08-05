@@ -197,8 +197,8 @@ function syncTabToLocation(tab, { push = false } = {}) {
     if (tab !== 'projects') {
       url.searchParams.delete('project');
       url.searchParams.delete('projectTab');
-      url.searchParams.delete('task');
     }
+    if (tab !== 'projects' && tab !== 'tasks') url.searchParams.delete('task');
   }, { push });
 }
 
@@ -522,6 +522,16 @@ export default function App() {
       allowedTabs: base.allowedTabs.filter((tabId) => configuredTabs.has(tabId)),
     };
   }, [activeUser?.role, runtimeStatus.writesFrozen, trackerState.settings?.visibleTopLevelTabs]);
+
+  useEffect(() => {
+    if (loading || activeTab !== 'tasks') return;
+    const taskId = getTaskIdFromLocation();
+    if (!taskId) return;
+    const linkedTask = (trackerState.tasks || []).find((task) => task.id === taskId);
+    if (!linkedTask) return;
+    setSessionProjectFilter(linkedTask.projectId || 'all');
+    setTaskHighlightRequest({ taskId, token: `deep-link-${taskId}` });
+  }, [activeTab, loading, trackerState.tasks]);
 
   const offlineReviewOperations = getOfflineOperations(String(authSession?.user?.id || ''));
 
@@ -932,12 +942,12 @@ export default function App() {
       const session = await signInWithPassword(email, password);
       const linkedProjectId = getProjectIdFromLocation();
       const linkedTaskId = getTaskIdFromLocation();
-      const hasTaskDeepLink = !!linkedProjectId && !!linkedTaskId;
-      setProjectNavigationTarget(hasTaskDeepLink
+      const hasTaskDeepLink = !!linkedTaskId;
+      setProjectNavigationTarget(hasTaskDeepLink && linkedProjectId
         ? { projectId: linkedProjectId, detailTab: 'tasks', taskId: linkedTaskId, token: `${Date.now()}` }
         : null);
       setSessionProjectFilter('all');
-      setActiveTab(hasTaskDeepLink ? 'projects' : 'home');
+      setActiveTab(hasTaskDeepLink ? (linkedProjectId ? 'projects' : 'tasks') : 'home');
       setAuthSession(session);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Sign-in failed.');
