@@ -2,6 +2,14 @@
 
 Updated: 2026-08-05
 
+## Current checkpoint: task links in assignment emails
+
+- New-task assignment emails now include the exact task URL in plain text and an **Open task in Destiny Project Hub** link in HTML.
+- The link uses the existing production host and a new authorized deep-link contract: `?tab=projects&project=<project-id>&projectTab=tasks&task=<task-id>`. Signed-in recipients open the project Tasks tab with the task highlighted; an explicit task link is preserved through sign-in, while ordinary sign-ins still start on Home.
+- Changing away from the linked project or Tasks subtab removes the stale task parameter. Project and task visibility remain enforced by the existing authenticated data and authorization boundaries.
+- Local verification passes all 147 regression tests, the focused signed-in task-link Playwright journey, the 694-module production build, Edge Function TypeScript parsing through esbuild, and `git diff --check`. No live task or email was created during validation.
+- On 2026-08-05, the updated `send-project-notification` function was deployed and confirmed **ACTIVE version 10** with JWT verification enabled. No task or email was created during deployment; the web deep-link client remains in the CI-gated release flow.
+
 ## Task-assignment email switch fix
 
 - Production feedback showed both Settings → Notifications assignment-email checkboxes remained visually unchecked after selection.

@@ -201,6 +201,26 @@ async function mockStaffBackend(page, {
   });
 }
 
+test('task deep link opens the authorized project task and highlights it', async ({ page }) => {
+  const appUserId = 'task-link-admin';
+  const projectId = 'task-link-project';
+  const taskId = 'task-link-task';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'task-link-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000009',
+    projects: [projectRow(projectId, appUserId)],
+    tasks: [taskRow(taskId, projectId)],
+  });
+
+  await page.goto(`/?tab=projects&project=${projectId}&projectTab=tasks&task=${taskId}`);
+
+  await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveAttribute('aria-selected', 'true');
+  const linkedTask = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
+  await expect(linkedTask).toHaveClass(/highlighted/);
+});
+
 test('maintenance mode keeps staff workspace readable and disables project changes', async ({ page }) => {
   const appUserId = 'maintenance-admin';
   await mockStaffBackend(page, {

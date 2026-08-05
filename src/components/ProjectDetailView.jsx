@@ -170,8 +170,16 @@ export default function ProjectDetailView({
     updateCurrentUrl((url) => {
       if (String(url.searchParams.get('project') || '').trim() !== String(project.id || '').trim()) return;
       url.searchParams.set('projectTab', activeDetailTab);
+      if (activeDetailTab !== 'tasks') url.searchParams.delete('task');
     });
   }, [activeDetailTab, project.id, visibleProjectTabIds]);
+
+  useEffect(() => {
+    if (activeDetailTab !== 'tasks') return;
+    const taskId = String(getSearchParam('task') || '').trim();
+    if (!taskId || !(tasks || []).some((task) => task.id === taskId && task.projectId === project.id)) return;
+    setTaskHighlightRequest({ taskId, token: `deep-link-${project.id}-${taskId}` });
+  }, [activeDetailTab, project.id, tasks]);
 
   useEffect(() => {
     let cancelled = false;

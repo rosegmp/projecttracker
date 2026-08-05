@@ -150,15 +150,28 @@ function escapeHtml(value: unknown) {
     .replaceAll("'", '&#39;');
 }
 
+function buildTaskDeepLink(projectId: string, taskId: string) {
+  const url = new URL('https://projecthub.destinyhomesnj.com/');
+  url.searchParams.set('tab', 'projects');
+  url.searchParams.set('project', projectId);
+  url.searchParams.set('projectTab', 'tasks');
+  url.searchParams.set('task', taskId);
+  return url.toString();
+}
+
 async function sendTaskAssignmentEmails({
   recipients,
   eventId,
+  projectId,
+  taskId,
   projectName,
   taskLabel,
   due,
 }: {
   recipients: Array<{ email: string; name: string }>;
   eventId: string;
+  projectId: string;
+  taskId: string;
   projectName: string;
   taskLabel: string;
   due: string;
@@ -169,9 +182,10 @@ async function sendTaskAssignmentEmails({
   if (!apiKey || !from) return { sent: 0, failed: recipients.length, status: 'unconfigured' };
   const subject = `New task assignment · ${projectName}`.slice(0, 240);
   const dueLine = due ? `Due: ${due}` : 'Due date: Not set';
+  const taskUrl = buildTaskDeepLink(projectId, taskId);
   const results = await Promise.all(recipients.map(async (recipient, index) => {
-    const text = `Hello ${recipient.name},\n\nYou were assigned a new task in ${projectName}.\n\nTask: ${taskLabel}\n${dueLine}\n\nOpen Destiny Project Hub to review the task.`;
-    const html = `<p>Hello ${escapeHtml(recipient.name)},</p><p>You were assigned a new task in <strong>${escapeHtml(projectName)}</strong>.</p><p><strong>Task:</strong> ${escapeHtml(taskLabel)}<br><strong>${escapeHtml(dueLine)}</strong></p><p>Open Destiny Project Hub to review the task.</p>`;
+    const text = `Hello ${recipient.name},\n\nYou were assigned a new task in ${projectName}.\n\nTask: ${taskLabel}\n${dueLine}\n\nOpen task: ${taskUrl}`;
+    const html = `<p>Hello ${escapeHtml(recipient.name)},</p><p>You were assigned a new task in <strong>${escapeHtml(projectName)}</strong>.</p><p><strong>Task:</strong> ${escapeHtml(taskLabel)}<br><strong>${escapeHtml(dueLine)}</strong></p><p><a href="${escapeHtml(taskUrl)}">Open task in Destiny Project Hub</a></p>`;
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -330,6 +344,8 @@ Deno.serve(async (request) => {
     const emailResult = await sendTaskAssignmentEmails({
       recipients: taskEmailRecipients,
       eventId,
+      projectId,
+      taskId: entityId,
       projectName: String(project.data?.name || 'Project').slice(0, 160),
       taskLabel,
       due: taskDue,
