@@ -362,4 +362,15 @@ test('administrator project-tab settings hide project sections and preserve requ
   await expect(projectNavigation.getByRole('checkbox', { name: /Overview/ })).toBeDisabled();
   await expect(projectNavigation.getByRole('checkbox', { name: /Tasks/ })).toBeChecked();
   await expect(projectNavigation.getByRole('checkbox', { name: /Calendar/ })).not.toBeChecked();
+
+  await page.getByRole('tab', { name: 'Notifications' }).click();
+  const assignmentEmails = page.getByRole('heading', { name: 'New task assignment emails' }).locator('xpath=ancestor::section[1]');
+  const internalEmailToggle = assignmentEmails.getByRole('checkbox', { name: /Employees and administrators/ });
+  const externalEmailToggle = assignmentEmails.getByRole('checkbox', { name: /Subcontractors and suppliers/ });
+  await expect(internalEmailToggle).not.toBeChecked();
+  await expect(externalEmailToggle).not.toBeChecked();
+  await internalEmailToggle.check();
+  await externalEmailToggle.check();
+  await expect(internalEmailToggle).toBeChecked();
+  await expect(externalEmailToggle).toBeChecked();
 });

@@ -45,7 +45,7 @@ function getLinkedPersonName(person, role) {
   return contactName || companyName || 'Unnamed customer';
 }
 
-function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal, onToggle }) {
+function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal, status, onToggle }) {
   return (
     <section className="settings-card task-assignment-email-settings">
       <div className="settings-card-header">
@@ -58,7 +58,7 @@ function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal,
         <input
           type="checkbox"
           checked={settings.emailNewTasksToInternalAssignees === true}
-          onChange={(event) => onToggle('emailNewTasksToInternalAssignees', event.target.checked)}
+          onChange={(event) => void onToggle('emailNewTasksToInternalAssignees', event.target.checked)}
           disabled={savingInternal}
         />
         <span>
@@ -70,7 +70,7 @@ function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal,
         <input
           type="checkbox"
           checked={settings.emailNewTasksToExternalAssignees === true}
-          onChange={(event) => onToggle('emailNewTasksToExternalAssignees', event.target.checked)}
+          onChange={(event) => void onToggle('emailNewTasksToExternalAssignees', event.target.checked)}
           disabled={savingExternal}
         />
         <span>
@@ -79,6 +79,11 @@ function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal,
         </span>
       </label>
       <p className="panel-copy">Delivery uses the secured server email service. Task creation still succeeds if email delivery is temporarily unavailable.</p>
+      {status?.message ? (
+        <p className={status.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">
+          {status.message}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -252,6 +257,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [activeSettingsSection, setActiveSettingsSection] = useState('scheduling');
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState({ tone: '', message: '' });
+  const [taskAssignmentEmailDraft, setTaskAssignmentEmailDraft] = useState(() => ({
+    emailNewTasksToInternalAssignees: data.settings?.emailNewTasksToInternalAssignees === true,
+    emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
+  }));
+  const [taskAssignmentEmailStatus, setTaskAssignmentEmailStatus] = useState({ tone: '', message: '' });
   const [notificationPermission, setNotificationPermission] = useState('');
   const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
@@ -292,6 +302,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         showCalendarPhases: data.settings?.showCalendarPhases !== false,
         showCalendarHebrewDates: data.settings?.showCalendarHebrewDates === true,
         showPageStats: data.settings?.showPageStats !== false,
+        emailNewTasksToInternalAssignees: data.settings?.emailNewTasksToInternalAssignees === true,
+        emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
         visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
         visibleProjectTabs: normalizeVisibleProjectTabs(data.settings?.visibleProjectTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
@@ -385,6 +397,16 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     setNotificationDraft(getAndroidNotificationPreferences(activeUser?.id));
     setNotificationStatus({ tone: '', message: '' });
   }, [activeUser?.id]);
+
+  useEffect(() => {
+    setTaskAssignmentEmailDraft({
+      emailNewTasksToInternalAssignees: data.settings?.emailNewTasksToInternalAssignees === true,
+      emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
+    });
+  }, [
+    data.settings?.emailNewTasksToInternalAssignees,
+    data.settings?.emailNewTasksToExternalAssignees,
+  ]);
 
   useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
@@ -524,8 +546,20 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     runSettingsMutation({ [field]: value });
   }
 
-  function handleTaskAssignmentEmailToggle(field, value) {
-    runSettingsMutation({ [field]: value }, ['settings', 'taskAssignmentEmail', field]);
+  async function handleTaskAssignmentEmailToggle(field, value) {
+    setTaskAssignmentEmailDraft((current) => ({ ...current, [field]: value }));
+    setTaskAssignmentEmailStatus({ tone: '', message: 'Saving assignment email preference…' });
+    try {
+      await runSettingsMutation({ [field]: value }, ['settings', 'taskAssignmentEmail', field]);
+      setTaskAssignmentEmailStatus({ tone: 'success', message: 'Assignment email preference saved.' });
+    } catch (error) {
+      const savedValue = settingsStateRef.current.settings?.[field] === true;
+      setTaskAssignmentEmailDraft((current) => ({ ...current, [field]: savedValue }));
+      setTaskAssignmentEmailStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to save the assignment email preference.',
+      });
+    }
   }
 
   function handleSchedulingDraftToggle(field, value) {
@@ -1468,9 +1502,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
             </div>
             <div className="settings-grid settings-grid-single">
               <TaskAssignmentEmailSettings
-                settings={settings}
+                settings={taskAssignmentEmailDraft}
                 savingInternal={internalTaskEmailSaving}
                 savingExternal={externalTaskEmailSaving}
+                status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
               />
               <section className="settings-card android-notification-settings">
@@ -1583,9 +1618,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
             </div>
             <div className="settings-grid settings-grid-single">
               <TaskAssignmentEmailSettings
-                settings={settings}
+                settings={taskAssignmentEmailDraft}
                 savingInternal={internalTaskEmailSaving}
                 savingExternal={externalTaskEmailSaving}
+                status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
               />
               <section className="settings-card settings-platform-notice">

@@ -2,6 +2,13 @@
 
 Updated: 2026-08-05
 
+## Task-assignment email switch fix
+
+- Production feedback showed both Settings → Notifications assignment-email checkboxes remained visually unchecked after selection.
+- Root cause: `NativeSettingsView` persisted the two settings correctly but omitted them from its memoized display model, so the controlled checkbox `checked` props always received `false`.
+- The bounded fix adds both booleans to the display model, updates each switch optimistically while its save is pending, reports successful saves, and visibly rolls back with an error if persistence fails.
+- The focused signed-in Administrator browser journey now selects both switches and verifies that each remains checked. All 147 regression tests, the 694-module production build, the production dependency audit with zero vulnerabilities, and `git diff --check` pass. No production setting was changed and no email was sent by the regression.
+
 ## Working copy
 
 - Use `C:\Dev\Project Tracker` for Project Tracker work. Do not use the archived OneDrive copy.
