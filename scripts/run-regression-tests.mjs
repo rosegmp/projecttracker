@@ -1389,13 +1389,15 @@ const tests = [
   {
     name: 'new task assignment emails use separate internal and external settings with server-side recipient enforcement',
     async run() {
-      const [settingsSource, trackerSource, pushSource, functionSource, tasksSource, scheduleSource] = await Promise.all([
+      const [settingsSource, trackerSource, pushSource, functionSource, tasksSource, scheduleSource, appSource, projectDetailSource] = await Promise.all([
         readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/utils/androidPushNotifications.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
       ]);
 
       assert.match(settingsSource, /New task assignment emails/);
@@ -1418,6 +1420,13 @@ const tests = [
       assert.match(functionSource, /TASK_ASSIGNMENT_EMAIL_FROM/);
       assert.match(functionSource, /https:\/\/api\.resend\.com\/emails/);
       assert.match(functionSource, /'Idempotency-Key'/);
+      assert.match(functionSource, /buildTaskDeepLink/);
+      assert.match(functionSource, /url\.searchParams\.set\('projectTab', 'tasks'\)/);
+      assert.match(functionSource, /Open task in Destiny Project Hub/);
+      assert.match(appSource, /getTaskIdFromLocation/);
+      assert.match(appSource, /hasTaskDeepLink \? 'projects' : 'home'/);
+      assert.match(projectDetailSource, /getSearchParam\('task'\)/);
+      assert.match(projectDetailSource, /deep-link-\$\{project\.id\}-\$\{taskId\}/);
       assert.match(tasksSource, /sendAssignmentNotifications: false/);
       assert.match(scheduleSource, /sendAssignmentNotifications: false/);
     },

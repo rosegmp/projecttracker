@@ -186,6 +186,10 @@ function getProjectIdFromLocation() {
   return String(getSearchParam('project') || '').trim();
 }
 
+function getTaskIdFromLocation() {
+  return String(getSearchParam('task') || '').trim();
+}
+
 function syncTabToLocation(tab, { push = false } = {}) {
   if (!validTabIds.has(tab)) return;
   updateCurrentUrl((url) => {
@@ -193,6 +197,7 @@ function syncTabToLocation(tab, { push = false } = {}) {
     if (tab !== 'projects') {
       url.searchParams.delete('project');
       url.searchParams.delete('projectTab');
+      url.searchParams.delete('task');
     }
   }, { push });
 }
@@ -205,6 +210,7 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
     else url.searchParams.delete('project');
     if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
       url.searchParams.delete('projectTab');
+      url.searchParams.delete('task');
     }
   }, { push });
 }
@@ -924,9 +930,14 @@ export default function App() {
     try {
       const { signInWithPassword } = await loadTrackerDataModule();
       const session = await signInWithPassword(email, password);
-      setProjectNavigationTarget(null);
+      const linkedProjectId = getProjectIdFromLocation();
+      const linkedTaskId = getTaskIdFromLocation();
+      const hasTaskDeepLink = !!linkedProjectId && !!linkedTaskId;
+      setProjectNavigationTarget(hasTaskDeepLink
+        ? { projectId: linkedProjectId, detailTab: 'tasks', taskId: linkedTaskId, token: `${Date.now()}` }
+        : null);
       setSessionProjectFilter('all');
-      setActiveTab('home');
+      setActiveTab(hasTaskDeepLink ? 'projects' : 'home');
       setAuthSession(session);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Sign-in failed.');
