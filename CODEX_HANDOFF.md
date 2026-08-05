@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-08-04
+Updated: 2026-08-05
 
 ## Working copy
 
@@ -46,7 +46,7 @@ Updated: 2026-08-04
 - Focused verification passes all 146 regression tests, the 694-module production Vite build, and `git diff --check`. No Playwright suite, Capacitor sync, Gradle/APK build, commit, push, deployment, or remote migration was run for this checkpoint.
 - The working tree still includes the pre-existing uncommitted Takeoff drawing tools and offline task/warranty changes; those edits were preserved. Action Center work is limited to `src/components/NativeHomeView.jsx`, `src/utils/homeView.js`, `src/styles.css`, the shared regression runner, and this handoff.
 
-### Implemented local checkpoint: automatic new-task assignment emails
+### Automatic new-task assignment emails: backend activated, client release in progress
 
 - **Settings → Notifications** now contains two independent, Administrator-persisted switches: **Employees and administrators** and **Subcontractors and suppliers**. Both default off and are stored in the existing versioned `app_settings` JSON, so no database migration is required.
 - After a new task save succeeds, the existing authorized `send-project-notification` Edge Function re-reads the saved task, normalized task assignments, app settings, app users, and normalized People rows. It never trusts client-supplied recipients or task content for email delivery.
@@ -54,7 +54,9 @@ Updated: 2026-08-04
 - Each recipient receives an individual Resend API request with an event-scoped idempotency key, plain-text and escaped HTML bodies, project/task/due-date context, and no disclosure of other recipients. Required function secrets are `RESEND_API_KEY` and a verified `TASK_ASSIGNMENT_EMAIL_FROM` sender.
 - Task creation remains authoritative if notification delivery is unavailable. Task updates do not send these emails, and undo-restored tasks explicitly suppress creation notifications so restoration cannot resend an assignment email.
 - Local verification passes all 147 regression tests, the 694-module production Vite build, JavaScript syntax checks, Edge Function TypeScript parsing through esbuild, and `git diff --check`. The in-app browser-control runtime and Deno are unavailable in this session, so a signed-in visual smoke test and Deno type check were not run.
-- This checkpoint is local only. The Edge Function was not deployed, no Resend secrets were configured, neither setting was enabled, no task/email was created or sent, and no commit, push, remote migration, Capacitor sync, Gradle/APK build, or deployment was performed.
+- The verified Resend sender and required Supabase secrets were configured by the repository owner. On 2026-08-05, `send-project-notification` was deployed to production and confirmed **ACTIVE version 9** with JWT verification enabled. No live task or email was created during deployment, and both settings remain default-off until an Administrator enables them.
+- Production migration parity was confirmed through `20260804180000`; the Takeoff drawing-shapes migration was already present remotely, so this release required no additional database write.
+- Release commit `05dcd0a` contains the complete approved batch: Unified Action Center, task-assignment email settings/delivery, offline task and warranty synchronization, and Takeoff drawing tools. Local validation passed all 147 regression tests, all 16 Playwright journeys, the 694-module production build, production dependency audit with zero vulnerabilities, JavaScript syntax checks, and `git diff --check`. The web client is proceeding through the CI-gated `main`/Netlify release flow; Android will be validated by the repository CI build rather than a local full APK build.
 
 ## Completed priority: Recommendation roadmap #1 — automated testing
 
