@@ -1755,6 +1755,7 @@ const tests = [
       assert.match(ciWorkflowSource, /VITE_SUPABASE_KEY: \$\{\{ secrets\.VITE_SUPABASE_KEY \}\}/);
       assert.match(ciWorkflowSource, /Supabase Android client configuration is missing/);
       assert.match(ciWorkflowSource, /if \[ -z "\$VITE_SUPABASE_URL" \] \|\| \[ -z "\$VITE_SUPABASE_KEY" \]/);
+      assert.match(ciWorkflowSource, /workflow_dispatch:/);
     },
   },
   {
