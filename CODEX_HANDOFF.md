@@ -61,6 +61,7 @@ Updated: 2026-08-06
 - Repository secret names `VITE_SUPABASE_URL` and `VITE_SUPABASE_KEY` were confirmed present in GitHub on 2026-08-06; their values were not read or exposed.
 - The Android CI web-build step now injects only those two repository secrets and fails before Vite/Capacitor/Gradle work if either value is empty. A regression assertion guards both secret references and the fail-fast condition so CI cannot silently publish another unconfigured APK.
 - Local verification passes all 154 regression tests, the 697-module production Vite build, and `git diff --check`. The workflow correction remains local and uncommitted on `agent/global-search`; no CI run or replacement APK exists until the change is committed through the protected-branch PR flow.
+- Release commit `c5c83c4` is pushed on `agent/global-search` and ready PR #18 targets protected `main`. The PR combines the complete reviewed Global Search batch with the Android Supabase build correction; required CI, merge, production publication, and replacement-APK inspection remain in progress.
 
 ## Production release: Unified Action Center
 
