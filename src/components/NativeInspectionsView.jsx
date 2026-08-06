@@ -29,6 +29,8 @@ export default function NativeInspectionsView({
   projectFilter = 'all',
   onProjectFilterChange = () => {},
   createRequest = null,
+  highlightInspectionId = '',
+  highlightToken = '',
   embedded = false,
 }) {
   const [inspectionDraft, setInspectionDraft] = useState(null);
@@ -38,6 +40,8 @@ export default function NativeInspectionsView({
   const [, setOfflineRevision] = useState(0);
   const previewUrlsRef = useRef({});
   const lastCreateRequestTokenRef = useRef('');
+  const inspectionCardRefs = useRef({});
+  const [activeHighlightInspectionId, setActiveHighlightInspectionId] = useState('');
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
   const offlineOperations = getOfflineOperations(offlineUserId, { kind: 'inspection.save' });
@@ -227,6 +231,21 @@ export default function NativeInspectionsView({
     lastCreateRequestTokenRef.current = token;
     startCreate();
   }, [createRequest, readOnly]);
+
+  useEffect(() => {
+    if (!highlightInspectionId) return undefined;
+    setActiveHighlightInspectionId(highlightInspectionId);
+    const scrollTimer = window.setTimeout(() => {
+      inspectionCardRefs.current[highlightInspectionId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+    const clearTimer = window.setTimeout(() => {
+      setActiveHighlightInspectionId((current) => current === highlightInspectionId ? '' : current);
+    }, 2600);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightInspectionId, highlightToken]);
 
   function startEdit(inspection) {
     const inspectionProjectId = selectedProject?.id || inspection.projectId || '';
@@ -635,7 +654,14 @@ export default function NativeInspectionsView({
                   {inspections.map((inspection) => {
                     const operation = offlineOperationByRecord.get(`${selectedProject?.id || inspection.projectId}:${inspection.id}`);
                     return (
-                    <article key={inspection.id} className={`inspection-card inspection-${inspection.status}${inspection._offlineDeleted ? ' offline-delete-pending' : ''}`}>
+                    <article
+                      key={inspection.id}
+                      ref={(node) => {
+                        if (node) inspectionCardRefs.current[inspection.id] = node;
+                        else delete inspectionCardRefs.current[inspection.id];
+                      }}
+                      className={`inspection-card inspection-${inspection.status}${inspection._offlineDeleted ? ' offline-delete-pending' : ''}${activeHighlightInspectionId === inspection.id ? ' highlighted' : ''}`}
+                    >
                       <div className="inspection-card-header">
                         <div>
                           <p className="project-status">{inspection.status}</p>

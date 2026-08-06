@@ -302,7 +302,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
   );
 }
 
-export default function NativePeopleView({ data, onStateChange, refresh, loading }) {
+export default function NativePeopleView({ data, onStateChange, refresh, loading, navigationTarget = null }) {
   const [personType, setPersonType] = useState('sub');
   const [query, setQuery] = useState('');
   const [viewMode, setViewMode] = useState(() => {
@@ -318,6 +318,12 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(PEOPLE_VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+
+  useEffect(() => {
+    if (!navigationTarget?.personType) return;
+    setPersonType(navigationTarget.personType);
+    setQuery(String(navigationTarget.query || ''));
+  }, [navigationTarget]);
 
   const visibleSubs = useMemo(() => data.subs || [], [data.subs]);
   const employeeBackedPeople = useMemo(() => data.employees || [], [data.employees]);

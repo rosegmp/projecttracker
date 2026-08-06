@@ -20,6 +20,7 @@ export default function ProjectFilesManager({
   readOnly = false,
   forcedViewMode = '',
   hideViewToggle = false,
+  navigationTarget = null,
 }) {
   const nativeAndroid = isNativeAndroidApp();
   const [viewMode, setViewMode] = useState(forcedViewMode || 'cards');
@@ -32,7 +33,9 @@ export default function ProjectFilesManager({
   const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
   const [expandedFolders, setExpandedFolders] = useState({});
   const fileInputRefs = useRef({});
+  const fileRowRefs = useRef({});
   const dataRef = useRef(data);
+  const [highlightedFileId, setHighlightedFileId] = useState('');
 
   useEffect(() => {
     dataRef.current = data;
@@ -58,6 +61,32 @@ export default function ProjectFilesManager({
       setViewMode(forcedViewMode);
     }
   }, [forcedViewMode, viewMode]);
+
+  useEffect(() => {
+    if (navigationTarget?.detailTab !== 'files' || !navigationTarget.fileId) return;
+    if (navigationTarget.folderId) {
+      setExpandedFolders((current) => ({ ...current, [navigationTarget.folderId]: true }));
+    }
+    setHighlightedFileId(String(navigationTarget.fileId));
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!highlightedFileId) return undefined;
+    if (!flatFiles.some((file) => file.id === highlightedFileId)) {
+      setHighlightedFileId('');
+      return undefined;
+    }
+    const scrollTimer = window.setTimeout(() => {
+      fileRowRefs.current[highlightedFileId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedFileId((current) => (current === highlightedFileId ? '' : current));
+    }, 2400);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [flatFiles, highlightedFileId]);
 
   async function runFilesMutation(key, buildNextProject) {
     if (!project?.id) return;
@@ -854,7 +883,11 @@ export default function ProjectFilesManager({
                       {folder.files.map((file) => (
                         <div
                           key={file.id}
-                          className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                          className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
+                          ref={(node) => {
+                            if (node) fileRowRefs.current[file.id] = node;
+                            else delete fileRowRefs.current[file.id];
+                          }}
                           onDragOver={(event) => {
                             if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {
                               event.preventDefault();
@@ -952,7 +985,11 @@ export default function ProjectFilesManager({
                   {folder.files.map((file) => (
                     <div
                       key={file.id}
-                      className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}`}
+                      className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
+                      ref={(node) => {
+                        if (node) fileRowRefs.current[file.id] = node;
+                        else delete fileRowRefs.current[file.id];
+                      }}
                       role="treeitem"
                       onDragOver={(event) => {
                         if (dragItem?.type === 'file' && dragItem.folderId === folder.id) {

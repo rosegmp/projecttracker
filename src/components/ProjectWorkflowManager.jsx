@@ -159,11 +159,11 @@ export default function ProjectWorkflowManager({
   useEffect(() => { void loadRecords(); }, [offlineRevision, service, workflowType]);
 
   useEffect(() => {
-    if (daily || navigationTarget?.workflowType !== workflowType) return;
+    if (navigationTarget?.workflowType !== workflowType) return;
     setDraft(null);
     setMessage('');
     setHighlightedRecordId(String(navigationTarget.workflowItemId || ''));
-  }, [daily, navigationTarget, workflowType]);
+  }, [navigationTarget, workflowType]);
 
   useEffect(() => {
     if (!highlightedRecordId) return undefined;
