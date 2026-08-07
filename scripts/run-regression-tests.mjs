@@ -1784,7 +1784,8 @@ const tests = [
       assert.match(workflowSource, /ANDROID_RELEASE_KEY_ALIAS: \$\{\{ secrets\.ANDROID_RELEASE_KEY_ALIAS \}\}/);
       assert.match(workflowSource, /ANDROID_RELEASE_KEY_PASSWORD: \$\{\{ secrets\.ANDROID_RELEASE_KEY_PASSWORD \}\}/);
       assert.match(workflowSource, /assembleRelease/);
-      assert.match(workflowSource, /apksigner verify --verbose/);
+      assert.match(workflowSource, /APKSIGNER="\$ANDROID_SDK_ROOT\/build-tools\/36\.0\.0\/apksigner"/);
+      assert.match(workflowSource, /"\$APKSIGNER" verify --verbose/);
       assert.match(workflowSource, /Release APK is missing its Supabase project URL/);
       assert.match(workflowSource, /Release APK is missing its Supabase client key/);
       assert.match(workflowSource, /gh release create/);

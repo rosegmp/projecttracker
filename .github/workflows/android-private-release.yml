@@ -140,7 +140,12 @@ jobs:
             echo "::error::Signed release APK was not produced"
             exit 1
           fi
-          apksigner verify --verbose "$SOURCE_APK" > /dev/null
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "::error::Android APK signer was not installed at the expected SDK path"
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose "$SOURCE_APK" > /dev/null
 
           BUNDLED_JS="$RUNNER_TEMP/project-tracker-bundled.js"
           unzip -p "$SOURCE_APK" 'assets/public/assets/*.js' > "$BUNDLED_JS"
