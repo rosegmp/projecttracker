@@ -1400,8 +1400,12 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 3/);
-      assert.match(buildSource, /versionName "1\.2"/);
+      assert.match(buildSource, /versionCode 4/);
+      assert.match(buildSource, /versionName "1\.3\.0"/);
+      assert.match(buildSource, /signingConfigs \{/);
+      assert.match(buildSource, /signingConfig signingConfigs\.release/);
+      assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
+      assert.match(buildSource, /Release signing is not configured/);
       assert.match(adaptiveSource, /<foreground android:drawable="@mipmap\/ic_launcher_foreground"\/>/);
       assert.match(adaptiveSource, /<monochrome android:drawable="@mipmap\/ic_launcher_foreground"\/>/);
       assert.match(backgroundSource, /#444A80/);
@@ -1756,6 +1760,44 @@ const tests = [
       assert.match(ciWorkflowSource, /Supabase Android client configuration is missing/);
       assert.match(ciWorkflowSource, /if \[ -z "\$VITE_SUPABASE_URL" \] \|\| \[ -z "\$VITE_SUPABASE_KEY" \]/);
       assert.match(ciWorkflowSource, /workflow_dispatch:/);
+    },
+  },
+  {
+    name: 'private Android releases are signed verified and published from protected main',
+    async run() {
+      const [workflowSource, gitignoreSource, releaseGuideSource, signingSetupSource] = await Promise.all([
+        readFile(new URL('../.github/workflows/android-private-release.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.gitignore', import.meta.url), 'utf8'),
+        readFile(new URL('../ANDROID_PRIVATE_RELEASE.md', import.meta.url), 'utf8'),
+        readFile(new URL('./setup-android-release-signing.ps1', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(workflowSource, /workflow_dispatch:/);
+      assert.match(workflowSource, /environment: production/);
+      assert.match(workflowSource, /actions: read/);
+      assert.match(workflowSource, /contents: write/);
+      assert.match(workflowSource, /refs\/heads\/main/);
+      assert.match(workflowSource, /--commit "\$GITHUB_SHA"/);
+      assert.match(workflowSource, /exact main commit has not passed the complete push-triggered CI workflow/);
+      assert.match(workflowSource, /ANDROID_RELEASE_KEYSTORE_BASE64: \$\{\{ secrets\.ANDROID_RELEASE_KEYSTORE_BASE64 \}\}/);
+      assert.match(workflowSource, /ANDROID_RELEASE_STORE_PASSWORD: \$\{\{ secrets\.ANDROID_RELEASE_STORE_PASSWORD \}\}/);
+      assert.match(workflowSource, /ANDROID_RELEASE_KEY_ALIAS: \$\{\{ secrets\.ANDROID_RELEASE_KEY_ALIAS \}\}/);
+      assert.match(workflowSource, /ANDROID_RELEASE_KEY_PASSWORD: \$\{\{ secrets\.ANDROID_RELEASE_KEY_PASSWORD \}\}/);
+      assert.match(workflowSource, /assembleRelease/);
+      assert.match(workflowSource, /apksigner verify --verbose/);
+      assert.match(workflowSource, /Release APK is missing its Supabase project URL/);
+      assert.match(workflowSource, /Release APK is missing its Supabase client key/);
+      assert.match(workflowSource, /gh release create/);
+      assert.match(workflowSource, /retention-days: 90/);
+      assert.match(gitignoreSource, /^\*\.jks$/m);
+      assert.match(gitignoreSource, /^\*\.keystore$/m);
+      assert.match(releaseGuideSource, /GitHub Secrets are build inputs, not a recoverable backup/);
+      assert.match(releaseGuideSource, /will not install over a debug-signed build/);
+      assert.match(signingSetupSource, /must be stored outside the Git repository/);
+      assert.match(signingSetupSource, /Read-Host .* -AsSecureString/);
+      assert.match(signingSetupSource, /-storepass:env PROJECT_TRACKER_SIGNING_PASSWORD/);
+      assert.match(signingSetupSource, /gh secret set ANDROID_RELEASE_KEYSTORE_BASE64/);
+      assert.doesNotMatch(signingSetupSource, /Write-Output .*passwordValue/);
     },
   },
   {

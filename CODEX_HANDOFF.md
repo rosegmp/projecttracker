@@ -2,6 +2,13 @@
 
 Updated: 2026-08-07
 
+## Current priority: Private signed Android distribution
+
+- The Android app is versioned for the first private release as `versionCode 4` / `versionName 1.3.0`. Release Gradle tasks now fail closed unless all four signing inputs are present, while existing debug CI remains unchanged.
+- Manual workflow `.github/workflows/android-private-release.yml` runs only from protected `main` in the protected `production` environment. It requires a successful push-triggered CI run for the exact commit, rebuilds the configured Capacitor app, restores the signing key only in runner temporary storage, creates a signed release APK, verifies its Android signature and bundled Supabase client configuration without printing values, uploads a 90-day artifact, and creates a permanent release in the private GitHub repository.
+- `scripts/setup-android-release-signing.ps1` provides the one-time secure activation path. It refuses to store the permanent keystore inside Git, prompts for a password without placing it in command history, creates and verifies a 4096-bit/10,000-day JKS key, and writes the encoded keystore, alias, and passwords directly to GitHub's protected `production` environment. The operator must store the password first and preserve the keystore in at least two encrypted backup locations; GitHub Secrets are not recoverable backups.
+- The release workflow and signing configuration pass 155 regression tests, the 697-module production Vite build, Gradle configuration, the explicit unsigned-release rejection check, PowerShell parser validation, and `git diff --check`. No keystore or signing password has been created, stored, or exposed yet. Activation, protected PR/main CI, workflow execution, APK inspection, and tablet installation remain pending.
+
 ## Current priority: Recommendation 2 — Global Search and Quick Actions
 
 ### First bounded checkpoint: authorized client-side search
