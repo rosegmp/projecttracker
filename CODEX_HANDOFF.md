@@ -1,6 +1,6 @@
 # Project Tracker handoff
 
-Updated: 2026-08-06
+Updated: 2026-08-07
 
 ## Current priority: Recommendation 2 — Global Search and Quick Actions
 
@@ -61,7 +61,10 @@ Updated: 2026-08-06
 - Repository secret names `VITE_SUPABASE_URL` and `VITE_SUPABASE_KEY` were confirmed present in GitHub on 2026-08-06; their values were not read or exposed.
 - The Android CI web-build step now injects only those two repository secrets and fails before Vite/Capacitor/Gradle work if either value is empty. A regression assertion guards both secret references and the fail-fast condition so CI cannot silently publish another unconfigured APK.
 - Local verification passes all 154 regression tests, the 697-module production Vite build, and `git diff --check`. The workflow correction remains local and uncommitted on `agent/global-search`; no CI run or replacement APK exists until the change is committed through the protected-branch PR flow.
-- Release commit `c5c83c4` is pushed on `agent/global-search` and ready PR #18 targets protected `main`. The PR combines the complete reviewed Global Search batch with the Android Supabase build correction; required CI, merge, production publication, and replacement-APK inspection remain in progress.
+- Release commit `c5c83c4`, release-record commit `145a451`, and manual-CI fallback commit `7c31113` were merged through protected PR #18 as exact `main` commit `c0a2b022df12b900c8c77a358e1b6ff50467b84c` on 2026-08-07. The PR combines the complete reviewed Global Search batch with the Android Supabase build correction and the CI `workflow_dispatch` recovery trigger.
+- GitHub Actions experienced a critical service outage during the initial release attempt. The three required jobs on run `31128144859` were cancelled without executing; no checks were bypassed. After GitHub reported Actions operational, attempt 2 for the same run and exact head `7c31113` passed **Web build, tests, and audit**, **Supabase authorization tests**, and **Android sync and debug build**.
+- Exact-main CI run `31181051756` passed the same three protected jobs for merge commit `c0a2b02` and uploaded Android artifact `8994839925`, named `project-tracker-android-debug` (8,586,047-byte archive; expires 2026-08-21). Gated publisher run `31181241036` then published and locked the tested Netlify deploy for that exact commit.
+- The downloaded artifact contained `app-debug.apk` (10,933,594 bytes). A value-safe inspection of all 53 bundled JavaScript assets confirmed both a Supabase project URL and a Supabase client key are present; neither value was printed or recorded. This replaces the August 5 unconfigured APK. It remains a CI debug APK, so Android may require uninstalling a build signed with a different debug key before installation, which can erase device-local/offline app data.
 
 ## Production release: Unified Action Center
 
