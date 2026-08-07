@@ -127,6 +127,7 @@ export default function NativeScheduleView({
   activeUser = null,
   projectFilter = 'all',
   onProjectFilterChange = () => {},
+  navigationTarget = null,
 }) {
   const dataRef = useRef(data);
   const ganttGridRef = useRef(null);
@@ -137,6 +138,7 @@ export default function NativeScheduleView({
   const ganttLabelRowRefs = useRef([]);
   const ganttTimelineRowRefs = useRef([]);
   const lastAutoScrollKeyRef = useRef('');
+  const lastNavigationTokenRef = useRef('');
   const [ganttZoomValue, setGanttZoomValue] = useState(getStoredScheduleZoom);
   const [expandedProjects, setExpandedProjects] = useState(() => getStoredExpansion(SCHEDULE_PROJECT_EXPANSION_STORAGE_KEY));
   const [expandedPhases, setExpandedPhases] = useState(() => ({
@@ -180,6 +182,18 @@ export default function NativeScheduleView({
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    if (!isScheduleView) return;
+    const token = String(navigationTarget?.token || '');
+    if (!token || token === lastNavigationTokenRef.current) return;
+    lastNavigationTokenRef.current = token;
+    if (navigationTarget.projectId) onProjectFilterChange(navigationTarget.projectId);
+    setShowTodayActiveItems(false);
+    setHidePastScheduleItems(false);
+    setScheduleSearchQuery(String(navigationTarget.query || ''));
+    setActiveGanttRowId(String(navigationTarget.stepId || '') || null);
+  }, [isScheduleView, navigationTarget, onProjectFilterChange]);
 
   function commitScheduleState(nextState) {
     dataRef.current = nextState;

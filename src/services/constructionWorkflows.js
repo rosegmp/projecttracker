@@ -25,6 +25,8 @@ const CONFIG = {
   closeoutItems: { table: 'project_closeout_items', order: 'updated_at.desc', numberColumn: 'item_number' },
 };
 
+export const WORKFLOW_SEARCH_RESULT_LIMIT = 250;
+
 function createId(prefix) {
   return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -91,6 +93,25 @@ export async function loadWorkflowItemsForProjects(type, projectIds = []) {
     'Workflow action center load',
   );
   const rows = await responseJson(response, 'Unable to load workflow action items.');
+  return (Array.isArray(rows) ? rows : []).map((row) => normalize(type, row));
+}
+
+export async function loadWorkflowSearchItemsForProjects(type, projectIds = [], limit = WORKFLOW_SEARCH_RESULT_LIMIT) {
+  const config = CONFIG[type];
+  if (!config) throw new Error('Unknown project workflow.');
+  const ids = Array.from(new Set((projectIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!ids.length || !getSupabaseDiagnosticsInfo().configured) return [];
+  const boundedLimit = Math.max(1, Math.min(WORKFLOW_SEARCH_RESULT_LIMIT, Number(limit) || WORKFLOW_SEARCH_RESULT_LIMIT));
+  const projectFilter = ids.map((id) => encodeURIComponent(id)).join(',');
+  const select = type === 'dailyLogs'
+    ? 'id,project_id,version,created_at,updated_at,log_date,title,data'
+    : `id,project_id,version,created_at,updated_at,${config.numberColumn},title,status,data`;
+  const response = await fetchAuthorizedSupabase(
+    `/rest/v1/${config.table}?project_id=in.(${projectFilter})&select=${select}&order=${config.order}&limit=${boundedLimit}`,
+    { method: 'GET' },
+    'Global search workflow load',
+  );
+  const rows = await responseJson(response, 'Unable to load workflow search items.');
   return (Array.isArray(rows) ? rows : []).map((row) => normalize(type, row));
 }
 

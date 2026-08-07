@@ -3,6 +3,7 @@ name: Continuous integration
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -125,7 +126,15 @@ jobs:
           printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
 
       - name: Build production web app
-        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_KEY }}
+        run: |
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_KEY" ]; then
+            echo "::error::Supabase Android client configuration is missing"
+            exit 1
+          fi
+          npm run build
 
       - name: Sync Capacitor Android project
         run: npx cap sync android

@@ -99,6 +99,12 @@ import {
 import { reorderSettingIds } from '../src/utils/settingsOrder.js';
 import { buildTaskShareContent } from '../src/utils/taskSharing.js';
 import {
+  buildGlobalSearchItems,
+  loadGlobalSearchRecentIds,
+  recordGlobalSearchRecentId,
+  searchGlobalItems,
+} from '../src/utils/globalSearch.js';
+import {
   hydrateNormalizedTakeoff,
   splitTakeoffSnapshot,
 } from '../src/features/takeoff/services/takeoffNormalization.js';
@@ -127,6 +133,141 @@ const weekdaySettings = {
 };
 
 const tests = [
+  {
+    name: 'global search indexes only enabled authorized records and ranks useful matches',
+    async run() {
+      const items = buildGlobalSearchItems({
+        projects: [{
+          id: 'project-1',
+          name: 'Lake House',
+          address: '10 Main Street',
+          status: 'active',
+          phases: [{ id: 'phase-1', name: 'Roughs', steps: [{ id: 'step-1', name: 'Rough plumbing', start: '2026-08-01', end: '2026-08-04', assignees: ['Pipe It'] }] }],
+           inspections: [{ id: 'inspection-1', subcode: 'PLUMB-101', inspectionType: 'Plumbing', agency: 'Township', status: 'scheduled', date: '2026-08-08' }],
+           selections: [{ id: 'selection-1', itemName: 'Kitchen tile', category: 'Flooring', status: 'needs_decision' }],
+           files: { folders: [{ id: 'folder-1', name: 'Permits', files: [{ id: 'file-1', originalName: 'Building Permit.pdf', type: 'application/pdf' }] }] },
+         }],
+        tasks: [
+          { id: 'task-1', projectId: 'project-1', label: 'Frame basement walls', due: '2026-08-10', assignees: ['Alex Rivera'] },
+          { id: 'task-hidden', projectId: 'project-hidden', label: 'Private task' },
+          { id: 'task-general', projectId: '', label: 'Call insurance broker' },
+        ],
+        subs: [{
+          id: 'sub-1',
+          company: 'Royal Stonework',
+          first: 'Rosa',
+          last: 'Stone',
+          email: 'office@example.com',
+          certificates: [{ insurer: 'Evanston Insurance', policyNumber: 'ABC-123' }],
+        }],
+        employees: [{ id: 'emp-1', first: 'Alex', last: 'Rivera', peopleType: 'emp', role: 'Manager' }],
+        includeTasks: true,
+        includePeople: true,
+        includeCertificates: true,
+        includeSchedule: true,
+         includeInspections: true,
+         includeSelections: true,
+         includeFiles: true,
+         dailyLogs: [{ id: 'log-1', projectId: 'project-1', title: 'Foundation pour log', date: '2026-08-03', weather: 'Sunny', notes: 'Concrete delivery complete' }],
+         rfis: [{ id: 'rfi-1', projectId: 'project-1', number: 'RFI-007', title: 'Header detail', status: 'open', question: 'Confirm beam size' }],
+         submittals: [{ id: 'submittal-1', projectId: 'project-1', number: 'SUB-004', title: 'Window package', status: 'submitted', specSection: '08 50 00' }],
+         warrantyItems: [{ id: 'warranty-1', projectId: 'project-1', number: 'WAR-003', title: 'Patio door adjustment', status: 'open', responsibleName: 'Royal Stonework' }],
+         closeoutItems: [{ id: 'closeout-1', projectId: 'project-1', number: 'CLS-002', title: 'Final lien waiver', status: 'not_started', dueDate: '2026-08-20' }],
+       });
+      assert.ok(items.some((item) => item.id === 'project:project-1'));
+      assert.ok(items.some((item) => item.id === 'task:task-1'));
+      assert.ok(items.some((item) => item.id === 'task:task-general'));
+      assert.ok(!items.some((item) => item.id === 'task:task-hidden'));
+      assert.ok(items.some((item) => item.id === 'person:sub:sub-1'));
+      assert.ok(items.some((item) => item.id === 'certificate:sub-1'));
+      assert.ok(items.some((item) => item.id === 'schedule-step:project-1:step-1'));
+      assert.ok(items.some((item) => item.id === 'inspection:project-1:inspection-1'));
+       assert.ok(items.some((item) => item.id === 'selection:project-1:selection-1'));
+       assert.ok(items.some((item) => item.id === 'file:project-1:file-1'));
+       assert.ok(items.some((item) => item.id === 'daily-log:project-1:log-1'));
+       assert.ok(items.some((item) => item.id === 'rfi:project-1:rfi-1'));
+       assert.ok(items.some((item) => item.id === 'submittal:project-1:submittal-1'));
+       assert.ok(items.some((item) => item.id === 'warranty:project-1:warranty-1'));
+       assert.ok(items.some((item) => item.id === 'closeout:project-1:closeout-1'));
+      assert.equal(searchGlobalItems(items, 'lake')[0].id, 'project:project-1');
+      assert.equal(searchGlobalItems(items, 'frame alex')[0].id, 'task:task-1');
+      assert.equal(searchGlobalItems(items, 'abc-123')[0].id, 'certificate:sub-1');
+      assert.equal(searchGlobalItems(items, 'rough pipe it')[0].id, 'schedule-step:project-1:step-1');
+      assert.equal(searchGlobalItems(items, 'township plumbing')[0].id, 'inspection:project-1:inspection-1');
+       assert.equal(searchGlobalItems(items, 'kitchen flooring')[0].id, 'selection:project-1:selection-1');
+       assert.equal(searchGlobalItems(items, 'building permit')[0].id, 'file:project-1:file-1');
+       assert.equal(searchGlobalItems(items, 'concrete delivery')[0].id, 'daily-log:project-1:log-1');
+       assert.equal(searchGlobalItems(items, 'beam size')[0].id, 'rfi:project-1:rfi-1');
+       assert.equal(searchGlobalItems(items, '08 50 00')[0].id, 'submittal:project-1:submittal-1');
+       assert.equal(searchGlobalItems(items, 'patio royal')[0].id, 'warranty:project-1:warranty-1');
+       assert.equal(searchGlobalItems(items, 'lien waiver')[0].id, 'closeout:project-1:closeout-1');
+
+       const hiddenWorkflow = buildGlobalSearchItems({
+         projects: [{ id: 'project-1', name: 'Lake House' }],
+         rfis: [{ id: 'rfi-hidden', projectId: 'project-hidden', title: 'Private RFI' }],
+       });
+       assert.ok(!hiddenWorkflow.some((item) => item.id.includes('rfi-hidden')));
+
+      const restricted = buildGlobalSearchItems({
+        projects: [{ id: 'project-1', name: 'Lake House' }],
+        tasks: [{ id: 'task-1', projectId: 'project-1', label: 'Frame basement walls' }],
+        subs: [{ id: 'sub-1', company: 'Royal Stonework' }],
+      });
+      assert.deepEqual(restricted.map((item) => item.id), ['project:project-1']);
+
+      const storedValues = new Map();
+      const storage = {
+        getItem: (key) => storedValues.get(key) || null,
+        setItem: (key, value) => storedValues.set(key, value),
+      };
+      recordGlobalSearchRecentId('user-1', 'project:project-1', storage);
+      recordGlobalSearchRecentId('user-1', 'task:task-1', storage);
+      recordGlobalSearchRecentId('user-1', 'project:project-1', storage);
+      assert.deepEqual(loadGlobalSearchRecentIds('user-1', storage), ['project:project-1', 'task:task-1']);
+      assert.deepEqual(loadGlobalSearchRecentIds('other-user', storage), []);
+
+       const [appSource, paletteSource, peopleSource, filesSource, workflowSource, workflowServiceSource, styleSource] = await Promise.all([
+         readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+         readFile(new URL('../src/components/GlobalCommandPalette.jsx', import.meta.url), 'utf8'),
+         readFile(new URL('../src/components/NativePeopleView.jsx', import.meta.url), 'utf8'),
+         readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+         readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+         readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /event\.key\.toLowerCase\(\) !== 'k'/);
+      assert.match(appSource, /includePeople: capabilities\.allowedTabs\.includes\('people'\)/);
+      assert.match(appSource, /includeCertificates: capabilities\.allowedTabs\.includes\('certificates'\)/);
+      assert.match(appSource, /command: 'create-task'/);
+      assert.match(appSource, /command: 'create-project-record'/);
+      assert.match(appSource, /visibleProjectTabIds\.has\('inspections'\)/);
+       assert.match(appSource, /visibleProjectTabIds\.has\('daily-logs'\)/);
+       assert.match(appSource, /WORKFLOW_SEARCH_CACHE_TTL_MS = 60_000/);
+       assert.match(appSource, /loadWorkflowSearchItemsForProjects/);
+       assert.match(appSource, /workflowSearchCacheRef\.current\.size > 8/);
+       assert.match(appSource, /detailTab: 'files'/);
+       assert.match(appSource, /detailTab: 'rfis-submittals'/);
+       assert.match(appSource, /detailTab: 'warranty-closeout'/);
+      assert.match(paletteSource, /role="dialog"/);
+      assert.match(paletteSource, /aria-activedescendant/);
+      assert.match(paletteSource, /scrollIntoView\(\{ block: 'nearest' \}\)/);
+      assert.match(paletteSource, /event\.key === 'Tab'/);
+      assert.match(paletteSource, /dialogRef\.current\?\.contains\(document\.activeElement\)/);
+      assert.match(paletteSource, /item\.recent \? 'Recent'/);
+      assert.match(paletteSource, /field categories show the latest 250 records/);
+      assert.match(workflowServiceSource, /WORKFLOW_SEARCH_RESULT_LIMIT = 250/);
+      assert.match(workflowServiceSource, /select=\$\{select\}[^`]+limit=\$\{boundedLimit\}/);
+      assert.doesNotMatch(
+        workflowServiceSource.match(/export async function loadWorkflowSearchItemsForProjects[\s\S]*?\n}\n/)?.[0] || '',
+        /select=\*/,
+      );
+       assert.match(peopleSource, /navigationTarget\.personType/);
+       assert.match(filesSource, /navigationTarget\.fileId/);
+       assert.match(workflowSource, /navigationTarget\.workflowItemId/);
+       assert.match(styleSource, /\.global-search-dialog/);
+      assert.match(styleSource, /@media \(max-width: 620px\)/);
+    },
+  },
   {
     name: 'application runtime status normalizes maintenance state and messages',
     run() {
@@ -1587,12 +1728,13 @@ const tests = [
   {
     name: 'Android live notifications secure tokens and project delivery',
     async run() {
-      const [pushSource, migrationSource, functionSource, appSource, manifestSource] = await Promise.all([
+      const [pushSource, migrationSource, functionSource, appSource, manifestSource, ciWorkflowSource] = await Promise.all([
         readFile(new URL('../src/utils/androidPushNotifications.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260717070000_add_android_push_notifications.sql', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
         readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
       ]);
 
       assert.match(pushSource, /register_device_push_token/);
@@ -1609,6 +1751,11 @@ const tests = [
       assert.match(appSource, /AndroidNotificationPreferences/);
       assert.match(appSource, /Notification settings/);
       assert.match(manifestSource, /android\.permission\.POST_NOTIFICATIONS/);
+      assert.match(ciWorkflowSource, /VITE_SUPABASE_URL: \$\{\{ secrets\.VITE_SUPABASE_URL \}\}/);
+      assert.match(ciWorkflowSource, /VITE_SUPABASE_KEY: \$\{\{ secrets\.VITE_SUPABASE_KEY \}\}/);
+      assert.match(ciWorkflowSource, /Supabase Android client configuration is missing/);
+      assert.match(ciWorkflowSource, /if \[ -z "\$VITE_SUPABASE_URL" \] \|\| \[ -z "\$VITE_SUPABASE_KEY" \]/);
+      assert.match(ciWorkflowSource, /workflow_dispatch:/);
     },
   },
   {

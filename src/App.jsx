@@ -1,8 +1,14 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import AppDialogHost, { showAppAlert, showAppConfirm } from './components/AppDialogs.jsx';
 import FluentIcon from './components/FluentIcon.jsx';
+import GlobalCommandPalette from './components/GlobalCommandPalette.jsx';
 import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
-import { getVisibleProjectsForUser } from './utils/accessUi.js';
+import { getVisibleProjectsForUser, getVisibleTasksForUser } from './utils/accessUi.js';
+import {
+  buildGlobalSearchItems,
+  loadGlobalSearchRecentIds,
+  recordGlobalSearchRecentId,
+} from './utils/globalSearch.js';
 import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
@@ -122,6 +128,14 @@ const tabs = [
 ];
 
 const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
+const EMPTY_WORKFLOW_SEARCH_RECORDS = {
+  dailyLogs: [],
+  rfis: [],
+  submittals: [],
+  warrantyItems: [],
+  closeoutItems: [],
+};
+const WORKFLOW_SEARCH_CACHE_TTL_MS = 60_000;
 const LAST_ACTIVE_TAB_KEY = 'cx_last_active_tab';
 const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks']);
 const validTabIds = new Set(tabs.map((tab) => tab.id));
@@ -222,6 +236,8 @@ export default function App() {
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
   const [certificateNavigationTarget, setCertificateNavigationTarget] = useState(null);
+  const [peopleNavigationTarget, setPeopleNavigationTarget] = useState(null);
+  const [scheduleNavigationTarget, setScheduleNavigationTarget] = useState(null);
   const [authSession, setAuthSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -268,6 +284,14 @@ export default function App() {
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
   const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
   const [projectDrawerOpen, setProjectDrawerOpen] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [recentSearchItemIds, setRecentSearchItemIds] = useState([]);
+  const [workflowSearchData, setWorkflowSearchData] = useState({
+    scopeKey: '',
+    status: 'idle',
+    records: EMPTY_WORKFLOW_SEARCH_RECORDS,
+  });
+  const workflowSearchCacheRef = useRef(new Map());
   const [taskHighlightRequest, setTaskHighlightRequest] = useState({ taskId: '', token: '' });
   const [androidPendingAction, setAndroidPendingAction] = useState(null);
   const [androidProjectPrompt, setAndroidProjectPrompt] = useState(null);
@@ -806,6 +830,84 @@ export default function App() {
     () => tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id)),
     [capabilities.allowedTabs],
   );
+  const visibleProjectTabIds = useMemo(
+    () => new Set(getVisibleProjectTabs(trackerState.settings?.visibleProjectTabs, activeUser?.role).map((tab) => tab.id)),
+    [activeUser?.role, trackerState.settings?.visibleProjectTabs],
+  );
+  const workflowSearchScopeKey = useMemo(() => [
+    activeUser?.id || '',
+    visibleProjects.map((project) => project.id).sort().join(','),
+    ['daily-logs', 'rfis-submittals', 'warranty-closeout'].filter((tabId) => visibleProjectTabIds.has(tabId)).join(','),
+  ].join('|'), [activeUser?.id, visibleProjectTabIds, visibleProjects]);
+  const activeWorkflowSearchRecords = workflowSearchData.scopeKey === workflowSearchScopeKey
+    ? workflowSearchData.records
+    : EMPTY_WORKFLOW_SEARCH_RECORDS;
+  const globalSearchItems = useMemo(() => buildGlobalSearchItems({
+    projects: visibleProjects,
+    tasks: getVisibleTasksForUser(trackerState.tasks, trackerState.settings, visibleProjects),
+    subs: trackerState.subs,
+    employees: trackerState.employees,
+    includeTasks: capabilities.allowedTabs.includes('tasks'),
+    includePeople: capabilities.allowedTabs.includes('people'),
+    includeCertificates: capabilities.allowedTabs.includes('certificates'),
+    includeSchedule: capabilities.allowedTabs.includes('schedule'),
+    includeInspections: visibleProjectTabIds.has('inspections'),
+    includeSelections: visibleProjectTabIds.has('selections'),
+    includeFiles: visibleProjectTabIds.has('files'),
+    ...activeWorkflowSearchRecords,
+  }), [activeWorkflowSearchRecords, capabilities.allowedTabs, trackerState.employees, trackerState.settings, trackerState.subs, trackerState.tasks, visibleProjectTabIds, visibleProjects]);
+  const globalSearchCommands = useMemo(() => {
+    const commands = visibleTabs.map((tab) => ({
+      id: `command:open-${tab.id}`,
+      type: 'command',
+      command: 'open-tab',
+      tabId: tab.id,
+      label: `Open ${tab.label}`,
+      meta: tab.description,
+      keywords: [tab.label, tab.description, 'workspace', 'go'],
+      icon: tab.id === 'projects' ? 'folder' : 'play',
+    }));
+    if (capabilities.canEdit && capabilities.allowedTabs.includes('tasks')) {
+      commands.unshift({
+        id: 'command:create-task',
+        type: 'command',
+        command: 'create-task',
+        label: 'Create task',
+        meta: 'Open a new task in the Tasks workspace',
+        keywords: ['add task', 'new task', 'quick action'],
+        icon: 'add',
+      });
+    }
+    if (capabilities.canEdit && visibleProjects.length && visibleProjectTabIds.has('daily-logs')) {
+      commands.unshift({
+        id: 'command:create-daily-log',
+        type: 'command',
+        command: 'create-project-record',
+        actionType: 'create-daily-log',
+        label: 'Start daily log',
+        meta: 'Choose a project and open a new daily log',
+        keywords: ['add daily log', 'new daily log', 'site log', 'quick action'],
+        icon: 'add',
+      });
+    }
+    if (capabilities.canEdit && visibleProjects.length && visibleProjectTabIds.has('inspections')) {
+      commands.unshift({
+        id: 'command:create-inspection',
+        type: 'command',
+        command: 'create-project-record',
+        actionType: 'create-inspection',
+        label: 'Add inspection',
+        meta: 'Choose a project and open a new inspection',
+        keywords: ['create inspection', 'new inspection', 'quick action'],
+        icon: 'add',
+      });
+    }
+    return commands;
+  }, [capabilities.allowedTabs, capabilities.canEdit, visibleProjectTabIds, visibleProjects.length, visibleTabs]);
+  const globalSearchRecentItems = useMemo(() => {
+    const availableItems = new Map([...globalSearchItems, ...globalSearchCommands].map((item) => [item.id, item]));
+    return recentSearchItemIds.map((id) => availableItems.get(id)).filter(Boolean);
+  }, [globalSearchCommands, globalSearchItems, recentSearchItemIds]);
   const activeTabMeta = useMemo(
     () => visibleTabs.find((tab) => tab.id === activeTab) || tabs.find((tab) => tab.id === activeTab) || tabs[0],
     [visibleTabs, activeTab],
@@ -855,6 +957,75 @@ export default function App() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [projectDrawerOpen]);
 
+  useEffect(() => {
+    if (!capabilities.showTabs) return undefined;
+    const openGlobalSearch = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      setShowGlobalSearch(true);
+    };
+    window.addEventListener('keydown', openGlobalSearch);
+    return () => window.removeEventListener('keydown', openGlobalSearch);
+  }, [capabilities.showTabs]);
+
+  useEffect(() => {
+    setRecentSearchItemIds(loadGlobalSearchRecentIds(activeUser?.id));
+  }, [activeUser?.id]);
+
+  useEffect(() => {
+    if (!showGlobalSearch || !activeUser?.id) return undefined;
+    const enabledTypes = [
+      ...(visibleProjectTabIds.has('daily-logs') ? ['dailyLogs'] : []),
+      ...(visibleProjectTabIds.has('rfis-submittals') ? ['rfis', 'submittals'] : []),
+      ...(visibleProjectTabIds.has('warranty-closeout') ? ['warrantyItems', 'closeoutItems'] : []),
+    ];
+    const projectIds = visibleProjects.map((project) => project.id);
+    let cancelled = false;
+    const cached = workflowSearchCacheRef.current.get(workflowSearchScopeKey);
+    if (cached && Date.now() - cached.loadedAt < WORKFLOW_SEARCH_CACHE_TTL_MS) {
+      setWorkflowSearchData({ scopeKey: workflowSearchScopeKey, status: 'ready', records: cached.records });
+      return () => { cancelled = true; };
+    }
+    setWorkflowSearchData({ scopeKey: workflowSearchScopeKey, status: enabledTypes.length && projectIds.length ? 'loading' : 'ready', records: EMPTY_WORKFLOW_SEARCH_RECORDS });
+    if (!enabledTypes.length || !projectIds.length) return () => { cancelled = true; };
+
+    void import('./services/constructionWorkflows.js')
+      .then(async ({ loadWorkflowSearchItemsForProjects }) => {
+        const results = await Promise.allSettled(enabledTypes.map((type) => loadWorkflowSearchItemsForProjects(type, projectIds)));
+        if (cancelled) return;
+        const records = { ...EMPTY_WORKFLOW_SEARCH_RECORDS };
+        let unavailable = false;
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') records[enabledTypes[index]] = result.value;
+          else {
+            unavailable = true;
+            reportError(result.reason, { operation: 'global-search.workflow-load', workflowType: enabledTypes[index] });
+          }
+        });
+        if (!unavailable) {
+          workflowSearchCacheRef.current.set(workflowSearchScopeKey, { loadedAt: Date.now(), records });
+          while (workflowSearchCacheRef.current.size > 8) {
+            workflowSearchCacheRef.current.delete(workflowSearchCacheRef.current.keys().next().value);
+          }
+        }
+        setWorkflowSearchData({ scopeKey: workflowSearchScopeKey, status: unavailable ? 'partial' : 'ready', records });
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        reportError(loadError, { operation: 'global-search.workflow-module-load' });
+        setWorkflowSearchData({ scopeKey: workflowSearchScopeKey, status: 'partial', records: EMPTY_WORKFLOW_SEARCH_RECORDS });
+      });
+    return () => { cancelled = true; };
+  }, [activeUser?.id, showGlobalSearch, workflowSearchScopeKey]);
+
+  useEffect(() => {
+    if (!activeUser?.id || !capabilities.showTabs) return;
+    const recentId = activeTab === 'projects' && railSelectedProjectId
+      ? `project:${railSelectedProjectId}`
+      : `command:open-${activeTab}`;
+    setRecentSearchItemIds(recordGlobalSearchRecentId(activeUser.id, recentId));
+  }, [activeTab, activeUser?.id, capabilities.showTabs, projectNavigationTarget?.token, railSelectedProjectId]);
+
   function goToProjectsHome() {
     if (activeTab === 'projects' && getProjectIdFromLocation()) {
       syncProjectToLocation('', { push: true });
@@ -872,6 +1043,136 @@ export default function App() {
     setShowAndroidNavMenu(false);
     setShowAndroidAccountMenu(false);
     setProjectDrawerOpen(false);
+  }
+
+  function handleGlobalSearchSelect(item) {
+    if (item.type !== 'command' || item.command === 'open-tab') {
+      const recentUserId = activeUser?.id;
+      setRecentSearchItemIds(recordGlobalSearchRecentId(recentUserId, item.id));
+      if (item.type !== 'command') {
+        window.setTimeout(() => {
+          setRecentSearchItemIds(recordGlobalSearchRecentId(recentUserId, item.id));
+        }, 0);
+      }
+    }
+    if (item.type === 'command' && item.command === 'create-task') {
+      setSessionProjectFilter('all');
+      setAndroidTaskCreateRequest({ token: `global-search-${Date.now()}` });
+      setActiveTab('tasks');
+      return;
+    }
+    if (item.type === 'command' && item.command === 'create-project-record') {
+      const locationProjectId = getProjectIdFromLocation();
+      const preferredProjectId = visibleProjects.some((project) => project.id === locationProjectId)
+        ? locationProjectId
+        : visibleProjects.some((project) => project.id === sessionProjectFilter)
+          ? sessionProjectFilter
+          : visibleProjects[0]?.id || '';
+      if (!preferredProjectId) return;
+      setAndroidProjectPrompt({
+        type: item.actionType,
+        projectId: preferredProjectId,
+        token: `global-search-${Date.now()}`,
+      });
+      return;
+    }
+    if (item.type === 'command' && item.command === 'open-tab') {
+      if (item.tabId === 'home') goToHome();
+      else if (item.tabId === 'projects') goToProjectsHome();
+      else setActiveTab(item.tabId);
+      return;
+    }
+    if (item.type === 'project') {
+      setProjectNavigationTarget({ projectId: item.projectId, token: `global-search-${Date.now()}` });
+      syncProjectToLocation(item.projectId, { push: true });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'task') {
+      setSessionProjectFilter(item.projectId || 'all');
+      setTaskHighlightRequest({ taskId: item.taskId, token: `global-search-${Date.now()}` });
+      setActiveTab('tasks');
+      return;
+    }
+    if (item.type === 'person') {
+      setPeopleNavigationTarget({ personType: item.personType, query: item.query, token: `global-search-${Date.now()}` });
+      setActiveTab('people');
+      return;
+    }
+    if (item.type === 'certificate') {
+      setCertificateNavigationTarget({ subcontractorId: item.subcontractorId, statusId: 'all', token: `global-search-${Date.now()}` });
+      setActiveTab('certificates');
+      return;
+    }
+    if (item.type === 'schedule-step') {
+      setSessionProjectFilter(item.projectId);
+      setScheduleNavigationTarget({ projectId: item.projectId, stepId: item.stepId, query: item.query || item.label, token: `global-search-${Date.now()}` });
+      setActiveTab('schedule');
+      return;
+    }
+    if (item.type === 'inspection') {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'inspections',
+        inspectionId: item.inspectionId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'selection') {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'selections',
+        selectionId: item.selectionId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'file') {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'files',
+        folderId: item.folderId,
+        fileId: item.fileId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (item.type === 'daily-log') {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'daily-logs',
+        workflowType: 'dailyLogs',
+        workflowItemId: item.workflowItemId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (['rfi', 'submittal'].includes(item.type)) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'rfis-submittals',
+        workflowType: item.type === 'rfi' ? 'rfis' : 'submittals',
+        workflowItemId: item.workflowItemId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+      return;
+    }
+    if (['warranty', 'closeout'].includes(item.type)) {
+      setProjectNavigationTarget({
+        projectId: item.projectId,
+        detailTab: 'warranty-closeout',
+        workflowType: item.type === 'warranty' ? 'warrantyItems' : 'closeoutItems',
+        workflowItemId: item.workflowItemId,
+        token: `global-search-${Date.now()}`,
+      });
+      setActiveTab('projects');
+    }
   }
 
   function openHomeItem(item) {
@@ -1235,6 +1536,7 @@ export default function App() {
           activeUser={activeUser}
           projectFilter={sessionProjectFilter}
           onProjectFilterChange={setSessionProjectFilter}
+          navigationTarget={scheduleNavigationTarget}
         />
       );
     }
@@ -1262,6 +1564,7 @@ export default function App() {
           refresh={refreshData}
           loading={loading}
           activeUser={activeUser}
+          navigationTarget={peopleNavigationTarget}
         />
       );
     }
@@ -1295,6 +1598,15 @@ export default function App() {
   return (
     <main className="app-shell">
       <AppDialogHost />
+      <GlobalCommandPalette
+        open={showGlobalSearch}
+        items={globalSearchItems}
+        commands={globalSearchCommands}
+        recentItems={globalSearchRecentItems}
+        recordLoadStatus={workflowSearchData.scopeKey === workflowSearchScopeKey ? workflowSearchData.status : 'idle'}
+        onClose={() => setShowGlobalSearch(false)}
+        onSelect={handleGlobalSearchSelect}
+      />
       {showOfflineReview ? (
         <div className="modal-backdrop" onClick={() => setShowOfflineReview(false)}>
           <div className="modal-card offline-review-modal" role="dialog" aria-modal="true" aria-labelledby="offline-review-title" onClick={(event) => event.stopPropagation()}>
@@ -1345,7 +1657,7 @@ export default function App() {
           <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="android-project-action-title" onClick={(event) => event.stopPropagation()}>
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Android quick action</p>
+                <p className="eyebrow">Quick action</p>
                 <h2 id="android-project-action-title">
                   {androidProjectPrompt.type === 'create-inspection'
                     ? 'Add inspection'
@@ -1461,6 +1773,17 @@ export default function App() {
               </label>
             ) : null}
             <div className="android-shell-actions">
+              {capabilities.showTabs ? (
+                <button
+                  className="android-app-bar-icon"
+                  type="button"
+                  onClick={() => { setShowAndroidNavMenu(false); setShowAndroidAccountMenu(false); setShowGlobalSearch(true); }}
+                  title="Search and quick actions"
+                  aria-label="Search and quick actions"
+                >
+                  <FluentIcon name="search" size={22} />
+                </button>
+              ) : null}
               <button
                 className="android-app-bar-icon android-account-button"
                 type="button"
@@ -1643,6 +1966,16 @@ export default function App() {
                 </button>
               ))}
             </nav>
+            <button
+              className="workspace-global-search-trigger"
+              type="button"
+              onClick={() => setShowGlobalSearch(true)}
+              aria-label="Search and quick actions"
+            >
+              <FluentIcon name="search" size={18} />
+              <span>Search</span>
+              <kbd>Ctrl K</kbd>
+            </button>
             <div className="workspace-user-controls workspace-strip-user">
               <div className="workspace-user-card">
                 <div className="workspace-user-avatar" aria-hidden="true">

@@ -475,6 +475,8 @@ export default function ProjectDetailView({
             projectFilter={project.id}
             onProjectFilterChange={() => {}}
             createRequest={selectionNavigationRequest?.detailAction === 'create-inspection' ? selectionNavigationRequest : null}
+            highlightInspectionId={selectionNavigationRequest?.inspectionId || ''}
+            highlightToken={selectionNavigationRequest?.token || ''}
             embedded
           />
         </section>
@@ -508,9 +510,10 @@ export default function ProjectDetailView({
             data={data}
             project={project}
             onStateChange={onStateChange}
-            readOnly={!canEdit}
-            forcedViewMode="list"
-            hideViewToggle
+             readOnly={!canEdit}
+             forcedViewMode="list"
+             hideViewToggle
+             navigationTarget={selectionNavigationRequest}
           />
         </section>
       ) : null}
@@ -523,8 +526,9 @@ export default function ProjectDetailView({
             canEdit={canEdit}
             workflowType="dailyLogs"
             subcontractors={data?.subs || []}
-            onStateChange={onStateChange}
-            createRequest={selectionNavigationRequest?.detailAction === 'create-daily-log' ? selectionNavigationRequest : null}
+             onStateChange={onStateChange}
+             createRequest={selectionNavigationRequest?.detailAction === 'create-daily-log' ? selectionNavigationRequest : null}
+             navigationTarget={selectionNavigationRequest}
           />
         </section>
       ) : null}

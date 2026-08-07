@@ -82,6 +82,17 @@ async function mockStaffBackend(page, {
   certificateRows = [],
   coverageRows = [],
   warrantyRows = [],
+  dailyLogRows = [],
+  rfiRows = [],
+  submittalRows = [],
+  closeoutRows = [],
+  phaseRows = [],
+  stepRows = [],
+  folderRows = [],
+  fileRows = [],
+  selectionRows = [],
+  inspectionRows = [],
+  visibleProjectTabs,
   runtimeStatus = { writesFrozen: false, message: '', changedAt: '' },
   handleRpc = async () => null,
   handleRest = async () => null,
@@ -89,6 +100,7 @@ async function mockStaffBackend(page, {
   const settings = {
     users: [{ id: appUserId, name: `${role} Browser User`, email, role }],
     currentUserId: appUserId,
+    ...(visibleProjectTabs ? { visibleProjectTabs } : {}),
   };
   const appUserRow = {
     id: appUserId,
@@ -124,13 +136,13 @@ async function mockStaffBackend(page, {
           projectAccess: accessRows,
           projects,
           tasks,
-          phases: [],
-          steps: [],
-          folders: [],
-          files: [],
+          phases: phaseRows,
+          steps: stepRows,
+          folders: folderRows,
+          files: fileRows,
           photos: [],
-          selections: [],
-          inspections: [],
+          selections: selectionRows,
+          inspections: inspectionRows,
         }),
       });
       return;
@@ -196,6 +208,26 @@ async function mockStaffBackend(page, {
       body = coverageRows;
     } else if (url.pathname.endsWith('/project_warranty_items')) {
       body = warrantyRows;
+    } else if (url.pathname.endsWith('/project_daily_logs')) {
+      body = dailyLogRows;
+    } else if (url.pathname.endsWith('/project_rfis')) {
+      body = rfiRows;
+    } else if (url.pathname.endsWith('/project_submittals')) {
+      body = submittalRows;
+    } else if (url.pathname.endsWith('/project_closeout_items')) {
+      body = closeoutRows;
+    } else if (url.pathname.endsWith('/project_file_folders')) {
+      body = folderRows;
+    } else if (url.pathname.endsWith('/project_files')) {
+      body = fileRows;
+    } else if (url.pathname.endsWith('/project_phases')) {
+      body = phaseRows;
+    } else if (url.pathname.endsWith('/project_steps')) {
+      body = stepRows;
+    } else if (url.pathname.endsWith('/project_selections')) {
+      body = selectionRows;
+    } else if (url.pathname.endsWith('/project_inspections')) {
+      body = inspectionRows;
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -237,6 +269,236 @@ test('projectless task deep link opens the top-level task and highlights it', as
   await expect(page.getByRole('button', { name: /^Tasks:/ })).toHaveAttribute('aria-current', 'page');
   const linkedTask = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
   await expect(linkedTask).toHaveClass(/highlighted/);
+});
+
+test('global search opens from the keyboard and navigates to an exact task', async ({ page }) => {
+  const appUserId = 'global-search-admin';
+  const projectId = 'global-search-project';
+  const taskId = 'global-search-task';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'global-search-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000019',
+    projects: [projectRow(projectId, appUserId)],
+    tasks: [taskRow(taskId, projectId)],
+  });
+
+  await page.goto('/?tab=home');
+  await expect(page.getByRole('button', { name: 'Search and quick actions' })).toBeVisible();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await expect(palette).toBeVisible();
+  const search = palette.getByRole('combobox', { name: 'Search projects, files, tasks, people, and field records' });
+  await expect(search).toBeFocused();
+  await search.fill('Existing staff task');
+  await palette.getByRole('option', { name: /Existing staff task/ }).click();
+
+  await expect(page.getByRole('button', { name: /^Tasks:/ })).toHaveAttribute('aria-current', 'page');
+  const taskCard = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
+  await expect(taskCard).toHaveClass(/highlighted/);
+  await page.keyboard.press('Control+K');
+  const recentPalette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await expect(recentPalette.getByRole('option').first()).toHaveAccessibleName(/Existing staff task.*Recent/);
+});
+
+test('global search keeps keyboard focus contained and scrolls the active result into view', async ({ page }) => {
+  const appUserId = 'global-search-keyboard-admin';
+  const projectId = 'global-search-keyboard-project';
+  const tasks = Array.from({ length: 15 }, (_, index) => ({
+    ...taskRow(`global-search-keyboard-task-${index + 1}`, projectId),
+    data: {
+      ...taskRow(`global-search-keyboard-task-${index + 1}`, projectId).data,
+      label: `Keyboard result ${String(index + 1).padStart(2, '0')}`,
+    },
+  }));
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'global-search-keyboard-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000025',
+    projects: [projectRow(projectId, appUserId)],
+    tasks,
+  });
+
+  await page.goto('/?tab=tasks');
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  const search = palette.getByRole('combobox');
+  await search.fill('Keyboard result');
+  for (let index = 0; index < 10; index += 1) await page.keyboard.press('ArrowDown');
+
+  const activeResult = palette.getByRole('option').nth(10);
+  await expect(activeResult).toHaveAttribute('aria-selected', 'true');
+  expect(await activeResult.evaluate((element) => {
+    const resultBounds = element.getBoundingClientRect();
+    const containerBounds = element.parentElement.getBoundingClientRect();
+    return resultBounds.top >= containerBounds.top && resultBounds.bottom <= containerBounds.bottom;
+  })).toBe(true);
+
+  await palette.getByRole('button', { name: 'Close global search' }).focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(palette.getByRole('option').last()).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(palette.getByRole('button', { name: 'Close global search' })).toBeFocused();
+});
+
+test('global search opens schedule and inspection records in context', async ({ page }) => {
+  const appUserId = 'global-record-search-admin';
+  const projectId = 'global-record-project';
+  const phaseId = 'global-record-phase';
+  const stepId = 'global-record-step';
+  const inspectionId = 'global-record-inspection';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'global-record-search-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000021',
+    projects: [projectRow(projectId, appUserId)],
+    phaseRows: [{ project_id: projectId, id: phaseId, position: 0, data: { name: 'Roughs', start: '2026-08-01', end: '2026-08-20' }, version: 1 }],
+    stepRows: [{ project_id: projectId, phase_id: phaseId, id: stepId, position: 0, data: { name: 'Rough plumbing', start: '2026-08-02', end: '2026-08-08', assignees: ['Pipe It'] }, version: 1 }],
+    inspectionRows: [{ project_id: projectId, id: inspectionId, position: 0, data: { subcode: 'PLUMB-101', inspectionType: 'Plumbing', status: 'scheduled', date: '2026-08-08', agency: 'Township' }, version: 1 }],
+  });
+
+  await page.goto('/?tab=home');
+  await expect(page.getByRole('button', { name: 'Search and quick actions' })).toBeVisible();
+  await page.keyboard.press('Control+K');
+  let palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await palette.getByRole('combobox').fill('Rough plumbing');
+  await palette.getByRole('option', { name: /Rough plumbing/ }).click();
+  await expect(page.getByRole('button', { name: /^Schedule:/ })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('searchbox', { name: 'Search schedule' })).toHaveValue('Rough plumbing');
+
+  await page.keyboard.press('Control+K');
+  palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await palette.getByRole('combobox').fill('PLUMB-101');
+  await palette.getByRole('option', { name: /PLUMB-101/ }).click();
+  await expect(page.getByRole('tab', { name: 'Inspections' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('article.inspection-card').filter({ hasText: 'PLUMB-101' })).toHaveClass(/highlighted/);
+});
+
+test('global search loads files and daily logs on demand and opens exact records', async ({ page }) => {
+  const appUserId = 'global-workflow-search-admin';
+  const projectId = 'global-workflow-project';
+  const folderId = 'global-workflow-folder';
+  const fileId = 'global-workflow-file';
+  const dailyLogId = 'global-workflow-log';
+  const workflowSearchRequests = [];
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'global-workflow-search-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000022',
+    projects: [projectRow(projectId, appUserId)],
+    folderRows: [{ project_id: projectId, id: folderId, position: 0, data: { name: 'Permits' }, version: 1 }],
+    fileRows: [{ project_id: projectId, folder_id: folderId, id: fileId, position: 0, data: { originalName: 'Building Permit.pdf', name: 'Building Permit.pdf', type: 'application/pdf' }, version: 1 }],
+    dailyLogRows: [{ project_id: projectId, id: dailyLogId, log_date: '2026-08-03', title: 'Foundation pour log', data: { weather: 'Sunny', notes: 'Concrete delivery complete' }, version: 1 }],
+    handleRest: async ({ url }) => {
+      if (url.searchParams.has('limit') && /project_(daily_logs|rfis|submittals|warranty_items|closeout_items)$/.test(url.pathname)) {
+        workflowSearchRequests.push(url.toString());
+      }
+      return null;
+    },
+  });
+
+  await page.goto('/?tab=home');
+  await expect(page.getByRole('button', { name: 'Search and quick actions' })).toBeVisible();
+  await page.keyboard.press('Control+K');
+  let palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await expect.poll(() => workflowSearchRequests.length).toBe(5);
+  workflowSearchRequests.forEach((requestUrl) => {
+    const url = new URL(requestUrl);
+    expect(url.searchParams.get('limit')).toBe('250');
+    expect(url.searchParams.get('select')).not.toBe('*');
+  });
+  await palette.getByRole('combobox').fill('Building Permit');
+  await palette.getByRole('option', { name: /Building Permit\.pdf/ }).click();
+  await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.files-hierarchy-file-row').filter({ hasText: 'Building Permit.pdf' })).toHaveClass(/highlighted/);
+
+  await page.keyboard.press('Control+K');
+  palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await page.waitForTimeout(100);
+  expect(workflowSearchRequests).toHaveLength(5);
+  const search = palette.getByRole('combobox');
+  await search.fill('Concrete delivery complete');
+  const dailyLogResult = palette.getByRole('option', { name: /Foundation pour log/ });
+  await expect(dailyLogResult).toBeVisible();
+  await dailyLogResult.click();
+  await expect(page.getByRole('tab', { name: 'Daily Logs' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('article.project-workflow-card').filter({ hasText: 'Foundation pour log' })).toHaveClass(/highlighted/);
+});
+
+test('global search skips workflow reads and actions for hidden project tabs', async ({ page }) => {
+  const appUserId = 'global-search-hidden-tabs-admin';
+  const projectId = 'global-search-hidden-tabs-project';
+  const workflowSearchRequests = [];
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'global-search-hidden-tabs-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000026',
+    projects: [projectRow(projectId, appUserId)],
+    visibleProjectTabs: ['overview', 'files'],
+    dailyLogRows: [{ project_id: projectId, id: 'hidden-log', log_date: '2026-08-03', title: 'Hidden workflow record', data: {}, version: 1 }],
+    handleRest: async ({ url }) => {
+      if (url.searchParams.has('limit') && url.pathname.includes('/project_')) workflowSearchRequests.push(url.toString());
+      return null;
+    },
+  });
+
+  await page.goto('/?tab=tasks');
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await palette.getByRole('combobox').fill('Hidden workflow record');
+  await expect(palette.getByText('No matching results')).toBeVisible();
+  expect(workflowSearchRequests).toHaveLength(0);
+  await palette.getByRole('combobox').fill('Add inspection');
+  await expect(palette.getByRole('option', { name: /Add inspection/ })).toHaveCount(0);
+});
+
+test('mobile global search exposes quick task creation', async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 860 });
+  const appUserId = 'mobile-global-search-admin';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'mobile-global-search-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000020',
+    projects: [projectRow('mobile-global-search-project', appUserId)],
+  });
+
+  await page.goto('/?tab=home');
+  await page.getByRole('button', { name: 'Search and quick actions' }).click();
+  const palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await expect(palette).toBeVisible();
+  await palette.getByRole('option', { name: /Create task/ }).click();
+
+  const taskDialog = page.getByRole('dialog', { name: 'Add task' });
+  await expect(taskDialog).toBeVisible();
+  await expect(taskDialog.getByPlaceholder('Task name')).toBeFocused();
+});
+
+test('global inspection quick action chooses a project and opens the existing form', async ({ page }) => {
+  const appUserId = 'inspection-command-admin';
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'inspection-command-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000022',
+    projects: [projectRow('inspection-command-project', appUserId)],
+  });
+
+  await page.goto('/?tab=home');
+  await expect(page.getByRole('button', { name: 'Search and quick actions' })).toBeVisible();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Go anywhere' });
+  await palette.getByRole('combobox').fill('Add inspection');
+  await palette.getByRole('option', { name: /Add inspection/ }).click();
+  const projectPrompt = page.getByRole('dialog', { name: 'Add inspection' });
+  await expect(projectPrompt.getByRole('combobox', { name: 'Project' })).toHaveValue('inspection-command-project');
+  await projectPrompt.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add inspection' })).toBeVisible();
 });
 
 test('maintenance mode keeps staff workspace readable and disables project changes', async ({ page }) => {
