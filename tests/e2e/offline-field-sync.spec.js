@@ -197,7 +197,9 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await expect(page.getByText('Delete saved on device')).toHaveCount(0);
 
   uploadedStoragePaths.length = 0;
-  await page.getByRole('tab', { name: 'Inspections' }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByLabel('More project sections', { exact: true })
+    .getByRole('button', { name: 'Inspections', exact: true }).click();
   await page.getByRole('button', { name: 'Add inspection' }).click();
   await page.getByRole('dialog', { name: 'Add inspection' }).getByRole('button', { name: 'Cancel' }).click();
   await context.setOffline(true);

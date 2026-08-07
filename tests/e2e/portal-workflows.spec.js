@@ -197,7 +197,9 @@ test('customer submits and then sees a warranty request through customer-only RP
   });
 
   await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
-  await page.getByRole('tab', { name: 'Warranty' }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByLabel('More project sections', { exact: true })
+    .getByRole('button', { name: 'Warranty', exact: true }).click();
   await page.getByRole('button', { name: 'Submit request' }).click();
   const editor = page.getByRole('heading', { name: 'Submit a warranty request' }).locator('xpath=ancestor::section[1]');
   await editor.getByLabel('Title').fill('Leaking powder room faucet');

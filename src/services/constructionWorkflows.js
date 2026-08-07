@@ -12,6 +12,10 @@ import {
   reconcileOfflineAttachments,
   removeOfflineAttachments,
 } from './offlineAttachmentStore.js';
+import {
+  getOfflineProjectRecord,
+  updateOfflineProjectWorkflowRecords,
+} from './offlineProjectStore.js';
 
 const CONFIG = {
   dailyLogs: { table: 'project_daily_logs', order: 'log_date.desc,updated_at.desc' },
@@ -26,6 +30,15 @@ const CONFIG = {
 };
 
 export const WORKFLOW_SEARCH_RESULT_LIMIT = 250;
+
+export const OFFLINE_WORKFLOW_SECTION_TYPES = {
+  portal: ['portalItems'],
+  'daily-logs': ['dailyLogs'],
+  'change-orders': ['changeOrders'],
+  'rfis-submittals': ['rfis', 'submittals'],
+  'budget-commitments': ['budgetItems', 'commitments'],
+  'warranty-closeout': ['warrantyItems', 'closeoutItems'],
+};
 
 function createId(prefix) {
   return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -117,6 +130,60 @@ export async function loadWorkflowSearchItemsForProjects(type, projectIds = [], 
 
 export async function loadPortalItemsForProjects(projectIds = []) {
   return loadWorkflowItemsForProjects('portalItems', projectIds);
+}
+
+async function readOfflineWorkflowRecords(userId, projectId, type) {
+  if (!userId || !projectId) return null;
+  const record = await getOfflineProjectRecord(userId, projectId).catch(() => null);
+  const records = record?.snapshot?.workflows?.[type];
+  return Array.isArray(records) ? records : null;
+}
+
+async function refreshOfflineWorkflowCache(userId, projectId, type, records) {
+  if (!userId || !projectId) return;
+  await updateOfflineProjectWorkflowRecords(userId, projectId, type, records).catch(() => null);
+}
+
+export async function loadOfflineProjectWorkflowSnapshot({ projectId, visibleTabs = [], role = '' } = {}) {
+  const scopedProjectId = String(projectId || '').trim();
+  if (!scopedProjectId) throw new Error('A project is required for offline workflow storage.');
+  const visibleIds = new Set((visibleTabs || []).map((tab) => String(tab?.id || tab || '').trim()).filter(Boolean));
+  const sections = Object.entries(OFFLINE_WORKFLOW_SECTION_TYPES)
+    .filter(([sectionId]) => visibleIds.has(sectionId))
+    .map(([sectionId, configuredTypes]) => ({
+      sectionId,
+      types: sectionId === 'warranty-closeout' && role === 'Customer'
+        ? ['warrantyItems']
+        : configuredTypes,
+    }));
+  const workflows = {};
+  const cachedSections = [];
+  const failures = [];
+
+  await Promise.all(sections.map(async ({ sectionId, types }) => {
+    const results = await Promise.allSettled(types.map(async (type) => {
+      if (type === 'warrantyItems' && role === 'Customer') {
+        const service = createConstructionWorkflowService({ projectId: scopedProjectId, canEdit: false });
+        const result = await service.listCustomerWarrantyRequests();
+        return result.records || [];
+      }
+      return loadWorkflowItemsForProjects(type, [scopedProjectId]);
+    }));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) {
+      failures.push({
+        sectionId,
+        reason: failed.reason instanceof Error ? failed.reason.message : 'Workflow download failed.',
+      });
+      return;
+    }
+    types.forEach((type, index) => {
+      workflows[type] = results[index].value;
+    });
+    cachedSections.push(sectionId);
+  }));
+
+  return { workflows, cachedSections, failures };
 }
 
 function remoteBody(type, projectId, record) {
@@ -322,6 +389,7 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         const response = await fetchAuthorizedSupabase(`/rest/v1/${config.table}?project_id=eq.${encodeURIComponent(scopedProjectId)}&select=*&order=${config.order}`, { method: 'GET' }, 'Project workflow load');
         const remoteRecords = (await responseJson(response, 'Unable to load project workflow.')).map((row) => normalize(type, row));
         writeLocal(type, scopedProjectId, remoteRecords);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, type, remoteRecords);
         const records = type === 'dailyLogs'
           ? mergeQueuedDailyLogs(remoteRecords, getOfflineOperations(userId, { kind: 'daily-log.save', projectId: scopedProjectId }))
           : type === 'warrantyItems'
@@ -330,6 +398,17 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         return { records, local: false };
       } catch (error) {
         if (missingTable(error)) return { records: readLocal(type, scopedProjectId), local: true, setupRequired: true };
+        if (isOfflineNetworkError(error)) {
+          const offlineRecords = await readOfflineWorkflowRecords(userId, scopedProjectId, type);
+          if (offlineRecords) {
+            const records = type === 'dailyLogs'
+              ? mergeQueuedDailyLogs(offlineRecords, getOfflineOperations(userId, { kind: 'daily-log.save', projectId: scopedProjectId }))
+              : type === 'warrantyItems'
+                ? mergeQueuedWarrantyItems(offlineRecords, getOfflineOperations(userId, { kind: 'warranty-item.save', projectId: scopedProjectId }))
+                : offlineRecords;
+            return { records, local: true, offline: true };
+          }
+        }
         if (type === 'dailyLogs' && isOfflineNetworkError(error)) {
           return {
             records: mergeQueuedDailyLogs(
@@ -397,10 +476,12 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
             entityId: savedRecord.id,
           });
         }
-        writeLocal(type, scopedProjectId, [
+        const nextLocalRecords = [
           savedRecord,
           ...readLocal(type, scopedProjectId).filter((item) => item.id !== savedRecord.id),
-        ]);
+        ];
+        writeLocal(type, scopedProjectId, nextLocalRecords);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, type, nextLocalRecords);
         return { record: savedRecord, local: false };
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal(type, record), local: true, setupRequired: true };
@@ -424,6 +505,9 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
       try {
         const response = await fetchAuthorizedSupabase(`/rest/v1/${config.table}?project_id=eq.${encodeURIComponent(scopedProjectId)}&id=eq.${encodeURIComponent(record.id)}&version=eq.${record.version}`, { method: 'DELETE' }, 'Project workflow delete');
         if (!response.ok) throw new Error(await response.text());
+        const nextLocalRecords = readLocal(type, scopedProjectId).filter((item) => item.id !== record.id);
+        writeLocal(type, scopedProjectId, nextLocalRecords);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, type, nextLocalRecords);
         return { local: false };
       } catch (error) {
         if (type === 'dailyLogs' && offlineQueueEnabled && isOfflineNetworkError(error)) {
@@ -455,7 +539,14 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         }, 'Portal response');
         const payload = await responseJson(remoteResponse, 'Unable to save portal response.');
         if (!Array.isArray(payload) || !payload[0]) throw new Error('This portal item changed elsewhere. Reopen it before responding.');
-        return { record: normalize('portalItems', payload[0]), local: false };
+        const savedRecord = normalize('portalItems', payload[0]);
+        const nextLocalRecords = [
+          savedRecord,
+          ...readLocal('portalItems', scopedProjectId).filter((item) => item.id !== savedRecord.id),
+        ];
+        writeLocal('portalItems', scopedProjectId, nextLocalRecords);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, 'portalItems', nextLocalRecords);
+        return { record: savedRecord, local: false };
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal('portalItems', updated), local: true, setupRequired: true };
         throw error;
@@ -471,9 +562,16 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
           body: JSON.stringify({ p_project_id: scopedProjectId }),
         }, 'Customer warranty request load');
         const payload = await responseJson(response, 'Unable to load warranty requests.');
-        return { records: (Array.isArray(payload) ? payload : []).map((row) => normalize('warrantyItems', row)), local: false };
+        const records = (Array.isArray(payload) ? payload : []).map((row) => normalize('warrantyItems', row));
+        writeLocal('warrantyItems', scopedProjectId, records);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, 'warrantyItems', records);
+        return { records, local: false };
       } catch (error) {
         if (missingTable(error)) return { records: readLocal('warrantyItems', scopedProjectId), local: true, setupRequired: true };
+        if (isOfflineNetworkError(error)) {
+          const offlineRecords = await readOfflineWorkflowRecords(userId, scopedProjectId, 'warrantyItems');
+          if (offlineRecords) return { records: offlineRecords, local: true, offline: true };
+        }
         throw error;
       }
     },
@@ -502,7 +600,14 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
         }, 'Customer warranty request submission');
         const payload = await responseJson(response, 'Unable to submit warranty request.');
         if (!Array.isArray(payload) || !payload[0]) throw new Error('Warranty request submission returned no record.');
-        return { record: normalize('warrantyItems', payload[0]), local: false };
+        const savedRecord = normalize('warrantyItems', payload[0]);
+        const nextLocalRecords = [
+          savedRecord,
+          ...readLocal('warrantyItems', scopedProjectId).filter((item) => item.id !== savedRecord.id),
+        ];
+        writeLocal('warrantyItems', scopedProjectId, nextLocalRecords);
+        await refreshOfflineWorkflowCache(userId, scopedProjectId, 'warrantyItems', nextLocalRecords);
+        return { record: savedRecord, local: false };
       } catch (error) {
         if (missingTable(error)) return { record: saveLocal('warrantyItems', localRecord), local: true, setupRequired: true };
         throw error;

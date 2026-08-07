@@ -19,11 +19,14 @@ import {
   applyQueuedTaskOperations,
   getOfflineOperations,
   getOfflineOperationSummary,
+  isOfflineNetworkError,
   removeOfflineOperation,
   subscribeToOfflineOperations,
   updateOfflineOperation,
 } from './services/offlineOperations.js';
 import { removeOfflineAttachments } from './services/offlineAttachmentStore.js';
+import { loadOfflineTrackerData } from './services/offlineProjectStore.js';
+import { readWorkspaceCache, workspaceCacheMatches, writeWorkspaceCache } from './services/workspaceCache.js';
 import { flushOfflineOperations } from './services/offlineSync.js';
 import {
   DEFAULT_RUNTIME_STATUS,
@@ -73,6 +76,18 @@ function loadAndroidNotificationsModule() {
 
 function getStorageBannerMessage(storageMode, storageIssue = '') {
   if (storageMode === 'supabase' || storageMode === 'loading') return null;
+  if (storageMode === 'workspace-cache-offline') {
+    return {
+      title: 'Working from the saved workspace.',
+      message: storageIssue || 'Reconnect to check for updates and synchronize device-saved changes.',
+    };
+  }
+  if (storageMode === 'offline-cache') {
+    return {
+      title: 'Working from an offline project copy.',
+      message: storageIssue || 'Reconnect to refresh project information and synchronize device-saved changes.',
+    };
+  }
   if (storageMode === 'local-unconfigured') {
     return { title: 'Supabase not configured.', message: storageIssue || 'The React app is currently reading browser local storage only.' };
   }
@@ -336,16 +351,94 @@ export default function App() {
     const requestId = refreshRequestIdRef.current + 1;
     refreshRequestIdRef.current = requestId;
     const initialLoad = !initialWorkspaceLoadedRef.current;
+    let quickCache = null;
     setLoading(true);
     setError('');
     try {
+      if (initialLoad && options?.force !== true) {
+        quickCache = await readWorkspaceCache(authSession?.user?.id).catch((cacheError) => {
+          reportError(cacheError, { operation: 'workspace.cache.read', workspace: activeTab });
+          return null;
+        });
+        if (quickCache?.state) {
+          setTrackerState(applyQueuedFieldOperations({
+            ...quickCache.state,
+            storageMode: 'loading',
+            storageIssue: '',
+            deferredDataStatus: 'ready',
+            workspaceCache: { status: 'checking', savedAt: quickCache.savedAt },
+          }, getOfflineOperations(authSession?.user?.id)));
+          setLoading(false);
+        }
+      }
       const {
         loadCurrentAppUserProfile,
         loadPortalTrackerData,
+        loadWorkspaceCacheManifest,
         loadTrackerData,
         loadTrackerStartupData,
       } = await loadTrackerDataModule();
       if (initialLoad) {
+        if (quickCache?.state) {
+          let manifest = null;
+          try {
+            manifest = await loadWorkspaceCacheManifest();
+          } catch (manifestError) {
+            if (isOfflineNetworkError(manifestError)) {
+              if (requestId !== refreshRequestIdRef.current) return;
+              initialWorkspaceLoadedRef.current = true;
+              setTrackerState(applyQueuedFieldOperations({
+                ...quickCache.state,
+                storageMode: 'workspace-cache-offline',
+                storageIssue: 'No connection. Showing the last complete workspace saved on this device.',
+                deferredDataStatus: 'ready',
+                workspaceCache: { status: 'offline', savedAt: quickCache.savedAt },
+              }, getOfflineOperations(authSession?.user?.id)));
+              return;
+            }
+          }
+
+          if (manifest && workspaceCacheMatches(quickCache, manifest)) {
+            if (requestId !== refreshRequestIdRef.current) return;
+            initialWorkspaceLoadedRef.current = true;
+            setTrackerState(applyQueuedFieldOperations({
+              ...quickCache.state,
+              storageMode: 'supabase',
+              storageIssue: '',
+              deferredDataStatus: 'ready',
+              workspaceCache: { status: 'fresh', savedAt: quickCache.savedAt },
+            }, getOfflineOperations(authSession?.user?.id)));
+            return;
+          }
+
+          if (requestId !== refreshRequestIdRef.current) return;
+          setTrackerState((current) => ({
+            ...current,
+            storageMode: 'loading',
+            workspaceCache: { status: 'updating', savedAt: quickCache.savedAt },
+          }));
+          const profile = !manifest || manifest.mode === 'portal' ? await loadCurrentAppUserProfile() : null;
+          const portalMode = manifest?.mode === 'portal' || ['Customer', 'Subcontractor'].includes(profile?.role);
+          const completeState = portalMode
+            ? await loadPortalTrackerData({ profile, force: true })
+            : await loadTrackerData({ force: true });
+          if (requestId !== refreshRequestIdRef.current) return;
+          initialWorkspaceLoadedRef.current = true;
+          const nextState = applyQueuedFieldOperations(
+            { ...completeState, deferredDataStatus: 'ready', workspaceCache: { status: 'fresh', savedAt: new Date().toISOString() } },
+            getOfflineOperations(authSession?.user?.id),
+          );
+          setTrackerState(nextState);
+          if (manifest) {
+            void writeWorkspaceCache({
+              userId: authSession?.user?.id,
+              state: completeState,
+              manifestToken: manifest.token,
+            }).catch((cacheError) => reportError(cacheError, { operation: 'workspace.cache.write', workspace: activeTab }));
+          }
+          return;
+        }
+
         const startup = await loadTrackerStartupData({
           projectId: getProjectIdFromLocation(),
           force: options?.force !== false,
@@ -356,7 +449,15 @@ export default function App() {
           startup.data,
           getOfflineOperations(authSession?.user?.id),
         ));
-        if (!startup.complete) {
+        if (startup.complete) {
+          void loadWorkspaceCacheManifest()
+            .then((manifest) => writeWorkspaceCache({
+              userId: authSession?.user?.id,
+              state: startup.data,
+              manifestToken: manifest.token,
+            }))
+            .catch((cacheError) => reportError(cacheError, { operation: 'workspace.cache.write', workspace: activeTab }));
+        } else {
           setLoading(false);
           void loadTrackerData({ force: true })
             .then((completeState) => {
@@ -365,6 +466,13 @@ export default function App() {
                 { ...completeState, deferredDataStatus: 'ready' },
                 getOfflineOperations(authSession?.user?.id),
               ));
+              void loadWorkspaceCacheManifest()
+                .then((manifest) => writeWorkspaceCache({
+                  userId: authSession?.user?.id,
+                  state: completeState,
+                  manifestToken: manifest.token,
+                }))
+                .catch((cacheError) => reportError(cacheError, { operation: 'workspace.cache.write', workspace: activeTab }));
             })
             .catch((deferredError) => {
               if (requestId !== refreshRequestIdRef.current) return;
@@ -383,13 +491,40 @@ export default function App() {
         ? await loadPortalTrackerData({ profile, force: options?.force !== false })
         : await loadTrackerData({ force: options?.force !== false });
       if (requestId === refreshRequestIdRef.current) {
-        setTrackerState(applyQueuedFieldOperations(
+        const nextState = applyQueuedFieldOperations(
           { ...next, deferredDataStatus: 'ready' },
           getOfflineOperations(authSession?.user?.id),
-        ));
+        );
+        setTrackerState(nextState);
+        void loadWorkspaceCacheManifest()
+          .then((manifest) => writeWorkspaceCache({
+            userId: authSession?.user?.id,
+            state: next,
+            manifestToken: manifest.token,
+          }))
+          .catch((cacheError) => reportError(cacheError, { operation: 'workspace.cache.write', workspace: activeTab }));
       }
     } catch (err) {
       if (requestId === refreshRequestIdRef.current) {
+        if (initialLoad && isOfflineNetworkError(err)) {
+          try {
+            const cachedState = await loadOfflineTrackerData(
+              authSession?.user?.id,
+              getProjectIdFromLocation(),
+            );
+            if (cachedState && requestId === refreshRequestIdRef.current) {
+              initialWorkspaceLoadedRef.current = true;
+              setTrackerState(applyQueuedFieldOperations(
+                cachedState,
+                getOfflineOperations(authSession?.user?.id),
+              ));
+              setError('');
+              return;
+            }
+          } catch (cacheError) {
+            reportError(cacheError, { operation: 'offline.project.load', workspace: activeTab });
+          }
+        }
         reportError(err, { operation: 'startup.bootstrap', workspace: activeTab });
         setError(err instanceof Error ? err.message : 'Failed to load tracker data.');
       }
@@ -541,14 +676,15 @@ export default function App() {
   const capabilities = useMemo(() => {
     const base = getUserCapabilities(activeUser?.role);
     const configuredTabs = new Set(normalizeVisibleTopLevelTabs(trackerState.settings?.visibleTopLevelTabs));
+    const cacheCheckComplete = trackerState.storageMode !== 'loading';
     return {
       ...base,
-      canEdit: base.canEdit && !runtimeStatus.writesFrozen,
-      canManageUsers: base.canManageUsers && !runtimeStatus.writesFrozen,
-      canAccessSettings: base.canAccessSettings && !runtimeStatus.writesFrozen,
+      canEdit: base.canEdit && !runtimeStatus.writesFrozen && cacheCheckComplete,
+      canManageUsers: base.canManageUsers && !runtimeStatus.writesFrozen && cacheCheckComplete,
+      canAccessSettings: base.canAccessSettings && !runtimeStatus.writesFrozen && cacheCheckComplete,
       allowedTabs: base.allowedTabs.filter((tabId) => configuredTabs.has(tabId)),
     };
-  }, [activeUser?.role, runtimeStatus.writesFrozen, trackerState.settings?.visibleTopLevelTabs]);
+  }, [activeUser?.role, runtimeStatus.writesFrozen, trackerState.settings?.visibleTopLevelTabs, trackerState.storageMode]);
 
   useEffect(() => {
     if (loading || activeTab !== 'tasks') return;
@@ -1502,6 +1638,8 @@ export default function App() {
           homeSignal={projectsHomeSignal}
           navigationTarget={projectNavigationTarget}
           deferredDataLoading={deferredDataLoading}
+          offlineUserId={authSession?.user?.id}
+          offlineOperations={offlineReviewOperations}
         />
       );
     }
@@ -1918,6 +2056,15 @@ export default function App() {
             </button>
           </div>
         </section>
+      ) : null}
+
+      {['checking', 'updating'].includes(trackerState.workspaceCache?.status) ? (
+        <div className="workspace-cache-status" role="status" aria-live="polite">
+          <FluentIcon name="replace" size={16} />
+          <span>
+            Saved workspace loaded. {trackerState.workspaceCache.status === 'checking' ? 'Checking for updates…' : 'Downloading changed data…'}
+          </span>
+        </div>
       ) : null}
 
       {error ? (

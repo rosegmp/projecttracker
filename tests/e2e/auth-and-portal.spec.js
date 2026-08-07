@@ -157,6 +157,9 @@ test('successful internal sign-in starts at Home instead of a remembered or deep
 
 test('customer stays inside the allowlisted portal and can answer a published request', async ({ page }) => {
   let submittedResponse = null;
+  let portalBootstrapCount = 0;
+  let workspaceManifestCount = 0;
+  let workspaceManifestToken = 'portal-workspace-manifest-1';
 
   await page.addInitScript((session) => {
     window.localStorage.setItem('cx_auth_session', JSON.stringify(session));
@@ -166,8 +169,38 @@ test('customer stays inside the allowlisted portal and can answer a published re
     const request = route.request();
     const url = new URL(request.url());
 
+    if (url.pathname.endsWith('/rpc/get_workspace_cache_manifest')) {
+      workspaceManifestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ schemaVersion: 1, mode: 'portal', token: workspaceManifestToken }),
+      });
+      return;
+    }
+
     if (url.pathname.endsWith('/rpc/get_app_startup_bootstrap')) {
+      portalBootstrapCount += 1;
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(portalBootstrap()) });
+      return;
+    }
+
+    if (url.pathname.endsWith('/rpc/get_current_app_user_profile')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(portalBootstrap().profile),
+      });
+      return;
+    }
+
+    if (url.pathname.endsWith('/rpc/get_project_portal_bootstrap')) {
+      portalBootstrapCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(portalBootstrap().portal),
+      });
       return;
     }
 
@@ -244,6 +277,19 @@ test('customer stays inside the allowlisted portal and can answer a published re
   await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveCount(0);
   await expect(page).toHaveURL(/\?tab=projects/);
 
+  await expect.poll(() => workspaceManifestCount).toBeGreaterThan(0);
+  const bootstrapBeforeQuickReload = portalBootstrapCount;
+  const manifestsBeforeQuickReload = workspaceManifestCount;
+  await page.reload();
+  await expect.poll(() => workspaceManifestCount).toBeGreaterThan(manifestsBeforeQuickReload);
+  expect(portalBootstrapCount).toBe(bootstrapBeforeQuickReload);
+  await expect(page.getByLabel('Portal account')).toContainText('Portal Customer');
+
+  workspaceManifestToken = 'portal-workspace-manifest-2';
+  await page.reload();
+  await expect.poll(() => portalBootstrapCount).toBeGreaterThan(bootstrapBeforeQuickReload);
+  await expect(page.getByLabel('Portal account')).toContainText('Portal Customer');
+
   await page.getByRole('tab', { name: 'Portal' }).click();
   await expect(page.getByText('Confirm delivery window')).toBeVisible();
   await page.getByRole('button', { name: 'Respond' }).click();
@@ -265,7 +311,7 @@ test('administrator project-tab settings hide project sections and preserve requ
   const adminUserId = 'admin-user';
   const adminProjectId = 'project-admin-1';
   const adminSettings = {
-    visibleProjectTabs: ['tasks', 'files'],
+    visibleProjectTabs: ['tasks', 'calendar', 'files', 'inspections', 'daily-logs', 'selections'],
     users: [{ id: adminUserId, name: 'Test Administrator', email: adminEmail, role: 'Admin' }],
     currentUserId: adminUserId,
   };
@@ -291,6 +337,70 @@ test('administrator project-tab settings hide project sections and preserve requ
     version: 1,
   };
   const adminAccessRow = { project_id: adminProjectId, user_id: adminUserId, position: 0, version: 1 };
+  const adminFolderRow = {
+    project_id: adminProjectId,
+    id: 'admin-folder-1',
+    position: 0,
+    data: { name: 'Offline plans' },
+    version: 1,
+  };
+  const adminFileRow = {
+    project_id: adminProjectId,
+    folder_id: adminFolderRow.id,
+    id: 'admin-file-1',
+    position: 0,
+    data: {
+      originalName: 'Offline plan.txt',
+      name: 'Offline plan.txt',
+      type: 'text/plain',
+      storageBucket: 'project-files',
+      storagePath: `projects/${adminProjectId}/offline-plan.txt`,
+    },
+    version: 1,
+  };
+  const adminSelectionRow = {
+    project_id: adminProjectId,
+    id: 'admin-selection-1',
+    position: 0,
+    data: { itemName: 'Kitchen tile', category: 'Flooring', status: 'needs decision' },
+    version: 1,
+  };
+  const adminSelectionAttachmentRow = {
+    project_id: adminProjectId,
+    selection_id: adminSelectionRow.id,
+    id: 'admin-selection-attachment-1',
+    position: 0,
+    data: {
+      originalName: 'Tile quote.txt',
+      name: 'Tile quote.txt',
+      type: 'text/plain',
+      storageBucket: 'project-files',
+      storagePath: `projects/${adminProjectId}/selections/tile-quote.txt`,
+    },
+    version: 1,
+  };
+  const adminDailyLogRow = {
+    id: 'admin-daily-log-1',
+    project_id: adminProjectId,
+    log_date: '2026-08-07',
+    title: 'Offline site log',
+    data: {
+      id: 'admin-daily-log-1',
+      projectId: adminProjectId,
+      date: '2026-08-07',
+      title: 'Offline site log',
+      weather: 'Clear',
+      notes: 'Cached workflow record',
+      subcontractorWork: [],
+    },
+    version: 1,
+  };
+  let simulateOffline = false;
+  let storageDownloadCount = 0;
+  let startupBootstrapCount = 0;
+  let workspaceManifestCount = 0;
+  let projectFilesReadCount = 0;
+  let workspaceManifestToken = 'admin-workspace-manifest-1';
 
   await page.addInitScript((session) => {
     window.localStorage.setItem('cx_auth_session', JSON.stringify(session));
@@ -299,9 +409,28 @@ test('administrator project-tab settings hide project sections and preserve requ
     userId: '20000000-0000-4000-8000-000000000001',
   }));
 
+  await page.route(`${SUPABASE_ORIGIN}/storage/v1/object/authenticated/**`, async (route) => {
+    storageDownloadCount += 1;
+    await route.fulfill({ status: 200, contentType: 'text/plain', body: 'available offline' });
+  });
+
   await page.route(`${SUPABASE_ORIGIN}/rest/v1/**`, async (route) => {
+    if (simulateOffline) {
+      await route.abort('internetdisconnected');
+      return;
+    }
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/rpc/get_workspace_cache_manifest')) {
+      workspaceManifestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ schemaVersion: 1, mode: 'staff', token: workspaceManifestToken }),
+      });
+      return;
+    }
     if (url.pathname.endsWith('/rpc/get_app_startup_bootstrap')) {
+      startupBootstrapCount += 1;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -324,15 +453,16 @@ test('administrator project-tab settings hide project sections and preserve requ
           tasks: [],
           phases: [],
           steps: [],
-          folders: [],
-          files: [],
+          folders: [adminFolderRow],
+          files: [adminFileRow],
           photos: [],
-          selections: [],
+          selections: [adminSelectionRow],
           inspections: [],
         }),
       });
       return;
     }
+    if (url.pathname.endsWith('/project_files')) projectFilesReadCount += 1;
     const responseBody =
       url.pathname.endsWith('/settings')
         ? [{ id: 'app_settings', data: adminSettings, version: 1 }]
@@ -342,18 +472,112 @@ test('administrator project-tab settings hide project sections and preserve requ
             ? [adminUserRow]
             : url.pathname.endsWith('/project_user_access')
               ? [adminAccessRow]
-              : [];
+              : url.pathname.endsWith('/project_file_folders')
+                ? [adminFolderRow]
+                : url.pathname.endsWith('/project_files')
+                  ? [adminFileRow]
+                  : url.pathname.endsWith('/project_selections')
+                    ? [adminSelectionRow]
+                  : url.pathname.endsWith('/project_selection_attachments')
+                    ? [adminSelectionAttachmentRow]
+                    : url.pathname.endsWith('/project_daily_logs')
+                      ? [adminDailyLogRow]
+                      : [];
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody) });
   });
 
   await page.goto(`/?tab=projects&project=${adminProjectId}`);
 
   await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Portal' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Tasks' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Calendar' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Daily Logs' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Files' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Calendar' })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: 'Photos' })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Project breadcrumb' })).toContainText('Admin Tab Test');
+
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  const moreSections = page.getByLabel('More project sections', { exact: true });
+  await expect(moreSections.getByRole('button', { name: 'Portal', exact: true })).toBeVisible();
+  await expect(moreSections.getByRole('button', { name: 'Inspections', exact: true })).toBeVisible();
+  await expect(moreSections.getByRole('button', { name: 'Selections', exact: true })).toBeVisible();
+  await expect(moreSections.getByRole('button', { name: 'Photos', exact: true })).toHaveCount(0);
+  await moreSections.getByRole('button', { name: 'Make available offline', exact: true }).click();
+  const offlineAccess = moreSections.getByLabel('Offline access', { exact: true });
+  await expect(offlineAccess.getByText('Available on this device', { exact: true })).toBeVisible();
+  await expect(offlineAccess.getByText('Overview', { exact: true })).toBeVisible();
+  await expect(offlineAccess.getByText('Inspections', { exact: true })).toBeVisible();
+  const offlineAssets = offlineAccess.getByLabel('Offline files and photos', { exact: true });
+  await offlineAssets.getByRole('checkbox', { name: 'Files (2)', exact: true }).check();
+  await offlineAssets.getByRole('button', { name: 'Download selected', exact: true }).click();
+  await expect(offlineAssets.getByText('2 items downloaded for offline use.', { exact: true })).toBeVisible();
+  await expect(offlineAccess.getByText('Files', { exact: true })).toBeVisible();
+  expect(storageDownloadCount).toBe(2);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => {
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+  });
+  await page.getByRole('tab', { name: 'Daily Logs', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Offline site log' })).toBeVisible();
+  await expect(page.getByText('Cached workflow record', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  await expect(page.getByText('Offline plan.txt', { exact: true })).toBeVisible();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Offline plan.txt', exact: true }).click();
+  await download;
+  expect(storageDownloadCount).toBe(2);
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await moreSections.getByRole('button', { name: 'Selections', exact: true }).click();
+  await expect(page.getByText('Kitchen tile', { exact: true })).toBeVisible();
+  const selectionDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Tile quote.txt', exact: true }).click();
+  await selectionDownload;
+  expect(storageDownloadCount).toBe(2);
+  await page.evaluate(() => {
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+  });
+  await page.getByRole('button', { name: 'Projects', exact: true }).click();
+  const offlineProjects = page.getByLabel('Offline projects', { exact: true });
+  await expect(offlineProjects).toContainText('1 available');
+  await expect(offlineProjects.getByRole('button', { name: /Admin Tab Test/ })).toBeVisible();
+  await expect(page.locator('.project-offline-badge')).toContainText('Offline');
+  await offlineProjects.getByRole('button', { name: 'Show offline only', exact: true }).click();
+  await expect(offlineProjects.getByRole('button', { name: 'Show all projects', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await offlineProjects.getByRole('button', { name: 'Refresh copies', exact: true }).click();
+  await offlineProjects.getByRole('button', { name: /Admin Tab Test/ }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await moreSections.getByRole('checkbox', { name: /Compact desktop navigation/ }).check();
+  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
+  await moreSections.getByRole('button', { name: 'Inspections', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Inspections' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/projectTab=inspections/);
+
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await moreSections.getByRole('button', { name: 'Unpin Files', exact: true }).click();
+  await moreSections.getByRole('button', { name: 'Pin Selections', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tab', { name: 'Selections' })).toBeVisible();
+  await expect.poll(() => workspaceManifestCount).toBeGreaterThan(0);
+  const readsBeforeQuickReload = {
+    startup: startupBootstrapCount,
+    files: projectFilesReadCount,
+    manifests: workspaceManifestCount,
+  };
+  await page.reload();
+  await expect.poll(() => workspaceManifestCount).toBeGreaterThan(readsBeforeQuickReload.manifests);
+  expect(startupBootstrapCount).toBe(readsBeforeQuickReload.startup);
+  expect(projectFilesReadCount).toBe(readsBeforeQuickReload.files);
+  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
+  await expect(page.getByRole('tab', { name: 'Selections' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Files' })).toHaveCount(0);
+
+  const filesBeforeChangedReload = projectFilesReadCount;
+  workspaceManifestToken = 'admin-workspace-manifest-2';
+  await page.reload();
+  await expect.poll(() => projectFilesReadCount).toBeGreaterThan(filesBeforeChangedReload);
+  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
 
   await page.getByRole('button', { name: /^Settings:/ }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
@@ -361,7 +585,8 @@ test('administrator project-tab settings hide project sections and preserve requ
   const projectNavigation = page.getByRole('heading', { name: 'Project workspace navigation' }).locator('xpath=ancestor::section[1]');
   await expect(projectNavigation.getByRole('checkbox', { name: /Overview/ })).toBeDisabled();
   await expect(projectNavigation.getByRole('checkbox', { name: /Tasks/ })).toBeChecked();
-  await expect(projectNavigation.getByRole('checkbox', { name: /Calendar/ })).not.toBeChecked();
+  await expect(projectNavigation.getByRole('checkbox', { name: /Calendar/ })).toBeChecked();
+  await expect(projectNavigation.getByRole('checkbox', { name: /Photos/ })).not.toBeChecked();
 
   await page.getByRole('tab', { name: 'Notifications' }).click();
   const assignmentEmails = page.getByRole('heading', { name: 'New task assignment emails' }).locator('xpath=ancestor::section[1]');
@@ -373,4 +598,9 @@ test('administrator project-tab settings hide project sections and preserve requ
   await externalEmailToggle.check();
   await expect(internalEmailToggle).toBeChecked();
   await expect(externalEmailToggle).toBeChecked();
+
+  simulateOffline = true;
+  await page.goto(`/?tab=projects&project=${adminProjectId}`);
+  await expect(page.getByText('Working from the saved workspace.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Project breadcrumb' })).toContainText('Admin Tab Test');
 });

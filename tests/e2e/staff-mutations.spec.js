@@ -679,7 +679,9 @@ test('staff warranty updates save on device offline and synchronize after reconn
 
   await page.goto('/?tab=projects');
   await page.getByRole('button', { name: 'Staff Test Project', exact: true }).click();
-  await page.getByRole('tab', { name: 'Warranty & Closeout' }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByLabel('More project sections', { exact: true })
+    .getByRole('button', { name: 'Warranty & Closeout', exact: true }).click();
   await expect(page.getByText('WAR-001 · Original punch item')).toBeVisible();
   await context.setOffline(true);
   await page.getByRole('button', { name: 'Edit WAR-001' }).click();
@@ -854,7 +856,9 @@ test('Takeoff drawing shapes support constrained geometry and editable styles', 
   });
 
   await page.goto(`/?tab=projects&project=${projectId}`);
-  await page.getByRole('tab', { name: 'Takeoff', exact: true }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByLabel('More project sections', { exact: true })
+    .getByRole('button', { name: 'Takeoff', exact: true }).click();
   await page.locator('#pdfInput').setInputFiles({
     name: 'blank-plan.pdf',
     mimeType: 'application/pdf',
