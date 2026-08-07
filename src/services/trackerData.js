@@ -19,6 +19,7 @@ import {
   reconcileOfflineAttachments,
   removeOfflineAttachments,
 } from './offlineAttachmentStore.js';
+import { getOfflineProjectAssetByReference } from './offlineProjectAssetStore.js';
 import {
   normalizeAppRuntimeStatus,
   throwIfAppWriteFrozen,
@@ -1514,7 +1515,21 @@ export async function downloadProjectFileFromStorage(file, options = {}) {
   if (!file?.storageBucket || !file?.storagePath || !isSupabaseConfigured()) {
     throw new Error('Storage file is missing its bucket or path.');
   }
-  ensureNetworkAvailable('download this file');
+  const loadCachedAsset = async () => {
+    const cached = await getOfflineProjectAssetByReference(
+      authSession?.user?.id,
+      file.storageBucket,
+      file.storagePath,
+    ).catch(() => null);
+    if (!cached?.blob) return null;
+    options.onProgress?.(cached.byteSize || cached.blob.size || 0, cached.byteSize || cached.blob.size || 0);
+    return cached.blob;
+  };
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const cached = await loadCachedAsset();
+    if (cached) return cached;
+    throw new Error('This file was not downloaded for offline use. Reconnect and update the project downloads.');
+  }
   const downloadUrl =
     `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(file.storageBucket)}/${encodeStoragePath(file.storagePath)}`;
   const requestOptions = { method: 'GET' };
@@ -1524,19 +1539,28 @@ export async function downloadProjectFileFromStorage(file, options = {}) {
   }
 
   let lastError = 'File download failed.';
+  let networkFailed = false;
+  let receivedHttpResponse = false;
   for (const headers of headerCandidates) {
     try {
       const response = await fetchWithTimeout(downloadUrl, {
         ...requestOptions,
         headers,
       }, 'File download');
+      receivedHttpResponse = true;
       if (response.ok) {
         return readDownloadResponse(response, options.onProgress);
       }
       lastError = `File download failed: ${await response.text()}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : 'File download failed.';
+      networkFailed = networkFailed || isOfflineNetworkError(error);
     }
+  }
+
+  if (networkFailed && !receivedHttpResponse) {
+    const cached = await loadCachedAsset();
+    if (cached) return cached;
   }
 
   throw new Error(lastError);
@@ -2636,6 +2660,22 @@ function normalizeStaffStartupPayload(payload) {
     startupProjectId,
     deferredDataStatus: 'loading',
   });
+}
+
+export async function loadWorkspaceCacheManifest() {
+  const manifest = await callPortalBootstrapRpc(
+    'get_workspace_cache_manifest',
+    'Workspace cache check',
+  );
+  const mode = String(manifest?.mode || '').trim();
+  if (Number(manifest?.schemaVersion) !== 1 || !['staff', 'portal'].includes(mode) || !String(manifest?.token || '').trim()) {
+    throw new Error('Workspace cache check returned an invalid manifest.');
+  }
+  return {
+    schemaVersion: 1,
+    mode,
+    token: String(manifest.token).trim(),
+  };
 }
 
 export async function loadTrackerStartupData({ projectId = '', force = false } = {}) {

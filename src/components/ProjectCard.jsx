@@ -58,7 +58,7 @@ function getProjectDashboardNextAction(project, taskCount) {
   return 'Project is in a good spot. Review progress and upcoming milestones.';
 }
 
-export default function ProjectCard({ project, tasks = [], taskCount, onEdit, onOpen, expanded = false, onToggle }) {
+export default function ProjectCard({ project, tasks = [], taskCount, onEdit, onOpen, expanded = false, onToggle, offlineAvailable = false }) {
   const health = getProjectOperationalHealth(project, tasks);
   const remaining = getDaysRemaining(project.end);
   const completion = getProjectTimelineCompletion(project);
@@ -93,6 +93,12 @@ export default function ProjectCard({ project, tasks = [], taskCount, onEdit, on
             <span className={`status-pill status-${project.status || 'planning'}`}>
               {project.status || 'planning'}
             </span>
+            {offlineAvailable ? (
+              <span className="project-offline-badge" title="Available offline on this device">
+                <FluentIcon name="checkCircle" size={14} />
+                Offline
+              </span>
+            ) : null}
           </div>
           <h3>
             <button className="project-title-button" type="button" onClick={() => onOpen(project)}>

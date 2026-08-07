@@ -1,10 +1,38 @@
-import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { downloadProjectFileFromStorage, loadAuditEvents } from '../services/trackerData.js';
 import { buildAuditTrailEntries } from '../utils/auditTrail.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
+import {
+  MAX_PINNED_PROJECT_SECTIONS,
+  buildProjectNavigationModel,
+  loadProjectNavigationPreferences,
+  recordRecentProjectSection,
+  saveProjectNavigationPreferences,
+  setProjectNavigationCompactMode,
+  togglePinnedProjectSection,
+} from '../utils/projectNavigation.js';
 import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
+import {
+  cacheProjectForOffline,
+  formatOfflineProjectSize,
+  getOfflineProjectRecord,
+  getProjectOfflineOperationSummary,
+  removeOfflineProject,
+  setOfflineProjectAssetSummary,
+  subscribeToOfflineProjects,
+} from '../services/offlineProjectStore.js';
+import {
+  MAX_OFFLINE_ASSET_BYTES_PER_ITEM,
+  MAX_OFFLINE_ASSET_BYTES_PER_USER,
+  cacheOfflineProjectAssets,
+  getOfflineProjectAssetCandidates,
+  removeOfflineProjectAssets,
+  summarizeOfflineProjectAssets,
+} from '../services/offlineProjectAssetStore.js';
+import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import { loadOfflineProjectWorkflowSnapshot } from '../services/constructionWorkflows.js';
 
 const NativeInspectionsView = lazy(() => import('./NativeInspectionsView.jsx'));
 const NativeTasksView = lazy(() => import('./NativeTasksView.jsx'));
@@ -121,6 +149,9 @@ export default function ProjectDetailView({
   activeUser = null,
   deferredDataLoading = false,
   selectionNavigationRequest = null,
+  onBack = null,
+  offlineUserId = '',
+  offlineOperations = [],
   onEdit,
   onDateClick,
   onCalendarItemClick,
@@ -142,6 +173,33 @@ export default function ProjectDetailView({
     const requestedTab = String(getSearchParam('projectTab') || '').trim();
     return visibleProjectTabs.some((tab) => tab.id === requestedTab) ? requestedTab : defaultProjectTabId;
   });
+  const visibleProjectTabScope = visibleProjectTabs.map((tab) => tab.id).join('|');
+  const [navigationPreferences, setNavigationPreferences] = useState(() =>
+    loadProjectNavigationPreferences(activeUser?.id, visibleProjectTabs, activeUser?.role),
+  );
+  const [showMoreSections, setShowMoreSections] = useState(false);
+  const [offlineProjectRecord, setOfflineProjectRecord] = useState(null);
+  const [offlineProjectBusy, setOfflineProjectBusy] = useState(false);
+  const [offlineAssetBusy, setOfflineAssetBusy] = useState(false);
+  const [offlineAssetSelection, setOfflineAssetSelection] = useState({ files: false, photos: false });
+  const [offlineAssetProgress, setOfflineAssetProgress] = useState(null);
+  const [offlineAssetMessage, setOfflineAssetMessage] = useState('');
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
+  const moreSectionsRef = useRef(null);
+  const moreSectionsButtonRef = useRef(null);
+  const projectNavigation = useMemo(
+    () => buildProjectNavigationModel(visibleProjectTabs, navigationPreferences, activeDetailTab, activeUser?.role),
+    [activeDetailTab, activeUser?.role, navigationPreferences, visibleProjectTabs],
+  );
+  const projectOfflineSummary = useMemo(
+    () => getProjectOfflineOperationSummary(offlineOperations, project.id),
+    [offlineOperations, project.id],
+  );
+  const offlineWorkflows = offlineProjectRecord?.snapshot?.workflows || {};
+  const offlineAssetCounts = useMemo(() => ({
+    files: getOfflineProjectAssetCandidates(project, ['files'], tasks, offlineWorkflows).length,
+    photos: getOfflineProjectAssetCandidates(project, ['photos'], tasks, offlineWorkflows).length,
+  }), [offlineWorkflows, project, tasks]);
   const [selectionHighlightRequest, setSelectionHighlightRequest] = useState(null);
   const [taskHighlightRequest, setTaskHighlightRequest] = useState(null);
   const [lastActivity, setLastActivity] = useState(null);
@@ -150,6 +208,81 @@ export default function ProjectDetailView({
     project.block || project.lot
       ? [project.block ? `Block ${project.block}` : '', project.lot ? `Lot ${project.lot}` : ''].filter(Boolean).join(' • ')
       : 'Not set';
+
+  useEffect(() => {
+    setNavigationPreferences(loadProjectNavigationPreferences(activeUser?.id, visibleProjectTabs, activeUser?.role));
+  }, [activeUser?.id, activeUser?.role, visibleProjectTabScope]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!offlineUserId || !project.id) {
+      setOfflineProjectRecord(null);
+      return undefined;
+    }
+    const refreshOfflineRecord = () => {
+      void getOfflineProjectRecord(offlineUserId, project.id)
+        .then((record) => {
+          if (!cancelled) setOfflineProjectRecord(record);
+        })
+        .catch(() => {
+          if (!cancelled) setOfflineProjectRecord(null);
+        });
+    };
+    refreshOfflineRecord();
+    const unsubscribe = subscribeToOfflineProjects(offlineUserId, refreshOfflineRecord);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [offlineUserId, project.id]);
+
+  useEffect(() => {
+    const selectedKinds = offlineProjectRecord?.assetSummary?.selectedKinds || offlineProjectRecord?.assetSections || [];
+    setOfflineAssetSelection({
+      files: selectedKinds.includes('files'),
+      photos: selectedKinds.includes('photos'),
+    });
+    setOfflineAssetMessage('');
+    setOfflineAssetProgress(null);
+  }, [offlineProjectRecord?.id]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visibleProjectTabIds.has(activeDetailTab)) return;
+    setNavigationPreferences((current) => {
+      const next = recordRecentProjectSection(current, activeDetailTab, visibleProjectTabs, activeUser?.role);
+      saveProjectNavigationPreferences(activeUser?.id, next, visibleProjectTabs, activeUser?.role);
+      return next;
+    });
+  }, [activeDetailTab, activeUser?.id, activeUser?.role, visibleProjectTabScope]);
+
+  useEffect(() => {
+    if (!showMoreSections) return undefined;
+    function handlePointerDown(event) {
+      if (!moreSectionsRef.current?.contains(event.target)) setShowMoreSections(false);
+    }
+    function handleKeyDown(event) {
+      if (event.key !== 'Escape') return;
+      setShowMoreSections(false);
+      moreSectionsButtonRef.current?.focus();
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showMoreSections]);
 
   useEffect(() => {
     const requestedTab = String(getSearchParam('projectTab') || '').trim();
@@ -258,53 +391,402 @@ export default function ProjectDetailView({
   ].filter(Boolean);
   const projectUsers = (data?.settings?.users || []).filter((user) => (project.accessUserIds || []).includes(user.id));
 
-  function openOverviewTarget(row) {
+  async function openOverviewTarget(row) {
     if (!visibleProjectTabIds.has(row.tab)) return;
-    setActiveDetailTab(row.tab);
+    const opened = await selectProjectSection(row.tab);
+    if (!opened) return;
     if (row.taskId) setTaskHighlightRequest({ taskId: row.taskId, token: `${row.taskId}-${Date.now()}` });
+  }
+
+  async function selectProjectSection(tabId) {
+    if (!visibleProjectTabIds.has(tabId)) return false;
+    if (!isOnline && !offlineProjectRecord?.cachedSections?.includes(tabId)) {
+      await showAppAlert(
+        offlineProjectRecord
+          ? `${visibleProjectTabs.find((tab) => tab.id === tabId)?.label || 'This section'} is not included in this project's offline copy. Reconnect before opening it.`
+          : 'This project was not made available offline. Reconnect before opening another section.',
+        'Section unavailable offline',
+      );
+      return false;
+    }
+    setActiveDetailTab(tabId);
+    setShowMoreSections(false);
+    return true;
+  }
+
+  function toggleProjectSectionPin(tabId) {
+    setNavigationPreferences((current) => {
+      const next = togglePinnedProjectSection(current, tabId, visibleProjectTabs, activeUser?.role);
+      saveProjectNavigationPreferences(activeUser?.id, next, visibleProjectTabs, activeUser?.role);
+      return next;
+    });
+  }
+
+  function toggleCompactDesktopNavigation(compactDesktop) {
+    setNavigationPreferences((current) => {
+      const next = setProjectNavigationCompactMode(current, compactDesktop, visibleProjectTabs, activeUser?.role);
+      saveProjectNavigationPreferences(activeUser?.id, next, visibleProjectTabs, activeUser?.role);
+      return next;
+    });
+  }
+
+  async function saveProjectOfflineCopy() {
+    if (!offlineUserId || !isOnline || deferredDataLoading) return;
+    setOfflineProjectBusy(true);
+    try {
+      const workflowSnapshot = await loadOfflineProjectWorkflowSnapshot({
+        projectId: project.id,
+        visibleTabs: visibleProjectTabs,
+        role: activeUser?.role,
+      });
+      const record = await cacheProjectForOffline({
+        userId: offlineUserId,
+        project,
+        tasks,
+        settings,
+        subs: data?.subs || [],
+        employees: data?.employees || [],
+        workflows: workflowSnapshot.workflows,
+        workflowSections: workflowSnapshot.cachedSections,
+        visibleTabs: visibleProjectTabs,
+      });
+      setOfflineProjectRecord(record);
+      if (workflowSnapshot.failures.length) {
+        await showAppAlert(
+          `The project copy was updated, but ${workflowSnapshot.failures.length} workflow section${workflowSnapshot.failures.length === 1 ? '' : 's'} could not be saved. Reconnect and update the copy again before relying on those sections offline.`,
+          'Offline copy partially updated',
+        );
+      }
+    } catch (error) {
+      await showAppAlert(
+        error instanceof Error ? error.message : 'The project could not be stored on this device.',
+        'Offline copy failed',
+      );
+    } finally {
+      setOfflineProjectBusy(false);
+    }
+  }
+
+  async function removeProjectOfflineCopy() {
+    if (!offlineProjectRecord || offlineProjectBusy) return;
+    const confirmed = await showAppConfirm(
+      `Remove the offline copy of ${project.name || 'this project'} from this device? Device-saved changes in the synchronization queue will not be removed.`,
+      { title: 'Remove offline copy?', confirmLabel: 'Remove copy', tone: 'danger' },
+    );
+    if (!confirmed) return;
+    setOfflineProjectBusy(true);
+    try {
+      await removeOfflineProjectAssets(offlineUserId, project.id);
+      await removeOfflineProject(offlineUserId, project.id);
+      setOfflineProjectRecord(null);
+    } catch (error) {
+      await showAppAlert(
+        error instanceof Error ? error.message : 'The offline project copy could not be removed.',
+        'Remove failed',
+      );
+    } finally {
+      setOfflineProjectBusy(false);
+    }
+  }
+
+  async function updateOfflineAssetDownloads() {
+    const selectedKinds = Object.entries(offlineAssetSelection)
+      .filter(([, selected]) => selected)
+      .map(([kind]) => kind);
+    if (!offlineProjectRecord || !isOnline || !selectedKinds.length || offlineAssetBusy) return;
+    setOfflineAssetBusy(true);
+    setOfflineAssetMessage('');
+    setOfflineAssetProgress({ completed: 0, total: offlineAssetCounts.files + offlineAssetCounts.photos });
+    try {
+      const summary = await cacheOfflineProjectAssets({
+        userId: offlineUserId,
+        project,
+        tasks,
+        workflows: offlineWorkflows,
+        selectedKinds,
+        downloadAsset: (asset) => downloadProjectFileFromStorage(asset),
+        onProgress: setOfflineAssetProgress,
+      });
+      const record = await setOfflineProjectAssetSummary(offlineUserId, project.id, summary);
+      setOfflineProjectRecord(record);
+      const incomplete = selectedKinds.filter((kind) => !summary.completeKinds.includes(kind));
+      setOfflineAssetMessage(
+        incomplete.length
+          ? `${summary.count} downloaded. ${summary.failed || summary.truncated ? 'Some items could not be saved; the previous cached copy was kept where available.' : 'The selected section is not yet complete.'}`
+          : `${summary.count} item${summary.count === 1 ? '' : 's'} downloaded for offline use.`,
+      );
+    } catch (error) {
+      setOfflineAssetMessage(error instanceof Error ? error.message : 'Files and photos could not be downloaded.');
+    } finally {
+      setOfflineAssetBusy(false);
+    }
+  }
+
+  async function removeOfflineAssetDownloads() {
+    if (!offlineProjectRecord || offlineAssetBusy) return;
+    const confirmed = await showAppConfirm(
+      'Remove downloaded files and photos for this project? The structured project copy and synchronization queue will remain.',
+      { title: 'Remove offline downloads?', confirmLabel: 'Remove downloads', tone: 'danger' },
+    );
+    if (!confirmed) return;
+    setOfflineAssetBusy(true);
+    try {
+      await removeOfflineProjectAssets(offlineUserId, project.id);
+      const summary = { ...summarizeOfflineProjectAssets([], []), completeKinds: [], updatedAt: new Date().toISOString() };
+      const record = await setOfflineProjectAssetSummary(offlineUserId, project.id, summary);
+      setOfflineProjectRecord(record);
+      setOfflineAssetSelection({ files: false, photos: false });
+      setOfflineAssetMessage('Downloaded files and photos were removed.');
+    } catch (error) {
+      setOfflineAssetMessage(error instanceof Error ? error.message : 'Offline downloads could not be removed.');
+    } finally {
+      setOfflineAssetBusy(false);
+    }
   }
 
   return (
     <div className={`project-detail-page${subcontractorReadOnly ? ' portal-user-view' : ''}${customerReadOnly ? ' customer-project-view' : ''}`}>
-      <div
-        className="project-detail-tabs"
-        role="tablist"
-        aria-label={`${project.name} sections`}
-        onKeyDown={(event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'))
-            .filter((tab) => !tab.hidden && tab.offsetParent !== null);
-          const currentIndex = tabs.indexOf(event.target);
-          if (currentIndex < 0) return;
-          event.preventDefault();
-          const nextIndex =
-            event.key === 'Home'
-              ? 0
-              : event.key === 'End'
-                ? tabs.length - 1
-                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-          tabs[nextIndex]?.focus();
-          tabs[nextIndex]?.click();
-        }}
-      >
-        {visibleProjectTabs.map((tab) => {
-          const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
-          return (
+      <div className={`project-detail-navigation-shell${projectNavigation.compactDesktop ? ' is-compact-desktop' : ''}`}>
+        <header className="project-detail-context">
+          <nav className="project-detail-breadcrumbs" aria-label="Project breadcrumb">
+            {onBack ? <button type="button" onClick={onBack}>Projects</button> : <span>Projects</span>}
+            <FluentIcon name="chevronRight" size={14} />
+            <strong>{project.name || 'Project'}</strong>
+          </nav>
+          <div className="project-detail-context-meta">
+            <span className={`status-pill status-${project.status || 'planning'}`}>{project.status || 'planning'}</span>
+            <span>{project.address || 'Address not set'}</span>
+          </div>
+        </header>
+
+        <div className="project-detail-navigation">
+          <div
+            className="project-detail-tabs"
+            role="tablist"
+            aria-label={`${project.name} sections`}
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'))
+                .filter((tab) => !tab.hidden && tab.offsetParent !== null);
+              const currentIndex = tabs.indexOf(event.target);
+              if (currentIndex < 0) return;
+              event.preventDefault();
+              const nextIndex =
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? tabs.length - 1
+                    : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+              tabs[nextIndex]?.focus();
+              tabs[nextIndex]?.click();
+            }}
+          >
+          {projectNavigation.primaryTabs.map((tab) => {
+            const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
+            return (
+              <button
+                key={tab.id}
+                id={`project-tab-${tab.id}`}
+                className={`react-tab${activeDetailTab === tab.id ? ' active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={activeDetailTab === tab.id ? 'true' : 'false'}
+                aria-controls={`project-panel-${tab.id}`}
+                tabIndex={activeDetailTab === tab.id ? 0 : -1}
+                onClick={() => selectProjectSection(tab.id)}
+              >
+                {label}
+              </button>
+            );
+          })}
+          </div>
+
+          {projectNavigation.moreTabs.length ? (
+            <div className="project-detail-more" ref={moreSectionsRef}>
             <button
-              key={tab.id}
-              id={`project-tab-${tab.id}`}
-              className={`react-tab${activeDetailTab === tab.id ? ' active' : ''}`}
+              ref={moreSectionsButtonRef}
+              className={`react-tab project-detail-more-button${showMoreSections ? ' active' : ''}`}
               type="button"
-              role="tab"
-              aria-selected={activeDetailTab === tab.id ? 'true' : 'false'}
-              aria-controls={`project-panel-${tab.id}`}
-              tabIndex={activeDetailTab === tab.id ? 0 : -1}
-              onClick={() => setActiveDetailTab(tab.id)}
+              aria-expanded={showMoreSections ? 'true' : 'false'}
+              onClick={() => setShowMoreSections((current) => !current)}
             >
-              {label}
+              More <FluentIcon name="chevronDown" size={14} />
             </button>
-          );
-        })}
+            {showMoreSections ? (
+              <section className="project-detail-more-menu" aria-label="More project sections">
+                <div className="project-detail-more-heading">
+                  <strong>Project sections</strong>
+                  <small>Pin up to {MAX_PINNED_PROJECT_SECTIONS}</small>
+                </div>
+                <label className="project-detail-density-toggle">
+                  <input
+                    type="checkbox"
+                    checked={projectNavigation.compactDesktop}
+                    onChange={(event) => toggleCompactDesktopNavigation(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Compact desktop navigation</strong>
+                    <small>Use one tighter navigation row on wider screens.</small>
+                  </span>
+                </label>
+                <section className="project-detail-offline-card" aria-label="Offline access">
+                  <div className="project-detail-offline-heading">
+                    <span>
+                      <strong>Offline access</strong>
+                      <small>{offlineProjectRecord ? 'Available on this device' : 'Online only'}</small>
+                    </span>
+                    <span className={`status-pill${offlineProjectRecord ? ' success' : ''}`}>
+                      {isOnline ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                  {offlineProjectRecord ? (
+                    <dl className="project-detail-offline-facts">
+                      <div><dt>Last synchronized</dt><dd>{formatActivityTime(offlineProjectRecord.lastSyncedAt)}</dd></div>
+                      <div><dt>Cached sections</dt><dd>{offlineProjectRecord.cachedSections.length}</dd></div>
+                      <div><dt>Storage</dt><dd>{formatOfflineProjectSize((offlineProjectRecord.byteSize || 0) + (offlineProjectRecord.assetSummary?.byteSize || 0))}</dd></div>
+                      <div><dt>Queued</dt><dd>{projectOfflineSummary.total}</dd></div>
+                      {projectOfflineSummary.needsAttention ? <div className="error"><dt>Needs attention</dt><dd>{projectOfflineSummary.needsAttention}</dd></div> : null}
+                    </dl>
+                  ) : (
+                    <p>Store core project details and every visible workflow section for field access without a connection. Takeoff opens projects already saved on this device.</p>
+                  )}
+                  <div className="project-detail-offline-sections">
+                    {(offlineProjectRecord?.cachedSections || []).map((sectionId) => (
+                      <span key={sectionId}>{visibleProjectTabs.find((tab) => tab.id === sectionId)?.label || sectionId}</span>
+                    ))}
+                  </div>
+                  <div className="project-detail-offline-actions">
+                    <button
+                      className={`button primary${offlineProjectBusy ? ' is-loading' : ''}`}
+                      type="button"
+                      onClick={() => void saveProjectOfflineCopy()}
+                      disabled={offlineProjectBusy || !isOnline || deferredDataLoading}
+                    >
+                      {offlineProjectRecord ? 'Update offline copy' : 'Make available offline'}
+                    </button>
+                    {offlineProjectRecord ? (
+                      <button className="button secondary" type="button" onClick={() => void removeProjectOfflineCopy()} disabled={offlineProjectBusy}>
+                        Remove copy
+                      </button>
+                    ) : null}
+                  </div>
+                  {!isOnline ? <small>Reconnect to update this offline copy.</small> : deferredDataLoading ? <small>Wait for project details to finish loading before saving.</small> : null}
+                  {offlineProjectRecord && (visibleProjectTabIds.has('files') || visibleProjectTabIds.has('photos')) ? (
+                    <section className="project-detail-offline-assets" aria-label="Offline files and photos">
+                      <div>
+                        <strong>Offline files &amp; photos</strong>
+                        <small>Choose what to keep on this device, including task, inspection, selection, workflow, warranty, closeout, and invoice attachments. The selection replaces the categories kept after a successful refresh.</small>
+                      </div>
+                      <div className="project-detail-offline-asset-options">
+                        {visibleProjectTabIds.has('files') ? (
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={offlineAssetSelection.files}
+                              onChange={(event) => setOfflineAssetSelection((current) => ({ ...current, files: event.target.checked }))}
+                              disabled={offlineAssetBusy}
+                            />
+                            Files ({offlineAssetCounts.files})
+                          </label>
+                        ) : null}
+                        {visibleProjectTabIds.has('photos') ? (
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={offlineAssetSelection.photos}
+                              onChange={(event) => setOfflineAssetSelection((current) => ({ ...current, photos: event.target.checked }))}
+                              disabled={offlineAssetBusy}
+                            />
+                            Photos ({offlineAssetCounts.photos})
+                          </label>
+                        ) : null}
+                      </div>
+                      <small>
+                        Up to {formatOfflineProjectSize(MAX_OFFLINE_ASSET_BYTES_PER_ITEM)} per item and {formatOfflineProjectSize(MAX_OFFLINE_ASSET_BYTES_PER_USER)} total per signed-in user.
+                      </small>
+                      {offlineProjectRecord.assetSummary?.count ? (
+                        <p>{offlineProjectRecord.assetSummary.count} downloaded · {formatOfflineProjectSize(offlineProjectRecord.assetSummary.byteSize)}</p>
+                      ) : null}
+                      {offlineProjectRecord.assetSummary?.staleKinds?.length ? (
+                        <p className="error" role="status">
+                          {offlineProjectRecord.assetSummary.staleKinds.map((kind) => kind === 'photos' ? 'Photos' : 'Files').join(' and ')} changed online. Update downloads before using that section offline.
+                        </p>
+                      ) : null}
+                      {offlineAssetProgress && offlineAssetBusy ? (
+                        <p role="status" aria-live="polite">
+                          Downloading {offlineAssetProgress.completed} of {offlineAssetProgress.total}{offlineAssetProgress.currentName ? ` · ${offlineAssetProgress.currentName}` : ''}
+                        </p>
+                      ) : null}
+                      {offlineAssetMessage ? <p role="status" aria-live="polite">{offlineAssetMessage}</p> : null}
+                      <div className="project-detail-offline-actions">
+                        <button
+                          className={`button secondary${offlineAssetBusy ? ' is-loading' : ''}`}
+                          type="button"
+                          onClick={() => void updateOfflineAssetDownloads()}
+                          disabled={offlineAssetBusy || !isOnline || (!offlineAssetSelection.files && !offlineAssetSelection.photos)}
+                        >
+                          {offlineProjectRecord.assetSummary?.count ? 'Update downloads' : 'Download selected'}
+                        </button>
+                        {offlineProjectRecord.assetSummary?.count ? (
+                          <button className="button secondary" type="button" onClick={() => void removeOfflineAssetDownloads()} disabled={offlineAssetBusy}>
+                            Remove downloads
+                          </button>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
+                </section>
+                <p className="project-detail-more-group-label">Pinned</p>
+                {projectNavigation.primaryTabs.filter((tab) => projectNavigation.pinnedIds.includes(tab.id)).map((tab, index) => {
+                  const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
+                  return (
+                    <div className="project-detail-more-row" key={`pinned-${tab.id}`}>
+                      <button type="button" className="project-detail-more-link" onClick={() => selectProjectSection(tab.id)}>
+                        <span>{label}</span>
+                        {activeDetailTab === tab.id ? <small>Current</small> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="project-detail-pin-button is-pinned"
+                        aria-label={`Unpin ${label}`}
+                        title={index === 0 ? `${label} stays pinned` : `Unpin ${label}`}
+                        disabled={index === 0}
+                        onClick={() => toggleProjectSectionPin(tab.id)}
+                      >
+                        <FluentIcon name="pin" size={16} />
+                      </button>
+                    </div>
+                  );
+                })}
+                <p className="project-detail-more-group-label">More</p>
+                {projectNavigation.moreTabs.map((tab) => {
+                  const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
+                  const isRecent = projectNavigation.recentIds.includes(tab.id);
+                  const atPinLimit = projectNavigation.pinnedIds.length >= MAX_PINNED_PROJECT_SECTIONS;
+                  return (
+                    <div className="project-detail-more-row" key={tab.id}>
+                      <button type="button" className="project-detail-more-link" onClick={() => selectProjectSection(tab.id)}>
+                        <span>{label}</span>
+                        {activeDetailTab === tab.id ? <small>Current</small> : isRecent ? <small>Recent</small> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="project-detail-pin-button"
+                        aria-label={`Pin ${label}`}
+                        title={atPinLimit ? `Unpin another section before pinning ${label}` : `Pin ${label}`}
+                        disabled={atPinLimit}
+                        onClick={() => toggleProjectSectionPin(tab.id)}
+                      >
+                        <FluentIcon name="pin" size={16} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {activeDetailTab === 'overview' ? (

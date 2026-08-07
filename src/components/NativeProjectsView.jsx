@@ -15,6 +15,20 @@ import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { getScheduleAssignees, scheduleAssigneeFields } from '../utils/assignees.js';
+import { getVisibleProjectTabs } from '../utils/projectTabs.js';
+import {
+  cacheProjectForOffline,
+  formatOfflineProjectSize,
+  listOfflineProjectRecords,
+  planOfflineProjectRefresh,
+  removeOfflineProject,
+  subscribeToOfflineProjects,
+} from '../services/offlineProjectStore.js';
+import { removeOfflineProjectAssets } from '../services/offlineProjectAssetStore.js';
+import {
+  OFFLINE_WORKFLOW_SECTION_TYPES,
+  loadOfflineProjectWorkflowSnapshot,
+} from '../services/constructionWorkflows.js';
 
 const ProjectDetailView = lazy(() => import('./ProjectDetailView.jsx'));
 const ProjectModal = lazy(() => import('./ProjectModal.jsx'));
@@ -37,6 +51,13 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
     }
   }, { push });
 }
+function formatOfflineSyncTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not synchronized';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(date);
+}
 
 export default function NativeProjectsView({
   data,
@@ -49,6 +70,8 @@ export default function NativeProjectsView({
   homeSignal = 0,
   navigationTarget = null,
   deferredDataLoading = false,
+  offlineUserId = '',
+  offlineOperations = [],
 }) {
   const [projectDraft, setProjectDraft] = useState(null);
   const [selectedProjectId, setSelectedProjectId] = useState(getProjectIdFromLocation);
@@ -58,11 +81,15 @@ export default function NativeProjectsView({
   const { runMutation, isMutating } = useEntityMutations();
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState('all');
+  const [offlineOnly, setOfflineOnly] = useState(false);
+  const [offlineProjectRecords, setOfflineProjectRecords] = useState([]);
+  const [offlineCopiesBusy, setOfflineCopiesBusy] = useState(false);
   const [expandedOverviewProjectIds, setExpandedOverviewProjectIds] = useState(() => new Set());
   const dataRef = useRef(data);
   const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
   const nextProjectHistoryModeRef = useRef('none');
   const previousHomeSignalRef = useRef(homeSignal);
+  const lastOfflineRefreshDataRef = useRef(null);
 
   useEffect(() => {
     dataRef.current = data;
@@ -71,6 +98,51 @@ export default function NativeProjectsView({
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
   );
+  const visibleProjectTabs = useMemo(
+    () => getVisibleProjectTabs(data.settings?.visibleProjectTabs, activeUser?.role),
+    [activeUser?.role, data.settings?.visibleProjectTabs],
+  );
+  const visibleOfflineProjectRecords = useMemo(() => {
+    const visibleIds = new Set(visibleProjects.map((project) => project.id));
+    return offlineProjectRecords.filter((record) => visibleIds.has(record.projectId));
+  }, [offlineProjectRecords, visibleProjects]);
+  const offlineProjectIds = useMemo(
+    () => new Set(visibleOfflineProjectRecords.map((record) => record.projectId)),
+    [visibleOfflineProjectRecords],
+  );
+  const offlineStorageBytes = visibleOfflineProjectRecords.reduce(
+    (total, record) => total + (Number(record.byteSize) || 0) + (Number(record.assetSummary?.byteSize) || 0),
+    0,
+  );
+  const offlineRecordScope = offlineProjectRecords.map((record) => record.projectId).sort().join('|');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!offlineUserId) {
+      setOfflineProjectRecords([]);
+      return undefined;
+    }
+    const refreshOfflineRecords = () => {
+      void listOfflineProjectRecords(offlineUserId)
+        .then((records) => {
+          if (!cancelled) setOfflineProjectRecords(records);
+        })
+        .catch(() => {
+          if (!cancelled) setOfflineProjectRecords([]);
+        });
+    };
+    refreshOfflineRecords();
+    const unsubscribe = subscribeToOfflineProjects(offlineUserId, refreshOfflineRecords);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [offlineUserId]);
+
+  useEffect(() => {
+    if (visibleOfflineProjectRecords.length || !offlineOnly) return;
+    setOfflineOnly(false);
+  }, [offlineOnly, visibleOfflineProjectRecords.length]);
 
   const visibleTasks = useMemo(
     () => getVisibleTasksForUser(data.tasks, data.settings, visibleProjects),
@@ -84,12 +156,13 @@ export default function NativeProjectsView({
   const overviewProjects = useMemo(() => {
     const query = projectSearchQuery.trim().toLowerCase();
     return visibleProjects.filter((project) => {
+      if (offlineOnly && !offlineProjectIds.has(project.id)) return false;
       if (projectStatusFilter !== 'all' && project.status !== projectStatusFilter) return false;
       if (!query) return true;
       return [project.name, project.address, project.customerName, project.desc, project.status]
         .some((value) => String(value || '').toLowerCase().includes(query));
     });
-  }, [projectSearchQuery, projectStatusFilter, visibleProjects]);
+  }, [offlineOnly, offlineProjectIds, projectSearchQuery, projectStatusFilter, visibleProjects]);
 
   const taskCountByProject = useMemo(() => {
     const counts = new Map();
@@ -211,6 +284,75 @@ export default function NativeProjectsView({
     window.addEventListener('popstate', handleProjectPopState);
     return () => window.removeEventListener('popstate', handleProjectPopState);
   }, []);
+
+  async function refreshOfflineProjectCopies({ quiet = false } = {}) {
+    if (!offlineUserId || !offlineProjectRecords.length || deferredDataLoading || data.storageMode !== 'supabase') return;
+    if (!quiet) setOfflineCopiesBusy(true);
+    try {
+      let workflowFailureCount = 0;
+      const currentProjects = new Map(visibleProjects.map((project) => [project.id, project]));
+      const refreshPlan = planOfflineProjectRefresh(offlineProjectRecords, visibleProjects);
+      await Promise.all(refreshPlan.removeProjectIds.map(async (projectId) => {
+        await removeOfflineProjectAssets(offlineUserId, projectId);
+        await removeOfflineProject(offlineUserId, projectId);
+      }));
+      await Promise.all(refreshPlan.refreshProjectIds.map(async (projectId) => {
+        const currentProject = currentProjects.get(projectId);
+        const existingRecord = offlineProjectRecords.find((record) => record.projectId === projectId);
+        const workflowSnapshot = quiet
+          ? {
+            workflows: existingRecord?.snapshot?.workflows || {},
+            cachedSections: (existingRecord?.cachedSections || []).filter((sectionId) =>
+              Object.prototype.hasOwnProperty.call(OFFLINE_WORKFLOW_SECTION_TYPES, sectionId)),
+          }
+          : await loadOfflineProjectWorkflowSnapshot({
+            projectId,
+            visibleTabs: visibleProjectTabs,
+            role: activeUser?.role,
+          });
+        workflowFailureCount += workflowSnapshot.failures?.length || 0;
+        await cacheProjectForOffline({
+          userId: offlineUserId,
+          project: currentProject,
+          tasks: data.tasks,
+          settings: data.settings,
+          subs: data.subs || [],
+          employees: data.employees || [],
+          workflows: workflowSnapshot.workflows,
+          workflowSections: workflowSnapshot.cachedSections,
+          visibleTabs: visibleProjectTabs,
+        });
+      }));
+      if (!quiet && workflowFailureCount) {
+        await showAppAlert(
+          `${workflowFailureCount} workflow section${workflowFailureCount === 1 ? '' : 's'} could not be refreshed. Their prior records are no longer marked available offline; reconnect and refresh copies again.`,
+          'Offline copies partially updated',
+        );
+      }
+    } catch (error) {
+      if (!quiet) {
+        await showAppAlert(
+          error instanceof Error ? error.message : 'Offline project copies could not be refreshed.',
+          'Offline refresh failed',
+        );
+      }
+    } finally {
+      if (!quiet) setOfflineCopiesBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (
+      !offlineUserId
+      || !offlineProjectRecords.length
+      || deferredDataLoading
+      || data.storageMode !== 'supabase'
+      || navigator.onLine === false
+      || lastOfflineRefreshDataRef.current === data
+    ) return;
+    lastOfflineRefreshDataRef.current = data;
+    void refreshOfflineProjectCopies({ quiet: true });
+  }, [data, deferredDataLoading, offlineRecordScope, offlineUserId]);
 
   function startCreate() {
     setProjectDraft({
@@ -830,7 +972,10 @@ export default function NativeProjectsView({
           canEdit={!readOnly && !deferredDataLoading}
           activeUser={activeUser}
           deferredDataLoading={deferredDataLoading}
+          offlineUserId={offlineUserId}
+          offlineOperations={offlineOperations}
           selectionNavigationRequest={navigationTarget}
+          onBack={activeUser?.role === 'Customer' ? null : () => setSelectedProject('', 'push')}
           onEdit={startEdit}
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
           onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
@@ -871,6 +1016,57 @@ export default function NativeProjectsView({
                       </div>
                     </div>
                   </div>
+                  <section className="offline-projects-overview" aria-label="Offline projects">
+                    <div className="offline-projects-overview-heading">
+                      <div>
+                        <span className="offline-projects-overview-icon"><FluentIcon name="checkCircle" size={18} /></span>
+                        <span>
+                          <strong>Offline projects</strong>
+                          <small>
+                            {visibleOfflineProjectRecords.length
+                              ? `${visibleOfflineProjectRecords.length} available · ${formatOfflineProjectSize(offlineStorageBytes)} · Updated ${formatOfflineSyncTime(visibleOfflineProjectRecords[0]?.lastSyncedAt)}`
+                              : 'No projects are saved for offline use on this device.'}
+                          </small>
+                        </span>
+                      </div>
+                      <div className="offline-projects-overview-actions">
+                        {visibleOfflineProjectRecords.length ? (
+                          <button
+                            className={`button secondary${offlineCopiesBusy ? ' is-loading' : ''}`}
+                            type="button"
+                            onClick={() => void refreshOfflineProjectCopies()}
+                            disabled={offlineCopiesBusy || deferredDataLoading || data.storageMode !== 'supabase' || navigator.onLine === false}
+                          >
+                            Refresh copies
+                          </button>
+                        ) : null}
+                        <button
+                          className={`button secondary${offlineOnly ? ' active' : ''}`}
+                          type="button"
+                          aria-pressed={offlineOnly}
+                          onClick={() => setOfflineOnly((current) => !current)}
+                          disabled={!visibleOfflineProjectRecords.length}
+                        >
+                          {offlineOnly ? 'Show all projects' : 'Show offline only'}
+                        </button>
+                      </div>
+                    </div>
+                    {visibleOfflineProjectRecords.length ? (
+                      <div className="offline-projects-overview-list">
+                        {visibleOfflineProjectRecords.map((record) => (
+                          <button key={record.id} type="button" onClick={() => setSelectedProject(record.projectId, 'push')}>
+                            <strong>{record.projectName}</strong>
+                            <small>
+                              {formatOfflineProjectSize((record.byteSize || 0) + (record.assetSummary?.byteSize || 0))} · {record.cachedSections.length} sections
+                              {record.assetSummary?.count ? ` · ${record.assetSummary.count} downloads` : ''}
+                            </small>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p>Open a project and use More → Make available offline.</p>
+                    )}
+                  </section>
                   <div className="projects-filter-toolbar">
                     <ResponsiveFilterMenu label="Project filters">
                     <input
@@ -916,6 +1112,7 @@ export default function NativeProjectsView({
                         onToggle={toggleOverviewProject}
                         onEdit={readOnly ? undefined : startEdit}
                         onOpen={() => setSelectedProject(project.id, 'push')}
+                        offlineAvailable={offlineProjectIds.has(project.id)}
                       />
                     ))}
                   </div>

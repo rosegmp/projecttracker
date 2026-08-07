@@ -96,6 +96,14 @@ import {
   getVisibleProjectTabs,
   normalizeVisibleProjectTabs,
 } from '../src/utils/projectTabs.js';
+import {
+  MAX_PINNED_PROJECT_SECTIONS,
+  buildProjectNavigationModel,
+  normalizeProjectNavigationPreferences,
+  recordRecentProjectSection,
+  setProjectNavigationCompactMode,
+  togglePinnedProjectSection,
+} from '../src/utils/projectNavigation.js';
 import { reorderSettingIds } from '../src/utils/settingsOrder.js';
 import { buildTaskShareContent } from '../src/utils/taskSharing.js';
 import {
@@ -121,11 +129,31 @@ import {
   removeOfflineOperation,
 } from '../src/services/offlineOperations.js';
 import {
+  buildOfflineProjectSnapshot,
+  formatOfflineProjectSize,
+  getOfflineStructuredSectionIds,
+  getProjectOfflineOperationSummary,
+  planOfflineProjectRefresh,
+  reconcileOfflineProjectAssetState,
+} from '../src/services/offlineProjectStore.js';
+import {
+  MAX_OFFLINE_ASSET_BYTES_PER_ITEM,
+  MAX_OFFLINE_ASSET_BYTES_PER_USER,
+  buildOfflineProjectAssetKindSignatures,
+  canStoreOfflineAsset,
+  getOfflineProjectAssetCandidates,
+} from '../src/services/offlineProjectAssetStore.js';
+import {
   isAppWriteFreezeError,
   maintenanceDisplayMessage,
   normalizeAppRuntimeStatus,
   throwIfAppWriteFrozen,
 } from '../src/services/runtimeStatus.js';
+import {
+  buildWorkspaceCacheRecord,
+  workspaceCacheMatches,
+} from '../src/services/workspaceCache.js';
+import { OFFLINE_WORKFLOW_SECTION_TYPES } from '../src/services/constructionWorkflows.js';
 
 const weekdaySettings = {
   weekdaysOnly: true,
@@ -530,6 +558,323 @@ const tests = [
     },
   },
   {
+    name: 'offline project snapshots are user-scoped bounded and privacy-safe',
+    run() {
+      const visibleTabs = getVisibleProjectTabs(DEFAULT_VISIBLE_PROJECT_TABS, 'Admin');
+      assert.deepEqual(
+        getOfflineStructuredSectionIds(visibleTabs),
+        ['overview', 'tasks', 'calendar', 'inspections', 'selections'],
+      );
+      const snapshot = buildOfflineProjectSnapshot({
+        userId: 'auth-user-1',
+        project: {
+          id: 'project-1',
+          name: 'Offline House',
+          phases: [],
+          photos: [{ id: 'photo-1', dataUrl: 'data:image/png;base64,private' }],
+          _offlineServerRecord: { name: 'duplicate server copy' },
+        },
+        tasks: [
+          { id: 'task-1', projectId: 'project-1', label: 'Cached task' },
+          { id: 'task-2', projectId: 'project-2', label: 'Other project' },
+        ],
+        settings: { currentUserId: 'app-user-1' },
+        visibleTabs,
+        savedAt: '2026-08-07T12:00:00.000Z',
+      });
+      assert.equal(snapshot.id, 'auth-user-1:project-1');
+      assert.equal(snapshot.snapshot.tasks.length, 1);
+      assert.equal(snapshot.snapshot.project.photos[0].dataUrl, undefined);
+      assert.equal(snapshot.snapshot.project._offlineServerRecord, undefined);
+      assert.ok(snapshot.byteSize > 0);
+      assert.match(formatOfflineProjectSize(snapshot.byteSize), / B| KB| MB/);
+      assert.deepEqual(getProjectOfflineOperationSummary([
+        { projectId: 'project-1', status: 'pending' },
+        { projectId: 'project-1', status: 'syncing' },
+        { projectId: 'project-1', status: 'needs-attention' },
+        { projectId: 'project-2', status: 'needs-attention' },
+      ], 'project-1'), { total: 3, pending: 1, syncing: 1, needsAttention: 1 });
+      assert.deepEqual(planOfflineProjectRefresh([
+        { projectId: 'project-1' },
+        { projectId: 'project-revoked' },
+      ], [{ id: 'project-1' }]), {
+        refreshProjectIds: ['project-1'],
+        removeProjectIds: ['project-revoked'],
+      });
+    },
+  },
+  {
+    name: 'offline project asset selection is explicit deduplicated and quota bounded',
+    run() {
+      const project = {
+        id: 'project-1',
+        files: {
+          folders: [{
+            id: 'folder-1',
+            name: 'Plans',
+            files: [
+              { id: 'file-1', originalName: 'Plan.pdf', storageBucket: 'project-files', storagePath: 'projects/1/plan.pdf' },
+              { id: 'file-duplicate', originalName: 'Plan copy.pdf', storageBucket: 'project-files', storagePath: 'projects/1/plan.pdf' },
+              { id: 'local-only', originalName: 'Local draft.pdf' },
+            ],
+          }],
+        },
+        photos: [{ id: 'photo-1', name: 'Kitchen.jpg', type: 'image/jpeg', storageBucket: 'project-files', storagePath: 'projects/1/kitchen.jpg' }],
+        selections: [{
+          id: 'selection-1',
+          itemName: 'Kitchen tile',
+          attachments: [{ id: 'selection-file', name: 'Tile quote.pdf', type: 'application/pdf', storageBucket: 'project-files', storagePath: 'projects/1/tile-quote.pdf' }],
+          photos: [{ id: 'selection-photo', name: 'Tile sample.png', type: 'image/png', storageBucket: 'project-files', storagePath: 'projects/1/tile-sample.png' }],
+        }],
+        inspections: [{
+          id: 'inspection-1',
+          inspectionType: 'Framing',
+          stickerFile: { id: 'sticker-1', name: 'Sticker.jpg', type: 'image/jpeg', storageBucket: 'project-files', storagePath: 'projects/1/sticker.jpg' },
+          reportFile: { id: 'report-1', name: 'Report.pdf', type: 'application/pdf', storageBucket: 'project-files', storagePath: 'projects/1/report.pdf' },
+        }],
+      };
+      assert.deepEqual(
+        getOfflineProjectAssetCandidates(project, ['files']).map(({ kind, name, sourceName }) => ({ kind, name, sourceName })),
+        [
+          { kind: 'files', name: 'Plan.pdf', sourceName: 'Files · Plans' },
+          { kind: 'files', name: 'Tile quote.pdf', sourceName: 'Selections · Kitchen tile' },
+          { kind: 'files', name: 'Sticker.jpg', sourceName: 'Inspections · Framing' },
+          { kind: 'files', name: 'Report.pdf', sourceName: 'Inspections · Framing' },
+        ],
+      );
+      const tasks = [{
+        id: 'task-1',
+        projectId: 'project-1',
+        label: 'Confirm tile',
+        attachments: [
+          { id: 'task-photo', name: 'Field photo.webp', type: 'image/webp', storageBucket: 'project-files', storagePath: 'projects/1/field-photo.webp' },
+          { id: 'task-note', name: 'Field note.txt', type: 'text/plain', storageBucket: 'project-files', storagePath: 'projects/1/field-note.txt' },
+        ],
+      }];
+      assert.equal(getOfflineProjectAssetCandidates(project, ['files', 'photos'], tasks).length, 8);
+      assert.deepEqual(
+        getOfflineProjectAssetCandidates(project, ['photos'], tasks).map((candidate) => candidate.name),
+        ['Kitchen.jpg', 'Tile sample.png', 'Sticker.jpg', 'Field photo.webp'],
+      );
+      assert.deepEqual(
+        getOfflineProjectAssetCandidates(project, ['files', 'photos'], tasks)
+          .find((candidate) => candidate.name === 'Sticker.jpg')?.kinds,
+        ['files', 'photos'],
+      );
+      const signatures = buildOfflineProjectAssetKindSignatures(project, tasks);
+      assert.match(signatures.files, /project-files:projects\/1\/plan\.pdf/);
+      assert.match(signatures.photos, /project-files:projects\/1\/sticker\.jpg/);
+      assert.notEqual(
+        signatures.files,
+        buildOfflineProjectAssetKindSignatures({
+          ...project,
+          files: { folders: [] },
+        }, tasks).files,
+      );
+      assert.deepEqual(
+        reconcileOfflineProjectAssetState({
+          assetSections: ['files', 'photos'],
+          assetSummary: { kindSignatures: signatures, count: 8 },
+        }, project, tasks).assetSections,
+        ['files', 'photos'],
+      );
+      const changedState = reconcileOfflineProjectAssetState({
+        assetSections: ['files', 'photos'],
+        assetSummary: { kindSignatures: signatures, count: 8 },
+      }, { ...project, photos: [] }, tasks);
+      assert.deepEqual(changedState.assetSections, ['files']);
+      assert.deepEqual(changedState.assetSummary.staleKinds, ['photos']);
+      assert.deepEqual(
+        canStoreOfflineAsset({ itemBytes: MAX_OFFLINE_ASSET_BYTES_PER_ITEM + 1, currentUserBytes: 0 }),
+        { allowed: false, reason: 'item-too-large' },
+      );
+      assert.deepEqual(
+        canStoreOfflineAsset({ itemBytes: 10, currentUserBytes: MAX_OFFLINE_ASSET_BYTES_PER_USER }),
+        { allowed: false, reason: 'user-limit' },
+      );
+      assert.equal(canStoreOfflineAsset({ itemBytes: 10, currentUserBytes: 20, replacingBytes: 20 }).allowed, true);
+    },
+  },
+  {
+    name: 'offline project copies include visible workflows takeoffs and workflow attachments',
+    async run() {
+      const visibleTabs = [
+        { id: 'overview' },
+        { id: 'daily-logs' },
+        { id: 'change-orders' },
+        { id: 'rfis-submittals' },
+        { id: 'budget-commitments' },
+        { id: 'warranty-closeout' },
+        { id: 'takeoff' },
+      ];
+      const workflows = {
+        dailyLogs: [{
+          id: 'log-1',
+          subcontractorWork: [{ photos: [{ id: 'daily-photo', name: 'Daily.jpg', type: 'image/jpeg', storageBucket: 'project-files', storagePath: 'projects/1/daily.jpg' }] }],
+        }],
+        changeOrders: [{
+          id: 'co-1', number: 'CO-001',
+          attachments: [{ id: 'co-file', name: 'Change.pdf', type: 'application/pdf', storageBucket: 'project-files', storagePath: 'projects/1/change.pdf' }],
+        }],
+        commitments: [{
+          id: 'commitment-1', number: 'COM-001',
+          invoices: [{ id: 'invoice-1', name: 'Invoice.pdf', type: 'application/pdf', storageBucket: 'project-files', storagePath: 'projects/1/invoice.pdf' }],
+        }],
+        warrantyItems: [{
+          id: 'warranty-1', number: 'WAR-001',
+          attachments: [{ id: 'warranty-photo', name: 'Warranty.png', type: 'image/png', storageBucket: 'project-files', storagePath: 'projects/1/warranty.png' }],
+        }],
+      };
+      const snapshot = buildOfflineProjectSnapshot({
+        userId: 'auth-user-1',
+        project: { id: 'project-1', name: 'Complete offline project' },
+        workflows,
+        workflowSections: ['daily-logs', 'change-orders', 'budget-commitments', 'warranty-closeout'],
+        visibleTabs,
+      });
+      assert.deepEqual(snapshot.cachedSections, [
+        'overview',
+        'daily-logs',
+        'change-orders',
+        'budget-commitments',
+        'warranty-closeout',
+        'takeoff',
+      ]);
+      assert.equal(snapshot.snapshot.workflows.changeOrders[0].number, 'CO-001');
+      assert.deepEqual(Object.keys(OFFLINE_WORKFLOW_SECTION_TYPES), [
+        'portal',
+        'daily-logs',
+        'change-orders',
+        'rfis-submittals',
+        'budget-commitments',
+        'warranty-closeout',
+      ]);
+      const candidates = getOfflineProjectAssetCandidates(
+        { id: 'project-1' },
+        ['files', 'photos'],
+        [],
+        workflows,
+      );
+      assert.deepEqual(candidates.map((candidate) => candidate.name), [
+        'Daily.jpg',
+        'Change.pdf',
+        'Invoice.pdf',
+        'Warranty.png',
+      ]);
+      assert.deepEqual(candidates.find((candidate) => candidate.name === 'Warranty.png')?.kinds, ['files', 'photos']);
+      const signatures = buildOfflineProjectAssetKindSignatures({ id: 'project-1' }, [], workflows);
+      assert.match(signatures.files, /projects\/1\/invoice\.pdf/);
+      assert.match(signatures.photos, /projects\/1\/daily\.jpg/);
+
+      const [workflowSource, detailSource] = await Promise.all([
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(workflowSource, /loadOfflineProjectWorkflowSnapshot/);
+      assert.match(workflowSource, /readOfflineWorkflowRecords/);
+      assert.match(workflowSource, /updateOfflineProjectWorkflowRecords/);
+      assert.match(detailSource, /workflows: offlineWorkflows/);
+      assert.match(detailSource, /Takeoff opens projects already saved on this device/);
+    },
+  },
+  {
+    name: 'workspace quick-load cache is user-scoped sanitized and manifest conditional',
+    async run() {
+      const record = buildWorkspaceCacheRecord({
+        userId: 'auth-user-1',
+        manifestToken: 'manifest-1',
+        savedAt: '2026-08-07T14:00:00.000Z',
+        state: {
+          projects: [{ id: 'project-1', photos: [{ id: 'photo-1', dataUrl: 'data:image/png;base64,private' }], _offlineServerRecord: { private: true } }],
+          tasks: [],
+          settings: { currentUserId: 'app-user-1' },
+          storageMode: 'offline-cache',
+          storageIssue: 'old issue',
+          deferredDataStatus: 'loading',
+          workspaceCache: { status: 'checking' },
+        },
+      });
+      assert.equal(record.id, 'auth-user-1');
+      assert.equal(record.state.projects[0].photos[0].dataUrl, undefined);
+      assert.equal(record.state.projects[0]._offlineServerRecord, undefined);
+      assert.equal(record.state.workspaceCache, undefined);
+      assert.equal(record.state.storageMode, 'supabase');
+      assert.equal(record.state.deferredDataStatus, 'ready');
+      assert.ok(record.byteSize > 0);
+      assert.equal(record.mode, 'staff');
+      assert.equal(workspaceCacheMatches(record, { schemaVersion: 1, mode: 'staff', token: 'manifest-1' }), true);
+      assert.equal(workspaceCacheMatches(record, { schemaVersion: 1, mode: 'staff', token: 'manifest-2' }), false);
+      assert.equal(workspaceCacheMatches(record, { schemaVersion: 1, mode: 'portal', token: 'manifest-1' }), false);
+      const portalRecord = buildWorkspaceCacheRecord({
+        userId: 'portal-user',
+        manifestToken: 'manifest-1',
+        state: { portalMode: true, projects: [] },
+      });
+      assert.equal(portalRecord.mode, 'portal');
+      assert.equal(workspaceCacheMatches(portalRecord, { schemaVersion: 1, mode: 'portal', token: 'manifest-1' }), true);
+
+      const [migrationSource, trackerSource, appSource] = await Promise.all([
+        readFile(new URL('../supabase/migrations/20260807140000_add_workspace_cache_manifest.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(migrationSource, /create or replace function public\.get_workspace_cache_manifest\(\)/);
+      assert.match(migrationSource, /security invoker/);
+      assert.doesNotMatch(migrationSource, /security definer/);
+      assert.match(migrationSource, /to_jsonb\(source_row\)::text/);
+      assert.match(migrationSource, /md5\(public\.get_project_portal_bootstrap\(\)::text\)/);
+      assert.match(migrationSource, /revoke all on function public\.get_workspace_cache_manifest\(\) from public, anon/);
+      assert.match(migrationSource, /grant execute on function public\.get_workspace_cache_manifest\(\) to authenticated/);
+      assert.match(trackerSource, /'get_workspace_cache_manifest'/);
+      assert.match(appSource, /workspaceCacheMatches\(quickCache, manifest\)/);
+      assert.match(appSource, /Saved workspace loaded\./);
+    },
+  },
+  {
+    name: 'project section navigation keeps role-safe pins recents and overflow',
+    run() {
+      const internalTabs = getVisibleProjectTabs(DEFAULT_VISIBLE_PROJECT_TABS, 'Admin');
+      const defaults = normalizeProjectNavigationPreferences(null, internalTabs, 'Admin');
+      assert.deepEqual(defaults.pinnedIds, ['overview', 'tasks', 'calendar', 'daily-logs', 'files', 'photos']);
+      assert.equal(MAX_PINNED_PROJECT_SECTIONS, 10);
+
+      const withRecent = recordRecentProjectSection(defaults, 'takeoff', internalTabs, 'Admin');
+      const model = buildProjectNavigationModel(internalTabs, withRecent, 'takeoff', 'Admin');
+      assert.equal(model.primaryTabs.at(-1).id, 'takeoff');
+      assert.equal(model.moreTabs[0].id, 'takeoff');
+
+      const filledPins = internalTabs
+        .filter((tab) => !defaults.pinnedIds.includes(tab.id))
+        .slice(0, MAX_PINNED_PROJECT_SECTIONS - defaults.pinnedIds.length)
+        .reduce(
+          (preferences, tab) => togglePinnedProjectSection(preferences, tab.id, internalTabs, 'Admin'),
+          defaults,
+        );
+      assert.equal(filledPins.pinnedIds.length, MAX_PINNED_PROJECT_SECTIONS);
+      const nextUnpinnedTab = internalTabs.find((tab) => !filledPins.pinnedIds.includes(tab.id));
+      assert.ok(nextUnpinnedTab);
+      assert.deepEqual(
+        togglePinnedProjectSection(filledPins, nextUnpinnedTab.id, internalTabs, 'Admin').pinnedIds,
+        filledPins.pinnedIds,
+      );
+      const compact = setProjectNavigationCompactMode(filledPins, true, internalTabs, 'Admin');
+      assert.equal(compact.compactDesktop, true);
+      assert.deepEqual(compact.pinnedIds, filledPins.pinnedIds);
+      assert.equal(normalizeProjectNavigationPreferences(compact, internalTabs, 'Admin').compactDesktop, true);
+
+      const customerTabs = getVisibleProjectTabs(DEFAULT_VISIBLE_PROJECT_TABS, 'Customer');
+      assert.deepEqual(
+        normalizeProjectNavigationPreferences(null, customerTabs, 'Customer').pinnedIds,
+        ['overview', 'portal', 'calendar', 'selections'],
+      );
+      const subcontractorTabs = getVisibleProjectTabs(DEFAULT_VISIBLE_PROJECT_TABS, 'Subcontractor');
+      assert.deepEqual(
+        normalizeProjectNavigationPreferences(null, subcontractorTabs, 'Subcontractor').pinnedIds,
+        ['portal', 'selections', 'files'],
+      );
+    },
+  },
+  {
     name: 'settings drag reorder preserves pinned items and supports columns',
     async run() {
       assert.deepEqual(
@@ -573,8 +918,10 @@ const tests = [
       ]);
       assert.match(detailSource, /getSearchParam\('projectTab'\)/);
       assert.match(detailSource, /url\.searchParams\.set\('projectTab', activeDetailTab\)/);
-      assert.match(detailSource, /visibleProjectTabs\.map\(\(tab\) =>/);
+      assert.match(detailSource, /projectNavigation\.primaryTabs\.map\(\(tab\) =>/);
       assert.match(detailSource, /id=\{`project-tab-\$\{tab\.id\}`\}/);
+      assert.match(detailSource, /aria-label="More project sections"/);
+      assert.match(detailSource, /aria-label="Project breadcrumb"/);
       assert.match(appSource, /url\.searchParams\.delete\('projectTab'\)/);
       assert.match(projectsSource, /url\.searchParams\.delete\('projectTab'\)/);
     },
@@ -1400,8 +1747,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 4/);
-      assert.match(buildSource, /versionName "1\.3\.0"/);
+      assert.match(buildSource, /versionCode 5/);
+      assert.match(buildSource, /versionName "1\.4\.0"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
