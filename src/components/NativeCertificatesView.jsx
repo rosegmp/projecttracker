@@ -5,6 +5,7 @@ import { formatFileSize } from '../utils/fileUi.js';
 import { findClosestSubcontractor } from '../utils/certificateMatching.js';
 import {
   certificateEligible,
+  certificateMatchesStatusFilter,
   certificateRequired,
   certificateStatus,
   sortCertificatesByExpiration,
@@ -476,8 +477,8 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   }, []);
 
   useEffect(() => {
-    if (!navigationTarget?.subcontractorId) return;
-    setSubcontractorFilter(navigationTarget.subcontractorId);
+    if (!navigationTarget?.subcontractorId && !navigationTarget?.statusId) return;
+    setSubcontractorFilter(navigationTarget.subcontractorId || 'all');
     setStatusFilter(navigationTarget.statusId || 'all');
     setSearch('');
   }, [navigationTarget]);
@@ -826,7 +827,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const filteredRoster = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return subcontractorRoster.filter(({ subcontractor, certificates: subcontractorCertificates, status }) => {
-      if (statusFilter !== 'all' && status.id !== statusFilter) return false;
+      if (!certificateMatchesStatusFilter(status.id, statusFilter)) return false;
       if (subcontractorFilter !== 'all' && subcontractor.id !== subcontractorFilter) return false;
       if (!needle) return true;
       return [
@@ -896,6 +897,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       <div className="certificate-stats-grid" aria-label="Certificate status summary">
         {[
           ['All subcontractors', stats.total, 'all'],
+          ['Expired / expiring', stats.expired + stats.expiring, 'expired-expiring'],
           ['Active', stats.active, 'active'],
           ['Expiring soon', stats.expiring, 'expiring'],
           ['Expired', stats.expired, 'expired'],
@@ -917,6 +919,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
               <span>Status</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="all">All statuses</option>
+                <option value="expired-expiring">Expired / expiring</option>
                 <option value="active">Active</option>
                 <option value="expiring">Expiring soon</option>
                 <option value="expired">Expired</option>
