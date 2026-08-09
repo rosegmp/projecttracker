@@ -1,6 +1,13 @@
 # Project Tracker handoff
 
-Updated: 2026-08-07
+Updated: 2026-08-09
+
+## In-progress milestone: Unified Action Center certificate aggregation
+
+- On branch `codex/aggregate-certificate-actions`, Home now represents all expired/expiring certificate exceptions as one portfolio-level action and all missing-certificate/missing-expiration exceptions as a second action. Each aggregate reports the affected subcontractor count and a status breakdown instead of producing one Action Center row per subcontractor.
+- Expired certificates intentionally share the expiring aggregate so overdue certificate rows cannot continue flooding Home. Opening that action navigates to a new combined **Expired / expiring** Certificates filter; opening the missing action navigates to the existing **Missing** filter. Existing individual Expiring and Expired workspace filters remain available.
+- Aggregation continues to use only the already-authorized subcontractor/certificate inputs, excludes inactive and certificate-not-required subcontractors, and evaluates only each subcontractor's latest certificate so an active renewal suppresses an older expired record.
+- Verification passes all 160 regression tests, the 701-module production Vite build, and `git diff --check`. No schema, migration, remote data, deployment, Capacitor sync, APK build, commit, or push has been performed for this checkpoint.
 
 ## Completed release: Recommendations 3 and 4
 

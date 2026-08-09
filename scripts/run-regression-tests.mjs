@@ -91,6 +91,7 @@ import {
   findClosestSubcontractor,
   normalizeSubcontractorName,
 } from '../src/utils/certificateMatching.js';
+import { certificateMatchesStatusFilter } from '../src/utils/certificateStatus.js';
 import {
   DEFAULT_VISIBLE_PROJECT_TABS,
   getVisibleProjectTabs,
@@ -1119,7 +1120,7 @@ const tests = [
     },
   },
   {
-    name: 'home action center adds only actionable certificate exceptions with portfolio drill-through data',
+    name: 'home action center aggregates certificate exceptions with portfolio drill-through data',
     run() {
       const subcontractors = [
         { id: 'expired-sub', company: 'Expired Electric' },
@@ -1140,27 +1141,28 @@ const tests = [
         { id: 'renewed-active-cert', subcontractorId: 'newer-active-sub', expirationDate: '2026-09-15' },
       ];
       const certificateExceptions = buildHomeCertificateExceptions(subcontractors, certificates, '2026-07-16');
-      assert.deepEqual(certificateExceptions.map((item) => item.statusId), ['expired', 'expiring', 'missing', 'missing']);
+      assert.deepEqual(certificateExceptions.map((item) => item.statusId), ['expired-expiring', 'missing']);
       assert.deepEqual(certificateExceptions.map((item) => item.ownerLabel), [
-        'Expired Electric',
-        'Expiring HVAC',
-        'Missing Plumbing',
-        'No Date Roofing',
+        '2 subcontractors',
+        '2 subcontractors',
       ]);
+      assert.deepEqual(certificateExceptions.map((item) => item.certificateCount), [2, 2]);
+      assert.equal(certificateExceptions[0].status, '1 expired · 1 expiring within 30 days');
+      assert.equal(certificateExceptions[1].status, '1 certificate missing · 1 expiration date missing');
       assert.ok(certificateExceptions.every((item) => item.projectName === 'Portfolio' && item.type === 'certificate'));
       const actions = buildHomeActionCenterItems({ certificateExceptions });
       assert.deepEqual(actions.map((action) => action.reason), [
-        'Certificate is expired',
-        'Certificate expires within 30 days',
-        'Required certificate is missing',
-        'Certificate expiration is missing',
+        '2 certificates need attention',
+        '2 certificate records need attention',
       ]);
       assert.deepEqual(actions.map((action) => action.owner), [
-        'Expired Electric',
-        'Expiring HVAC',
-        'Missing Plumbing',
-        'No Date Roofing',
+        '2 subcontractors',
+        '2 subcontractors',
       ]);
+      assert.equal(certificateMatchesStatusFilter('expired', 'expired-expiring'), true);
+      assert.equal(certificateMatchesStatusFilter('expiring', 'expired-expiring'), true);
+      assert.equal(certificateMatchesStatusFilter('active', 'expired-expiring'), false);
+      assert.equal(certificateMatchesStatusFilter('missing', 'missing'), true);
     },
   },
   {

@@ -34,6 +34,12 @@ export function certificateStatus(expirationDate, todayIso = localIsoDate()) {
   return { id: 'active', label: 'Active', days };
 }
 
+export function certificateMatchesStatusFilter(statusId, filterId = 'all') {
+  if (filterId === 'all') return true;
+  if (filterId === 'expired-expiring') return statusId === 'expired' || statusId === 'expiring';
+  return statusId === filterId;
+}
+
 export function certificateRequired(subcontractor) {
   return subcontractor?.certificateRequirement !== 'not_required';
 }

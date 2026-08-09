@@ -417,7 +417,7 @@ export function buildHomeCertificateExceptions(subcontractors = [], certificates
     certificatesBySubcontractor.get(subcontractorId).push(certificate);
   });
 
-  return (subcontractors || [])
+  const exceptions = (subcontractors || [])
     .filter(certificateEligible)
     .map((subcontractor) => {
       const subcontractorCertificates = sortCertificatesByExpiration(certificatesBySubcontractor.get(subcontractor.id) || []);
@@ -436,6 +436,7 @@ export function buildHomeCertificateExceptions(subcontractors = [], certificates
         projectName: 'Portfolio',
         projectId: '',
         subcontractorId: subcontractor.id,
+        hasCertificate: Boolean(latestCertificate),
         ownerLabel: subcontractorLabel(subcontractor),
         expirationDate: latestCertificate?.expirationDate || '',
         due: latestCertificate?.expirationDate || '',
@@ -447,6 +448,59 @@ export function buildHomeCertificateExceptions(subcontractors = [], certificates
       };
     })
     .filter(Boolean);
+
+  const expiring = exceptions.filter((item) => item.statusId === 'expired' || item.statusId === 'expiring');
+  const missing = exceptions.filter((item) => item.statusId === 'missing');
+  const aggregateItems = [];
+
+  if (expiring.length) {
+    const expiredCount = expiring.filter((item) => item.statusId === 'expired').length;
+    const expiringCount = expiring.length - expiredCount;
+    const reasons = [];
+    if (expiredCount) reasons.push(`${expiredCount} expired`);
+    if (expiringCount) reasons.push(`${expiringCount} expiring within 30 days`);
+    const dueDates = expiring.map((item) => item.due).filter(Boolean).sort();
+    aggregateItems.push({
+      id: 'expired-expiring',
+      type: 'certificate',
+      label: 'Expired / expiring certificates',
+      projectName: 'Portfolio',
+      projectId: '',
+      ownerLabel: `${expiring.length} subcontractor${expiring.length === 1 ? '' : 's'}`,
+      due: dueDates[0] || '',
+      status: reasons.join(' · '),
+      statusId: 'expired-expiring',
+      attentionReason: `${expiring.length} certificate${expiring.length === 1 ? ' needs' : 's need'} attention`,
+      attentionTone: expiredCount ? 'danger' : 'warning',
+      attentionRank: expiredCount ? 2 : 4,
+      certificateCount: expiring.length,
+    });
+  }
+
+  if (missing.length) {
+    const missingCertificateCount = missing.filter((item) => !item.hasCertificate).length;
+    const missingExpirationCount = missing.length - missingCertificateCount;
+    const reasons = [];
+    if (missingCertificateCount) reasons.push(`${missingCertificateCount} certificate${missingCertificateCount === 1 ? '' : 's'} missing`);
+    if (missingExpirationCount) reasons.push(`${missingExpirationCount} expiration date${missingExpirationCount === 1 ? '' : 's'} missing`);
+    aggregateItems.push({
+      id: 'missing',
+      type: 'certificate',
+      label: 'Missing certificates',
+      projectName: 'Portfolio',
+      projectId: '',
+      ownerLabel: `${missing.length} subcontractor${missing.length === 1 ? '' : 's'}`,
+      due: '',
+      status: reasons.join(' · '),
+      statusId: 'missing',
+      attentionReason: `${missing.length} certificate record${missing.length === 1 ? ' needs' : 's need'} attention`,
+      attentionTone: 'danger',
+      attentionRank: 3,
+      certificateCount: missing.length,
+    });
+  }
+
+  return aggregateItems;
 }
 
 function portalAudienceOwner(audience) {
