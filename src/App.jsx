@@ -132,8 +132,8 @@ const tabs = [
   },
   {
     id: 'certificates',
-    label: 'Certificates',
-    description: 'Track subcontractor insurance coverage, documents, and expiration dates.',
+    label: 'Compliance',
+    description: 'Track subcontractor insurance, agreements, tax documents, and renewal history.',
   },
   {
     id: 'settings',

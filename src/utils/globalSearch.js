@@ -220,7 +220,7 @@ export function buildGlobalSearchItems({
         type: 'person',
         label,
         meta: [personTypeLabel(type), clean(person.role), clean(person.email)].filter(Boolean).join(' · '),
-        keywords: [label, person.first, person.last, person.company, person.role, person.email, person.phone, person.tags],
+        keywords: [label, person.first, person.last, person.company, person.legalName, person.companyType, person.role, person.email, person.phone, person.tags],
         personId: person.id,
         personType: type,
         query: clean(person.company) || clean(`${person.first || ''} ${person.last || ''}`) || label,
@@ -236,8 +236,8 @@ export function buildGlobalSearchItems({
         id: `certificate:${person.id}`,
         type: 'certificate',
         label,
-        meta: certificateTerms.length ? 'Certificate record' : 'Certificate status',
-        keywords: [label, person.company, person.first, person.last, ...certificateTerms],
+        meta: certificateTerms.length ? 'Compliance record' : 'Compliance status',
+        keywords: [label, person.company, person.legalName, person.companyType, person.first, person.last, ...certificateTerms],
         subcontractorId: person.id,
       });
     });

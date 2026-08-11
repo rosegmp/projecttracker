@@ -4,6 +4,7 @@ import { personAssignmentLabel } from './accessUi.js';
 import {
   certificateEligible,
   sortCertificatesByExpiration,
+  subcontractorComplianceStatus,
   subcontractorCertificateStatus,
   subcontractorLabel,
 } from './certificateStatus.js';
@@ -408,7 +409,12 @@ export function buildHomeActionCenterItems(attention = {}) {
   });
 }
 
-export function buildHomeCertificateExceptions(subcontractors = [], certificates = [], todayIso = getLocalIsoDate()) {
+export function buildHomeCertificateExceptions(
+  subcontractors = [],
+  certificates = [],
+  todayIso = getLocalIsoDate(),
+  complianceDocuments = [],
+) {
   const certificatesBySubcontractor = new Map();
   (certificates || []).forEach((certificate) => {
     const subcontractorId = String(certificate?.subcontractorId || '').trim();
@@ -497,6 +503,50 @@ export function buildHomeCertificateExceptions(subcontractors = [], certificates
       attentionTone: 'danger',
       attentionRank: 3,
       certificateCount: missing.length,
+    });
+  }
+
+  const documentsBySubcontractor = new Map();
+  (complianceDocuments || []).forEach((document) => {
+    const subcontractorId = String(document?.subcontractorId || '').trim();
+    if (!subcontractorId) return;
+    if (!documentsBySubcontractor.has(subcontractorId)) documentsBySubcontractor.set(subcontractorId, []);
+    documentsBySubcontractor.get(subcontractorId).push(document);
+  });
+  const missingDocuments = (subcontractors || [])
+    .filter(certificateEligible)
+    .flatMap((subcontractor) => {
+      const status = subcontractorComplianceStatus(
+        subcontractor,
+        certificatesBySubcontractor.get(subcontractor.id) || [],
+        documentsBySubcontractor.get(subcontractor.id) || [],
+        todayIso,
+      );
+      return status.missing
+        .filter((requirement) => ['subcontractor_agreement', 'w9'].includes(requirement.id))
+        .map((requirement) => ({ subcontractor, requirement }));
+    });
+  if (missingDocuments.length) {
+    const agreementCount = missingDocuments.filter((item) => item.requirement.id === 'subcontractor_agreement').length;
+    const w9Count = missingDocuments.length - agreementCount;
+    const affectedSubcontractors = new Set(missingDocuments.map((item) => item.subcontractor.id));
+    const reasons = [];
+    if (agreementCount) reasons.push(`${agreementCount} agreement${agreementCount === 1 ? '' : 's'} missing`);
+    if (w9Count) reasons.push(`${w9Count} ${w9Count === 1 ? 'Form W-9' : 'Forms W-9'} missing`);
+    aggregateItems.push({
+      id: 'missing-compliance-documents',
+      type: 'certificate',
+      label: 'Missing compliance documents',
+      projectName: 'Portfolio',
+      projectId: '',
+      ownerLabel: `${affectedSubcontractors.size} subcontractor${affectedSubcontractors.size === 1 ? '' : 's'}`,
+      due: '',
+      status: reasons.join(' Â· '),
+      statusId: 'needs-attention',
+      attentionReason: `${missingDocuments.length} required document${missingDocuments.length === 1 ? ' needs' : 's need'} attention`,
+      attentionTone: 'danger',
+      attentionRank: 3,
+      certificateCount: missingDocuments.length,
     });
   }
 

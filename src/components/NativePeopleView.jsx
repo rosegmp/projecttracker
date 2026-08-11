@@ -12,10 +12,11 @@ import { DashboardStat, PageStats } from './SharedUI.jsx';
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const PEOPLE_VIEW_MODE_KEY = 'cx_people_view_mode';
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
-const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = { company: 220, name: 220, role: 180, phone: 170, email: 240, tags: 200 };
+const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = { company: 220, name: 220, companyType: 260, role: 180, phone: 170, email: 240, tags: 200 };
 const PEOPLE_LIST_COLUMN_DEFS = [
   { id: 'name', label: 'Name', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.name },
   { id: 'company', label: 'Company', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.company },
+  { id: 'companyType', label: 'Company Type', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.companyType },
   { id: 'role', label: 'Role', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.role },
   { id: 'phone', label: 'Phone', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.phone },
   { id: 'email', label: 'Email', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.email },
@@ -99,6 +100,18 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
           <div>
             <dt>Company</dt>
             <dd>{person.company}</dd>
+          </div>
+        ) : null}
+        {type === 'sub' && person.legalName ? (
+          <div>
+            <dt>Legal Name</dt>
+            <dd>{person.legalName}</dd>
+          </div>
+        ) : null}
+        {type === 'sub' && person.companyType ? (
+          <div>
+            <dt>Company Type</dt>
+            <dd>{person.companyType}</dd>
           </div>
         ) : null}
         <div className="person-detail-full">
@@ -225,6 +238,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
   function getValue(person, columnId) {
     if (columnId === 'name') return `${person.first || ''} ${person.last || ''}`.trim() || 'Not provided';
     if (columnId === 'company') return person.company || 'Not provided';
+    if (columnId === 'companyType') return person.companyType || 'Not provided';
     if (columnId === 'role') return person.role || 'Not provided';
     if (columnId === 'phone') return person.phone || 'Not provided';
     if (columnId === 'email') return person.email || 'Not provided';
@@ -373,7 +387,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     return [...visiblePeople]
       .filter((person) => {
         if (!lowered) return true;
-        return [personDisplayName(person), person.company, person.role, ...splitTags(person.tags)]
+        return [personDisplayName(person), person.company, person.legalName, person.companyType, person.role, ...splitTags(person.tags)]
           .filter(Boolean)
           .some((value) => value.toLowerCase().includes(lowered));
       })
@@ -404,6 +418,8 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       first: '',
       last: '',
       company: '',
+      legalName: '',
+      companyType: '',
       role: '',
       phone: '',
       email: '',
@@ -420,6 +436,8 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       first: person.first || '',
       last: person.last || '',
       company: person.company || '',
+      legalName: person.legalName || '',
+      companyType: person.companyType || '',
       role: person.role || '',
       phone: person.phone || '',
       email: person.email || '',
@@ -475,7 +493,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
   }
 
   function handleExportPeople() {
-    const headers = ['first', 'last', 'company', 'role', 'phone', 'email', 'license', 'notes', 'tags'];
+    const headers = ['first', 'last', 'company', 'legalName', 'companyType', 'role', 'phone', 'email', 'license', 'notes', 'tags'];
     const csv = [
       headers.join(','),
       ...filteredPeople.map((person) =>
@@ -519,6 +537,8 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
             first: record.first || '',
             last: record.last || '',
             company: record.company || '',
+            legalName: record.legalname || record.legal_name || '',
+            companyType: record.companytype || record.company_type || '',
             role: record.role || '',
             phone: record.phone || '',
             email: record.email || '',

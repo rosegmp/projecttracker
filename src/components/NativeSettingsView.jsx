@@ -32,7 +32,7 @@ const SETTINGS_SECTIONS = [
   { id: 'system', label: 'System status', description: 'Data source, record counts, and refresh controls.' },
 ];
 const PEOPLE_LIST_COLUMN_DEFS = [
-  { id: 'name', label: 'Name' }, { id: 'company', label: 'Company' }, { id: 'role', label: 'Role' },
+  { id: 'name', label: 'Name' }, { id: 'company', label: 'Company' }, { id: 'companyType', label: 'Company Type' }, { id: 'role', label: 'Role' },
   { id: 'phone', label: 'Phone' }, { id: 'email', label: 'Email' }, { id: 'tags', label: 'Tags' },
 ];
 function normalizeAppUserRole(role) { return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only'; }
@@ -79,6 +79,40 @@ function TaskAssignmentEmailSettings({ settings, savingInternal, savingExternal,
         </span>
       </label>
       <p className="panel-copy">Delivery uses the secured server email service. Task creation still succeeds if email delivery is temporarily unavailable.</p>
+      {status?.message ? (
+        <p className={status.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">
+          {status.message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function ComplianceEmailTestSettings({ enabled, saving, status, adminEmail, onToggle }) {
+  return (
+    <section className="settings-card compliance-email-test-settings">
+      <div className="settings-card-header">
+        <div>
+          <h3>Compliance email test mode</h3>
+          <p>Safely review subcontractor compliance and certificate-renewal emails before sending them to vendors.</p>
+        </div>
+      </div>
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => void onToggle(event.target.checked)}
+          disabled={saving || !adminEmail}
+        />
+        <span>
+          <strong>Send compliance emails to me for testing</strong>
+          <small>
+            {adminEmail
+              ? `While enabled, emails go to ${adminEmail}. The subcontractor's intended address appears at the top of each message.`
+              : 'Add an email address to your administrator account before enabling test mode.'}
+          </small>
+        </span>
+      </label>
       {status?.message ? (
         <p className={status.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">
           {status.message}
@@ -262,6 +296,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
   }));
   const [taskAssignmentEmailStatus, setTaskAssignmentEmailStatus] = useState({ tone: '', message: '' });
+  const [complianceEmailTestDraft, setComplianceEmailTestDraft] = useState(data.settings?.complianceEmailTestMode === true);
+  const [complianceEmailTestStatus, setComplianceEmailTestStatus] = useState({ tone: '', message: '' });
   const [notificationPermission, setNotificationPermission] = useState('');
   const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
@@ -304,6 +340,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         showPageStats: data.settings?.showPageStats !== false,
         emailNewTasksToInternalAssignees: data.settings?.emailNewTasksToInternalAssignees === true,
         emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
+        complianceEmailTestMode: data.settings?.complianceEmailTestMode === true,
         visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
         visibleProjectTabs: normalizeVisibleProjectTabs(data.settings?.visibleProjectTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
@@ -407,6 +444,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
     data.settings?.emailNewTasksToInternalAssignees,
     data.settings?.emailNewTasksToExternalAssignees,
   ]);
+
+  useEffect(() => {
+    setComplianceEmailTestDraft(data.settings?.complianceEmailTestMode === true);
+  }, [data.settings?.complianceEmailTestMode]);
 
   useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
@@ -558,6 +599,26 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       setTaskAssignmentEmailStatus({
         tone: 'error',
         message: error instanceof Error ? error.message : 'Unable to save the assignment email preference.',
+      });
+    }
+  }
+
+  async function handleComplianceEmailTestToggle(value) {
+    setComplianceEmailTestDraft(value);
+    setComplianceEmailTestStatus({ tone: '', message: 'Saving compliance email test mode…' });
+    try {
+      await runSettingsMutation({ complianceEmailTestMode: value }, ['settings', 'complianceEmailTestMode']);
+      setComplianceEmailTestStatus({
+        tone: 'success',
+        message: value
+          ? `Test mode enabled. Compliance emails will go to ${activeUser?.email || 'your administrator email'}.`
+          : 'Test mode disabled. Compliance emails will go to subcontractors.',
+      });
+    } catch (error) {
+      setComplianceEmailTestDraft(settingsStateRef.current.settings?.complianceEmailTestMode === true);
+      setComplianceEmailTestStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to save compliance email test mode.',
       });
     }
   }
@@ -1138,6 +1199,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const projectTabsSaving = isMutating(['settings', 'visibleProjectTabs']);
   const internalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToInternalAssignees']);
   const externalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToExternalAssignees']);
+  const complianceEmailTestSaving = isMutating(['settings', 'complianceEmailTestMode']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1508,6 +1570,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
               />
+              <ComplianceEmailTestSettings
+                enabled={complianceEmailTestDraft}
+                saving={complianceEmailTestSaving}
+                status={complianceEmailTestStatus}
+                adminEmail={String(activeUser?.email || '').trim()}
+                onToggle={handleComplianceEmailTestToggle}
+              />
               <section className="settings-card android-notification-settings">
                 <div className="settings-card-header">
                   <div>
@@ -1623,6 +1692,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 savingExternal={externalTaskEmailSaving}
                 status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
+              />
+              <ComplianceEmailTestSettings
+                enabled={complianceEmailTestDraft}
+                saving={complianceEmailTestSaving}
+                status={complianceEmailTestStatus}
+                adminEmail={String(activeUser?.email || '').trim()}
+                onToggle={handleComplianceEmailTestToggle}
               />
               <section className="settings-card settings-platform-notice">
                 <FluentIcon name="warning" size={22} />

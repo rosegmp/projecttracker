@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createTask, loadAuditEvents, updateTask } from '../services/trackerData.js';
-import { loadInsuranceCertificates } from '../services/insuranceCertificates.js';
+import { loadInsuranceCertificates, loadSubcontractorComplianceDocuments } from '../services/insuranceCertificates.js';
 import { loadPortalItemsForProjects, loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
 import { reportError } from '../services/observability.js';
 import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser } from '../utils/accessUi.js';
@@ -278,6 +278,7 @@ export default function NativeHomeView({
   const [quickTask, setQuickTask] = useState({ label: '', projectId: '', due: '', assignee: '' });
   const [quickTaskMessage, setQuickTaskMessage] = useState(null);
   const [certificates, setCertificates] = useState([]);
+  const [complianceDocuments, setComplianceDocuments] = useState([]);
   const [certificateLoadError, setCertificateLoadError] = useState('');
   const [portalItems, setPortalItems] = useState([]);
   const [portalLoadError, setPortalLoadError] = useState('');
@@ -312,9 +313,9 @@ export default function NativeHomeView({
   );
   const certificateExceptions = useMemo(
     () => includeCertificateExceptions
-      ? buildHomeCertificateExceptions(data.subs || [], certificates, todayIso)
+      ? buildHomeCertificateExceptions(data.subs || [], certificates, todayIso, complianceDocuments)
       : [],
-    [certificates, data.subs, includeCertificateExceptions, todayIso],
+    [certificates, complianceDocuments, data.subs, includeCertificateExceptions, todayIso],
   );
   const pendingDecisions = useMemo(
     () => buildHomePendingDecisionExceptions(visibleProjects, portalItems, todayIso, {
@@ -424,12 +425,18 @@ export default function NativeHomeView({
   const refreshCertificates = useCallback(async () => {
     if (!includeCertificateExceptions) {
       setCertificates([]);
+      setComplianceDocuments([]);
       setCertificateLoadError('');
       return;
     }
     setCertificateLoadError('');
     try {
-      setCertificates(await loadInsuranceCertificates());
+      const [certificateRows, documentRows] = await Promise.all([
+        loadInsuranceCertificates(),
+        loadSubcontractorComplianceDocuments(),
+      ]);
+      setCertificates(certificateRows);
+      setComplianceDocuments(documentRows);
     } catch (error) {
       reportError(error, { operation: 'certificate.home-list', workspace: 'home' });
       setCertificateLoadError('Certificate exceptions are temporarily unavailable.');
