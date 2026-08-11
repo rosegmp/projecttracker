@@ -162,7 +162,7 @@ select lives_ok(
   'assigned editors can delete one current inspection through the focused RPC'
 );
 select results_eq(
-  'select subcontractor_id from public.insurance_certificates',
+  'select distinct subcontractor_id from public.insurance_certificates',
   array['auth-sub-a'::text],
   'editors can read subcontractor insurance certificates without project scope'
 );
@@ -170,7 +170,7 @@ select results_eq(
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000003","email":"viewer@test.local","role":"authenticated"}';
 select ok(not public.app_user_can_edit(), 'view-only users do not receive edit capability');
 select results_eq(
-  'select subcontractor_id from public.insurance_certificates',
+  'select distinct subcontractor_id from public.insurance_certificates',
   array['auth-sub-a'::text],
   'view-only users can read subcontractor insurance certificates'
 );
