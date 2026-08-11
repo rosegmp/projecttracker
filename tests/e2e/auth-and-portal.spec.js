@@ -599,6 +599,13 @@ test('administrator project-tab settings hide project sections and preserve requ
   await expect(internalEmailToggle).toBeChecked();
   await expect(externalEmailToggle).toBeChecked();
 
+  const complianceEmailTests = page.getByRole('heading', { name: 'Compliance email test mode' }).locator('xpath=ancestor::section[1]');
+  const complianceTestToggle = complianceEmailTests.getByRole('checkbox', { name: /Send compliance emails to me for testing/ });
+  await expect(complianceTestToggle).not.toBeChecked();
+  await complianceTestToggle.check();
+  await expect(complianceTestToggle).toBeChecked();
+  await expect(complianceEmailTests).toContainText(adminEmail);
+
   simulateOffline = true;
   await page.goto(`/?tab=projects&project=${adminProjectId}`);
   await expect(page.getByText('Working from the saved workspace.', { exact: true })).toBeVisible();

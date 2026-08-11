@@ -91,6 +91,74 @@ export function normalizeInsuranceCertificate(row = {}, coverageRows = row.cover
   };
 }
 
+export function normalizeCertificateRenewalRequest(row = {}) {
+  return {
+    id: cleanText(row.id),
+    subcontractorId: cleanText(row.subcontractor_id ?? row.subcontractorId),
+    sourceCertificateId: cleanText(row.source_certificate_id ?? row.sourceCertificateId),
+    receivedCertificateId: cleanText(row.received_certificate_id ?? row.receivedCertificateId),
+    status: cleanText(row.status) || 'requested',
+    recipientEmail: cleanText(row.recipient_email ?? row.recipientEmail),
+    requestedByName: cleanText(row.requested_by_name ?? row.requestedByName),
+    requestedByEmail: cleanText(row.requested_by_email ?? row.requestedByEmail),
+    deliveryStatus: cleanText(row.delivery_status ?? row.deliveryStatus) || 'pending',
+    requestedAt: cleanText(row.requested_at ?? row.requestedAt),
+    deliveredAt: cleanText(row.delivered_at ?? row.deliveredAt),
+    receivedAt: cleanText(row.received_at ?? row.receivedAt),
+    reviewedAt: cleanText(row.reviewed_at ?? row.reviewedAt),
+    acceptedAt: cleanText(row.accepted_at ?? row.acceptedAt),
+    version: Number(row.version) || 0,
+  };
+}
+
+export function normalizeSubcontractorComplianceDocument(row = {}) {
+  return {
+    id: cleanText(row.id),
+    subcontractorId: cleanText(row.subcontractor_id ?? row.subcontractorId),
+    documentType: cleanText(row.document_type ?? row.documentType),
+    signedDate: cleanText(row.signed_date ?? row.signedDate),
+    sourceFileName: cleanText(row.source_file_name ?? row.sourceFileName),
+    sourceBucket: cleanText(row.source_bucket ?? row.sourceBucket),
+    sourcePath: cleanText(row.source_path ?? row.sourcePath),
+    version: Number(row.version) || 0,
+    createdAt: cleanText(row.created_at ?? row.createdAt),
+    updatedAt: cleanText(row.updated_at ?? row.updatedAt),
+  };
+}
+
+export function normalizeSubcontractorTaxIdStatus(row = {}) {
+  const lastFour = cleanText(row.tax_id_last_four ?? row.taxIdLastFour).replace(/\D/g, '').slice(-4);
+  return {
+    subcontractorId: cleanText(row.subcontractor_id ?? row.subcontractorId),
+    taxIdLastFour: lastFour.length === 4 ? lastFour : '',
+    taxIdType: ['ein', 'ssn'].includes(cleanText(row.tax_id_type ?? row.taxIdType).toLowerCase())
+      ? cleanText(row.tax_id_type ?? row.taxIdType).toLowerCase()
+      : 'unknown',
+    legalName: cleanText(row.legal_name ?? row.legalName),
+    businessName: cleanText(row.business_name ?? row.businessName),
+    mailingAddress: cleanText(row.mailing_address ?? row.mailingAddress),
+    companyType: cleanText(row.company_type ?? row.companyType),
+    source: cleanText(row.source),
+    confidence: cleanText(row.extraction_confidence ?? row.confidence),
+    updatedAt: cleanText(row.updated_at ?? row.updatedAt),
+  };
+}
+
+export function maskedTaxId(lastFour) {
+  const digits = cleanText(lastFour).replace(/\D/g, '').slice(-4);
+  return digits.length === 4 ? `•••• ${digits}` : '';
+}
+
+function normalizeManualTaxId(value) {
+  const text = cleanText(value);
+  const digits = text.replace(/\D/g, '');
+  if (digits.length !== 9) throw new Error('Enter a valid 9-digit US tax ID.');
+  return {
+    value: text,
+    taxIdType: /^\d{2}-\d{7}$/.test(text) ? 'ein' : /^\d{3}-\d{2}-\d{4}$/.test(text) ? 'ssn' : 'unknown',
+  };
+}
+
 async function readApiError(response, fallback) {
   const payload = await response.json().catch(() => null);
   const message = cleanText(payload?.message || payload?.error || payload?.hint);
@@ -132,6 +200,109 @@ export async function loadInsuranceCertificates() {
 
   return (Array.isArray(certificateRows) ? certificateRows : []).map((row) =>
     normalizeInsuranceCertificate(row, coveragesByCertificate.get(cleanText(row.id)) || []));
+}
+
+export async function loadCertificateRenewalRequests() {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/certificate_renewal_requests?select=*&order=requested_at.desc,id.desc',
+    { method: 'GET' },
+    'Certificate renewal requests',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to load certificate renewal history.');
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : []).map(normalizeCertificateRenewalRequest);
+}
+
+export async function loadSubcontractorComplianceDocuments() {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/subcontractor_compliance_documents?select=*&order=subcontractor_id.asc,document_type.asc',
+    { method: 'GET' },
+    'Subcontractor compliance documents',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to load subcontractor compliance documents.');
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : []).map(normalizeSubcontractorComplianceDocument);
+}
+
+export async function loadSubcontractorTaxIdStatuses() {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/rpc/get_subcontractor_tax_id_statuses',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    'Subcontractor tax ID status',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to load subcontractor tax ID status.');
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : []).map(normalizeSubcontractorTaxIdStatus);
+}
+
+export async function createCertificateRenewalRequest(subcontractorId, sourceCertificateId = '') {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/rpc/create_certificate_renewal_request',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        p_subcontractor_id: subcontractorId,
+        p_source_certificate_id: sourceCertificateId || null,
+      }),
+    },
+    'Certificate renewal request',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to create the certificate renewal request.');
+  const renewal = normalizeCertificateRenewalRequest(await response.json());
+  const deliveryResponse = await fetchAuthorizedSupabase(
+    '/functions/v1/send-project-notification',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'certificate-renewal-requested',
+        eventId: renewal.id,
+        entityId: renewal.id,
+      }),
+    },
+    'Certificate renewal email',
+  );
+  if (!deliveryResponse.ok) await readApiError(deliveryResponse, 'The renewal was recorded, but its email could not be sent.');
+  return { renewal, delivery: await deliveryResponse.json() };
+}
+
+export async function sendSubcontractorComplianceRequest(subcontractorId) {
+  const eventId = globalThis.crypto?.randomUUID?.() || `compliance-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await fetchAuthorizedSupabase(
+    '/functions/v1/send-project-notification',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'subcontractor-compliance-requested',
+        eventId,
+        entityId: subcontractorId,
+      }),
+    },
+    'Subcontractor compliance email',
+    45000,
+  );
+  if (!response.ok) await readApiError(response, 'Unable to send the subcontractor compliance email.');
+  return response.json();
+}
+
+export async function updateCertificateRenewalStatus(renewal, status) {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/rpc/update_certificate_renewal_status',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        p_request_id: renewal.id,
+        p_status: status,
+        p_expected_version: renewal.version,
+      }),
+    },
+    'Certificate renewal status',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to update the certificate renewal status.');
+  return normalizeCertificateRenewalRequest(await response.json());
 }
 
 export async function saveInsuranceCertificate(certificate) {
@@ -217,7 +388,7 @@ export function validateCertificateFile(file) {
   }
 }
 
-export async function uploadCertificateFile(file) {
+async function uploadCertificateStorageFile(file, category = '') {
   validateCertificateFile(file);
   const session = getStoredAuthSession();
   const userId = cleanText(session?.user?.id);
@@ -225,7 +396,8 @@ export async function uploadCertificateFile(file) {
   if (!userId || !supabaseUrl) throw new Error('Your signed-in session is required to upload a certificate.');
 
   const fileId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const storagePath = `certificates/${userId}/${fileId}-${safeFileName(file.name)}`;
+  const categoryPath = cleanText(category).replace(/[^a-z0-9-]+/gi, '-');
+  const storagePath = `certificates/${userId}/${categoryPath ? `${categoryPath}/` : ''}${fileId}-${safeFileName(file.name)}`;
   const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
   const response = await fetchAuthorizedSupabase(
     `${supabaseUrl}/storage/v1/object/${encodeURIComponent(CERTIFICATE_FILES_BUCKET)}/${encodedPath}`,
@@ -247,6 +419,110 @@ export async function uploadCertificateFile(file) {
     sourcePath: storagePath,
     contentType: file.type,
   };
+}
+
+export async function uploadCertificateFile(file) {
+  return uploadCertificateStorageFile(file);
+}
+
+export async function saveSubcontractorComplianceDocument(document) {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/rpc/save_subcontractor_compliance_document',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        p_document: {
+          id: document.id,
+          subcontractorId: document.subcontractorId,
+          documentType: document.documentType,
+          signedDate: document.signedDate,
+          sourceFileName: document.sourceFileName,
+          sourceBucket: document.sourceBucket,
+          sourcePath: document.sourcePath,
+        },
+        p_expected_version: document.version || null,
+      }),
+    },
+    'Compliance document save',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to save the compliance document.');
+  return normalizeSubcontractorComplianceDocument(await response.json());
+}
+
+export async function uploadSubcontractorComplianceDocument(file, document) {
+  const uploaded = await uploadCertificateStorageFile(file, 'compliance');
+  try {
+    const saved = await saveSubcontractorComplianceDocument({ ...document, ...uploaded });
+    if (document.documentType !== 'w9') return saved;
+    try {
+      const taxIdStatus = document.manualTaxId
+        ? await storeManualSubcontractorTaxId(document.subcontractorId, document.manualTaxId)
+        : await extractAndStoreSubcontractorTaxId(document.subcontractorId, uploaded);
+      return { ...saved, taxIdStatus };
+    } catch (error) {
+      return {
+        ...saved,
+        taxIdWarning: error instanceof Error ? error.message : 'Tax ID extraction failed. Enter it manually.',
+      };
+    }
+  } catch (error) {
+    await deleteCertificateFile(uploaded).catch(() => {});
+    throw error;
+  }
+}
+
+async function manageSubcontractorTaxId(payload) {
+  const response = await fetchAuthorizedSupabase(
+    '/functions/v1/manage-subcontractor-tax-id',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Subcontractor tax ID',
+    45000,
+  );
+  if (!response.ok) await readApiError(response, 'Unable to store the subcontractor tax ID.');
+  return normalizeSubcontractorTaxIdStatus({ subcontractorId: payload.subcontractorId, ...await response.json() });
+}
+
+export async function extractAndStoreSubcontractorTaxId(subcontractorId, file) {
+  return manageSubcontractorTaxId({
+    action: 'extract',
+    subcontractorId,
+    sourcePath: file.sourcePath,
+    contentType: file.contentType,
+  });
+}
+
+export async function storeManualSubcontractorTaxId(subcontractorId, value) {
+  const normalized = normalizeManualTaxId(value);
+  return manageSubcontractorTaxId({
+    action: 'manual',
+    subcontractorId,
+    taxId: normalized.value,
+    taxIdType: normalized.taxIdType,
+  });
+}
+
+export async function deleteSubcontractorComplianceDocument(document) {
+  const response = await fetchAuthorizedSupabase(
+    '/rest/v1/rpc/delete_subcontractor_compliance_document',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        p_document_id: document.id,
+        p_expected_version: document.version,
+      }),
+    },
+    'Compliance document delete',
+  );
+  if (!response.ok) await readApiError(response, 'Unable to delete the compliance document.');
+  const deleted = normalizeSubcontractorComplianceDocument(await response.json());
+  await deleteCertificateFile(deleted).catch(() => {});
+  return deleted;
 }
 
 export async function deleteCertificateFile(file) {

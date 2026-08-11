@@ -91,7 +91,8 @@ import {
   findClosestSubcontractor,
   normalizeSubcontractorName,
 } from '../src/utils/certificateMatching.js';
-import { certificateMatchesStatusFilter } from '../src/utils/certificateStatus.js';
+import { certificateMatchesStatusFilter, subcontractorComplianceStatus } from '../src/utils/certificateStatus.js';
+import { is1099ReportingCompanyType, normalizeCompanyType } from '../src/utils/companyType.js';
 import {
   DEFAULT_VISIBLE_PROJECT_TABS,
   getVisibleProjectTabs,
@@ -1141,28 +1142,109 @@ const tests = [
         { id: 'renewed-active-cert', subcontractorId: 'newer-active-sub', expirationDate: '2026-09-15' },
       ];
       const certificateExceptions = buildHomeCertificateExceptions(subcontractors, certificates, '2026-07-16');
-      assert.deepEqual(certificateExceptions.map((item) => item.statusId), ['expired-expiring', 'missing']);
+      assert.deepEqual(certificateExceptions.map((item) => item.statusId), ['expired-expiring', 'missing', 'needs-attention']);
       assert.deepEqual(certificateExceptions.map((item) => item.ownerLabel), [
         '2 subcontractors',
-        '2 subcontractors',
+        '3 subcontractors',
+        '7 subcontractors',
       ]);
-      assert.deepEqual(certificateExceptions.map((item) => item.certificateCount), [2, 2]);
+      assert.deepEqual(certificateExceptions.map((item) => item.certificateCount), [2, 3, 14]);
       assert.equal(certificateExceptions[0].status, '1 expired · 1 expiring within 30 days');
-      assert.equal(certificateExceptions[1].status, '1 certificate missing · 1 expiration date missing');
+      assert.equal(certificateExceptions[1].status, '2 certificates missing · 1 expiration date missing');
+      assert.match(certificateExceptions[2].status, /^7 agreements missing .* 7 Forms W-9 missing$/);
       assert.ok(certificateExceptions.every((item) => item.projectName === 'Portfolio' && item.type === 'certificate'));
       const actions = buildHomeActionCenterItems({ certificateExceptions });
       assert.deepEqual(actions.map((action) => action.reason), [
         '2 certificates need attention',
-        '2 certificate records need attention',
+        '3 certificate records need attention',
+        '14 required documents need attention',
       ]);
       assert.deepEqual(actions.map((action) => action.owner), [
         '2 subcontractors',
-        '2 subcontractors',
+        '3 subcontractors',
+        '7 subcontractors',
       ]);
       assert.equal(certificateMatchesStatusFilter('expired', 'expired-expiring'), true);
       assert.equal(certificateMatchesStatusFilter('expiring', 'expired-expiring'), true);
       assert.equal(certificateMatchesStatusFilter('active', 'expired-expiring'), false);
       assert.equal(certificateMatchesStatusFilter('missing', 'missing'), true);
+    },
+  },
+  {
+    name: 'subcontractor compliance requires current GL, an agreement, and a conditional W-9 while workers comp is optional',
+    run() {
+      const subcontractor = { id: 'sub-compliance', company: 'Complete Trade Partner' };
+      const certificates = [{
+        id: 'cert-compliance',
+        subcontractorId: subcontractor.id,
+        expirationDate: '2027-01-01',
+        coverages: [
+          { type: 'Commercial General Liability', expirationDate: '2027-01-01' },
+        ],
+      }];
+      const documents = [
+        { documentType: 'subcontractor_agreement', sourcePath: 'certificates/user/agreement.pdf' },
+        { documentType: 'w9', sourcePath: 'certificates/user/w9.pdf' },
+      ];
+
+      const compliant = subcontractorComplianceStatus(subcontractor, certificates, documents, '2026-07-16');
+      assert.equal(compliant.id, 'compliant');
+      assert.ok(compliant.requirements.every((requirement) => requirement.satisfied));
+      assert.equal(compliant.requirements.find((requirement) => requirement.id === 'workers_compensation').optional, true);
+      assert.equal(compliant.requirements.find((requirement) => requirement.id === 'workers_compensation').detail, 'Missing');
+
+      const missingDocuments = subcontractorComplianceStatus(subcontractor, certificates, [], '2026-07-16');
+      assert.deepEqual(missingDocuments.missing.map((requirement) => requirement.id), ['subcontractor_agreement', 'w9']);
+
+      const exempt = subcontractorComplianceStatus({ ...subcontractor, is1099Exempt: true }, certificates, documents.slice(0, 1), '2026-07-16');
+      assert.equal(exempt.id, 'compliant');
+      assert.equal(exempt.requirements.find((requirement) => requirement.id === 'w9').detail, 'Not subject to 1099 reporting');
+
+      assert.equal(normalizeCompanyType('LLC - C'), 'Limited Liability Company');
+      assert.equal(is1099ReportingCompanyType('Individual/sole proprietor or single-member LLC'), true);
+      assert.equal(is1099ReportingCompanyType('Limited Liability Company'), true);
+      assert.equal(is1099ReportingCompanyType('S Corporation'), false);
+      const corporation = subcontractorComplianceStatus(
+        { ...subcontractor, companyType: 'S Corporation', is1099Exempt: false },
+        certificates,
+        documents.slice(0, 1),
+        '2026-07-16',
+      );
+      assert.equal(corporation.id, 'compliant');
+      assert.equal(corporation.requirements.find((requirement) => requirement.id === 'w9').detail, 'Not subject to 1099 reporting');
+      const individual = subcontractorComplianceStatus(
+        { ...subcontractor, companyType: 'Individual/sole proprietor or single-member LLC', is1099Exempt: true },
+        certificates,
+        documents.slice(0, 1),
+        '2026-07-16',
+      );
+      assert.deepEqual(individual.missing.map((requirement) => requirement.id), ['w9']);
+
+      const expiredWorkersComp = subcontractorComplianceStatus(subcontractor, [{
+        ...certificates[0],
+        coverages: [
+          certificates[0].coverages[0],
+          { type: 'Workers Compensation', expirationDate: '2026-07-15' },
+        ],
+      }], documents, '2026-07-16');
+      assert.equal(expiredWorkersComp.id, 'compliant');
+      assert.deepEqual(expiredWorkersComp.missing, []);
+
+      const legacyWaiver = subcontractorComplianceStatus(
+        { ...subcontractor, certificateRequirement: 'not_required' },
+        [],
+        documents,
+        '2026-07-16',
+      );
+      assert.deepEqual(legacyWaiver.missing.map((requirement) => requirement.id), ['general_liability']);
+
+      const futurePolicy = subcontractorComplianceStatus(subcontractor, [{
+        ...certificates[0],
+        effectiveDate: '2026-08-01',
+        coverages: certificates[0].coverages.map((coverage) => ({ ...coverage, effectiveDate: '2026-08-01' })),
+      }], documents, '2026-07-16');
+      assert.deepEqual(futurePolicy.missing.map((requirement) => requirement.id), ['general_liability']);
+      assert.equal(futurePolicy.requirements.find((requirement) => requirement.id === 'general_liability').detail, 'Not yet effective');
     },
   },
   {
@@ -5016,17 +5098,27 @@ const tests = [
       ]);
       assert.match(appSource, /lazy\(\(\) => import\('\.\/components\/NativeCertificatesView\.jsx'\)\)/);
       assert.match(appSource, /activeTab === 'certificates'/);
-      assert.match(navigationSource, /\{ id: 'certificates', label: 'Certificates'/);
+      assert.match(navigationSource, /\{ id: 'certificates', label: 'Compliance'/);
       assert.match(componentSource, /Subcontractor compliance/);
       assert.match(componentSource, /data\.subs/);
       assert.match(componentSource, /All subcontractors/);
-      assert.match(componentSource, /certificateRequired,/);
-      assert.match(componentSource, /No cert needed/);
+      assert.match(componentSource, /subcontractorComplianceStatus,/);
+      assert.match(componentSource, /Mark W-9 exempt/);
+      assert.match(componentSource, /Remove W-9 exemption/);
+      assert.match(componentSource, /Subcontractor agreement/);
+      assert.match(componentSource, /Form W-9/);
       assert.match(componentSource, /Mark inactive/);
+      assert.match(componentSource, /const \[activityFilter, setActivityFilter\] = useState\('active'\)/);
+      assert.match(componentSource, /Active subcontractors/);
+      assert.match(componentSource, /Inactive subcontractors/);
+      assert.match(componentSource, /activityFilter === 'active' && subcontractor\.inactive === true/);
+      assert.match(componentSource, /const activityRoster = subcontractorRoster\.filter/);
+      assert.match(componentSource, /total: activityRoster\.length/);
       assert.match(componentSource, /updatePerson\(data, 'sub'/);
       assert.match(componentSource, /findClosestSubcontractor/);
       assert.doesNotMatch(componentSource, /projectId|projectFilter|Project required/);
       assert.match(serviceSource, /save_insurance_certificate/);
+      assert.match(serviceSource, /save_subcontractor_compliance_document/);
       assert.match(serviceSource, /certificate-files/);
       assert.match(serviceSource, /15 \* 1024 \* 1024/);
       assert.match(serviceSource, /subcontractorName: cleanText\(payload\.subcontractorName\)/);
@@ -5046,10 +5138,12 @@ const tests = [
       assert.match(componentSource, /aria-expanded=\{coverageExpanded\}/);
       assert.doesNotMatch(componentSource, /findDuplicate|Duplicate certificate/);
       assert.match(serviceSource, /aggregateLimit: Number\(row\.aggregate_amount/);
-      assert.match(trackerSource, /certificateRequirement: payload\.certificateRequirement === 'not_required'/);
+      assert.match(componentSource, /Subcontractor agreement/);
+      assert.match(componentSource, /Form W-9/);
       assert.match(trackerSource, /inactive: payload\.inactive === true/);
       assert.match(styleSource, /\.top-level-certificates-page/);
-      assert.match(styleSource, /\.certificate-card/);
+      assert.match(styleSource, /\.compliance-list-summary/);
+      assert.doesNotMatch(componentSource, /certificate-roster-card|compliance-document-card/);
     },
   },
   {
@@ -5066,12 +5160,105 @@ const tests = [
       assert.match(functionSource, /ANTHROPIC_CERTIFICATE_MODEL/);
       assert.match(functionSource, /Extract insurance certificate data/);
       assert.match(functionSource, /subcontractorName/);
-      assert.match(functionSource, /Commercial General Liability and Workers Compensation/);
       assert.match(functionSource, /omit other sublimits/);
       assert.match(functionSource, /General Aggregate and Products-Completed Operations Aggregate/);
       assert.match(functionSource, /getRequestId\(request\)/);
       assert.match(functionSource, /logEdgeFailure/);
       assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(sourcePath|providerPayload|bytes)/);
+    },
+  },
+  {
+    name: 'certificate renewals use server-authoritative history and fixed-purpose email delivery',
+    async run() {
+      const [migrationSource, serviceSource, componentSource, settingsSource, trackerSource, functionSource, configSource] = await Promise.all([
+        readFile(new URL('../supabase/migrations/20260809160000_add_certificate_renewal_workflow.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/insuranceCertificates.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
+      ]);
+      assert.match(migrationSource, /create table if not exists public\.certificate_renewal_requests/);
+      assert.match(migrationSource, /status in \('requested', 'received', 'under_review', 'accepted'\)/);
+      assert.match(migrationSource, /create_certificate_renewal_request/);
+      assert.match(migrationSource, /update_certificate_renewal_status/);
+      assert.match(migrationSource, /insurance_certificate_marks_renewal_received/);
+      assert.match(migrationSource, /Internal users can read certificate renewals/);
+      assert.match(migrationSource, /enforce_application_write_freeze/);
+      assert.match(serviceSource, /loadCertificateRenewalRequests/);
+      assert.match(serviceSource, /createCertificateRenewalRequest/);
+      assert.match(serviceSource, /certificate-renewal-requested/);
+      assert.match(componentSource, /Request renewal/);
+      assert.match(componentSource, /Renewal history/);
+      assert.match(componentSource, /Mark \{RENEWAL_STATUS_LABELS/);
+      assert.match(functionSource, /sendCertificateRenewalEmail/);
+      assert.match(functionSource, /Idempotency-Key.*certificate-renewal/s);
+      assert.match(functionSource, /Expired insurance certificate - updated COI required/);
+      assert.match(functionSource, /reply_to: replyTo/);
+      assert.match(functionSource, /loadComplianceAttachment\('sample_coi'\)/);
+      assert.match(functionSource, /certificate_renewal_requests/);
+      assert.match(functionSource, /subcontractor-compliance-requested/);
+      assert.match(functionSource, /Form W-9\.pdf/);
+      assert.match(functionSource, /Destiny Homes Subcontractor Agreement\.pdf/);
+      assert.match(functionSource, /Sample Certificate of Insurance\.pdf/);
+      assert.match(serviceSource, /sendSubcontractorComplianceRequest/);
+      assert.match(componentSource, /Email compliance request/);
+      assert.match(settingsSource, /Compliance email test mode/);
+      assert.match(settingsSource, /Send compliance emails to me for testing/);
+      assert.match(trackerSource, /complianceEmailTestMode: settings\?\.complianceEmailTestMode === true/);
+      assert.match(functionSource, /settingsRow\?\.data\?\.complianceEmailTestMode === true/);
+      assert.match(functionSource, /admin_test_sender_required/);
+      assert.match(functionSource, /TEST MODE - Intended subcontractor email:/);
+      assert.match(functionSource, /to: \[deliveryEmail\]/);
+      assert.match(functionSource, /testMode: complianceEmailTestMode/);
+      assert.match(functionSource, /Please include Workers Compensation coverage when it applies to your business/);
+      assert.doesNotMatch(functionSource, /missing\.push\('workers_compensation'\)/);
+      assert.match(configSource, /static_files = \[ "\.\/functions\/send-project-notification\/attachments\/\*\.pdf" \]/);
+      assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(recipientEmail|requesterEmail)/);
+    },
+  },
+  {
+    name: 'W-9 tax IDs are encrypted server-side and only masked metadata reaches the workspace',
+    async run() {
+      const [migrationSource, functionSource, notificationSource, serviceSource, componentSource, trackerSource, personModalSource, serviceModule] = await Promise.all([
+        readFile(new URL('../supabase/migrations/20260809190000_add_encrypted_subcontractor_tax_identifiers.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/manage-subcontractor-tax-id/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-project-notification/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/insuranceCertificates.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/PersonModal.jsx', import.meta.url), 'utf8'),
+        import('../src/services/insuranceCertificates.js'),
+      ]);
+      assert.match(migrationSource, /create table if not exists public\.subcontractor_tax_identifiers/);
+      assert.match(migrationSource, /encrypted_tax_id text not null/);
+      assert.match(migrationSource, /revoke all on public\.subcontractor_tax_identifiers from public, anon, authenticated/);
+      assert.match(migrationSource, /get_subcontractor_tax_id_statuses/);
+      assert.doesNotMatch(migrationSource.match(/returns table \([\s\S]*?\)\nlanguage/)?.[0] || '', /encrypted_tax_id|encryption_iv/);
+      assert.match(functionSource, /AES-GCM/);
+      assert.match(functionSource, /TAX_ID_ENCRYPTION_KEY_V1/);
+      assert.match(functionSource, /legalName/);
+      assert.match(functionSource, /mailingAddress/);
+      assert.match(functionSource, /companyType/);
+      assert.match(functionSource, /checked federal tax classification on line 3a/);
+      assert.match(functionSource, /taxIdLastFour: normalized\.taxIdLastFour/);
+      assert.doesNotMatch(functionSource, /console\.(log|error)/);
+      assert.match(serviceSource, /\/functions\/v1\/manage-subcontractor-tax-id/);
+      assert.match(componentSource, /type="password"/);
+      assert.match(componentSource, /Only the last four digits are shown/);
+      assert.match(componentSource, /peopleUpdates\.legalName = taxIdStatus\.legalName/);
+      assert.match(componentSource, /peopleUpdates\.companyType = extractedCompanyType/);
+      assert.match(componentSource, /const extracted1099Exempt = extractedCompanyType \? !is1099ReportingCompanyType/);
+      assert.match(componentSource, /peopleUpdates\.is1099Exempt = extracted1099Exempt/);
+      assert.match(componentSource, /compliance\.w9-people-save/);
+      assert.match(trackerSource, /legalName: payload\.legalName\?\.trim\(\) \|\| ''/);
+      assert.match(trackerSource, /companyType \? !is1099ReportingCompanyType\(companyType\)/);
+      assert.match(personModalSource, /<span>Legal Name<\/span>/);
+      assert.match(personModalSource, /<span>Company Type<\/span>/);
+      assert.match(notificationSource, /const w9Required = companyType/);
+      assert.equal(serviceModule.maskedTaxId('6789'), '•••• 6789');
+      assert.equal(serviceModule.maskedTaxId('123456789'), '•••• 6789');
     },
   },
   {

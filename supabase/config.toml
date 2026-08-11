@@ -5,3 +5,7 @@ verify_jwt = true
 
 [functions.send-project-notification]
 verify_jwt = true
+static_files = [ "./functions/send-project-notification/attachments/*.pdf" ]
+
+[functions.manage-subcontractor-tax-id]
+verify_jwt = true

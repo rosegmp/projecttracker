@@ -13,8 +13,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Expose-Headers': REQUEST_ID_HEADER,
 };
-const allowedKinds = new Set(['task-created', 'task-updated', 'task-assigned', 'inspection-updated', 'comment-mentioned', 'selection-approval-requested']);
+const allowedKinds = new Set(['task-created', 'task-updated', 'task-assigned', 'inspection-updated', 'comment-mentioned', 'selection-approval-requested', 'certificate-renewal-requested', 'subcontractor-compliance-requested']);
 let cachedGoogleToken: { value: string; expiresAt: number } | null = null;
+const complianceAttachmentCache = new Map<string, Promise<{ filename: string; content: string }>>();
 
 function requiredEnv(name: string) {
   const value = Deno.env.get(name);
@@ -150,6 +151,135 @@ function escapeHtml(value: unknown) {
     .replaceAll("'", '&#39;');
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function loadComplianceAttachment(key: 'w9' | 'agreement' | 'sample_coi') {
+  const attachment = {
+    w9: { filename: 'Form W-9.pdf', path: './attachments/form-w9.pdf' },
+    agreement: { filename: 'Destiny Homes Subcontractor Agreement.pdf', path: './attachments/destiny-homes-subcontractor-agreement.pdf' },
+    sample_coi: { filename: 'Sample Certificate of Insurance.pdf', path: './attachments/sample-certificate-of-insurance.pdf' },
+  }[key];
+  if (!complianceAttachmentCache.has(key)) {
+    complianceAttachmentCache.set(key, Deno.readFile(attachment.path).then((bytes) => ({
+      filename: attachment.filename,
+      content: bytesToBase64(bytes),
+    })));
+  }
+  return complianceAttachmentCache.get(key)!;
+}
+
+function formatEmailDate(value: string) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[2]}/${match[3]}/${match[1]}` : String(value || '');
+}
+
+function normalizedCoverageType(value: unknown) {
+  const normalized = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (normalized.includes('workerscomp') || normalized.includes('workmanscomp')) return 'workers_compensation';
+  if (normalized.includes('generalliability') || normalized.includes('commercialgeneralliability')) return 'general_liability';
+  return '';
+}
+
+function validEmailDate(value: unknown) {
+  const text = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function is1099ReportingCompanyType(value: unknown) {
+  const normalized = String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return normalized === 'individual sole proprietor or single member llc'
+    || normalized === 'limited liability company';
+}
+
+async function sendSubcontractorComplianceEmail({
+  requestId,
+  recipientEmail,
+  deliveryEmail,
+  subcontractorName,
+  missing,
+  latestExpirationDate,
+  expiredCertificate,
+  testMode,
+}: {
+  requestId: string;
+  recipientEmail: string;
+  deliveryEmail: string;
+  subcontractorName: string;
+  missing: string[];
+  latestExpirationDate: string;
+  expiredCertificate: boolean;
+  testMode: boolean;
+}) {
+  const apiKey = Deno.env.get('RESEND_API_KEY') || '';
+  const from = Deno.env.get('CERTIFICATE_RENEWAL_EMAIL_FROM') || Deno.env.get('TASK_ASSIGNMENT_EMAIL_FROM') || '';
+  if (!apiKey || !from) return { sent: false, status: 'unconfigured', attachmentNames: [] as string[] };
+
+  const missingLabels: Record<string, string> = {
+    general_liability: 'Current General Liability insurance certificate',
+    subcontractor_agreement: 'Signed Destiny Homes subcontractor agreement',
+    w9: 'Completed Form W-9',
+  };
+  const list = missing.map((item) => `- ${missingLabels[item]}`).join('\n');
+  const htmlList = missing.map((item) => `<li>${escapeHtml(missingLabels[item])}</li>`).join('');
+  const attachmentKeys = new Set<'w9' | 'agreement' | 'sample_coi'>();
+  if (missing.includes('w9')) attachmentKeys.add('w9');
+  if (missing.includes('subcontractor_agreement')) attachmentKeys.add('agreement');
+  if (missing.includes('general_liability')) attachmentKeys.add('sample_coi');
+  const attachments = await Promise.all([...attachmentKeys].map(loadComplianceAttachment));
+  const replyTo = cleanEmail(Deno.env.get('COMPLIANCE_EMAIL_REPLY_TO') || 'rose@destinyhomesnj.com');
+  const destination = replyTo || 'rose@destinyhomesnj.com';
+  const insuranceRequirements = 'The certificate must show current General Liability coverage and name Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business.';
+  const expirationLine = latestExpirationDate
+    ? `Our records show that your insurance certificate expired on ${formatEmailDate(latestExpirationDate)}.`
+    : 'Our records do not show a current insurance certificate.';
+  const subject = `${testMode ? '[TEST] ' : ''}${expiredCertificate ? 'Expired insurance certificate' : 'Subcontractor compliance documents needed'} - ${subcontractorName}`.slice(0, 240);
+  const opening = expiredCertificate
+    ? `${expirationLine}\n\nPlease ask your insurance agent to issue an updated certificate. ${insuranceRequirements}`
+    : `To keep our vendor and subcontractor records current, please provide the following:\n${list}\n\nIRS regulations require Destiny Homes LLC to maintain Form W-9 information for vendors subject to 1099 reporting. Our insurance company also requires current insurance documentation and a signed subcontractor agreement. ${insuranceRequirements}`;
+  const additional = expiredCertificate && missing.some((item) => ['w9', 'subcontractor_agreement'].includes(item))
+    ? `\n\nWe also need the following documents:\n${missing.filter((item) => ['w9', 'subcontractor_agreement'].includes(item)).map((item) => `- ${missingLabels[item]}`).join('\n')}`
+    : '';
+  const testHeader = testMode ? `TEST MODE - Intended subcontractor email: ${recipientEmail}\n\n` : '';
+  const text = `${testHeader}Hello ${subcontractorName},\n\n${opening}${additional}\n\nPlease reply to this email with the requested documents, or send them to ${destination}. Any applicable blank forms or sample certificate are attached.\n\nSincerely,\n\nRoisie Engelman\nDestiny Homes LLC`;
+  const htmlOpening = expiredCertificate
+    ? `<p>${escapeHtml(expirationLine)}</p><p>Please ask your insurance agent to issue an updated certificate. ${escapeHtml(insuranceRequirements)}</p>`
+    : `<p>To keep our vendor and subcontractor records current, please provide the following:</p><ul>${htmlList}</ul><p>IRS regulations require Destiny Homes LLC to maintain Form W-9 information for vendors subject to 1099 reporting. Our insurance company also requires current insurance documentation and a signed subcontractor agreement. ${escapeHtml(insuranceRequirements)}</p>`;
+  const htmlAdditional = expiredCertificate && missing.some((item) => ['w9', 'subcontractor_agreement'].includes(item))
+    ? `<p>We also need the following documents:</p><ul>${missing.filter((item) => ['w9', 'subcontractor_agreement'].includes(item)).map((item) => `<li>${escapeHtml(missingLabels[item])}</li>`).join('')}</ul>`
+    : '';
+  const htmlTestHeader = testMode ? `<p><strong>TEST MODE - Intended subcontractor email: ${escapeHtml(recipientEmail)}</strong></p>` : '';
+  const html = `${htmlTestHeader}<p>Hello ${escapeHtml(subcontractorName)},</p>${htmlOpening}${htmlAdditional}<p>Please reply to this email with the requested documents, or send them to ${escapeHtml(destination)}. Any applicable blank forms or sample certificate are attached.</p><p>Sincerely,</p><p>Roisie Engelman<br>Destiny Homes LLC</p>`;
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': `${requestId}:subcontractor-compliance`,
+    },
+    body: JSON.stringify({
+      from,
+      to: [deliveryEmail],
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      subject,
+      text,
+      html,
+      attachments,
+    }),
+  });
+  return {
+    sent: response.ok,
+    status: response.ok ? 'sent' : 'failed',
+    attachmentNames: attachments.map((attachment) => attachment.filename),
+  };
+}
+
 function buildTaskDeepLink(projectId: string, taskId: string) {
   const url = new URL('https://projecthub.destinyhomesnj.com/');
   url.searchParams.set('tab', projectId ? 'projects' : 'tasks');
@@ -203,6 +333,64 @@ async function sendTaskAssignmentEmails({
   return { sent, failed: results.length - sent, status: sent === results.length ? 'sent' : 'partial' };
 }
 
+async function sendCertificateRenewalEmail({
+  requestId,
+  recipientEmail,
+  deliveryEmail,
+  subcontractorName,
+  expirationDate,
+  requesterName,
+  requesterEmail,
+  testMode,
+}: {
+  requestId: string;
+  recipientEmail: string;
+  deliveryEmail: string;
+  subcontractorName: string;
+  expirationDate: string;
+  requesterName: string;
+  requesterEmail: string;
+  testMode: boolean;
+}) {
+  const apiKey = Deno.env.get('RESEND_API_KEY') || '';
+  const from = Deno.env.get('CERTIFICATE_RENEWAL_EMAIL_FROM') || Deno.env.get('TASK_ASSIGNMENT_EMAIL_FROM') || '';
+  if (!apiKey || !from) return { sent: false, status: 'unconfigured' };
+  const expired = Boolean(expirationDate && expirationDate < new Date().toISOString().slice(0, 10));
+  const expirationLine = expirationDate
+    ? expired
+      ? `Our records show that your insurance certificate expired on ${formatEmailDate(expirationDate)}.`
+      : `Your current insurance certificate expires on ${formatEmailDate(expirationDate)}.`
+    : 'Our records do not show a current insurance certificate.';
+  const contactName = requesterName || 'Roisie Engelman';
+  const replyTo = cleanEmail(Deno.env.get('COMPLIANCE_EMAIL_REPLY_TO') || requesterEmail || 'rose@destinyhomesnj.com');
+  const destination = replyTo || 'rose@destinyhomesnj.com';
+  const requirement = 'Please ask your insurance agent to issue an updated certificate showing current General Liability coverage and naming Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business.';
+  const subject = `${testMode ? '[TEST] ' : ''}${expired ? 'Expired insurance certificate - updated COI required' : 'Insurance certificate renewal requested'} - ${subcontractorName}`.slice(0, 240);
+  const testHeader = testMode ? `TEST MODE - Intended subcontractor email: ${recipientEmail}\n\n` : '';
+  const text = `${testHeader}Hello ${subcontractorName},\n\n${expirationLine}\n\n${requirement}\n\nA redacted sample certificate showing the requested format is attached. Please reply to this email with the renewed certificate, or send it to ${destination}.\n\nSincerely,\n\n${contactName}\nDestiny Homes LLC`;
+  const htmlTestHeader = testMode ? `<p><strong>TEST MODE - Intended subcontractor email: ${escapeHtml(recipientEmail)}</strong></p>` : '';
+  const html = `${htmlTestHeader}<p>Hello ${escapeHtml(subcontractorName)},</p><p>${escapeHtml(expirationLine)}</p><p>${escapeHtml(requirement)}</p><p>A redacted sample certificate showing the requested format is attached. Please reply to this email with the renewed certificate, or send it to ${escapeHtml(destination)}.</p><p>Sincerely,</p><p>${escapeHtml(contactName)}<br>Destiny Homes LLC</p>`;
+  const attachments = [await loadComplianceAttachment('sample_coi')];
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': `${requestId}:certificate-renewal`,
+    },
+    body: JSON.stringify({
+      from,
+      to: [deliveryEmail],
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      subject,
+      text,
+      html,
+      attachments,
+    }),
+  });
+  return { sent: response.ok, status: response.ok ? 'sent' : 'failed' };
+}
+
 Deno.serve(async (request) => {
   const requestId = getRequestId(request);
   const respond = (body: Record<string, unknown>, status = 200) =>
@@ -252,7 +440,8 @@ Deno.serve(async (request) => {
       : [];
     let taskLabel = String(payload.taskLabel || '').trim().slice(0, 240);
     let taskDue = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.due || '')) ? String(payload.due) : '';
-    if (!eventId || !allowedKinds.has(kind) || (!projectId && kind !== 'task-created') || (kind === 'task-created' && !entityId)) {
+    const portfolioKind = kind === 'certificate-renewal-requested' || kind === 'subcontractor-compliance-requested';
+    if (!eventId || !allowedKinds.has(kind) || (!projectId && kind !== 'task-created' && !portfolioKind) || ((kind === 'task-created' || portfolioKind) && !entityId)) {
       return fail('Invalid notification event.', 400, operation, 'invalid_event');
     }
 
@@ -264,6 +453,182 @@ Deno.serve(async (request) => {
     );
     if (!callerAppUser || !['Admin', 'Edit'].includes(normalizeRole(callerAppUser.data?.role))) {
       return fail('Only project editors can send project notifications.', 403, 'authorization.check', 'editor_required');
+    }
+
+    let complianceEmailTestMode = false;
+    let complianceDeliveryEmail = '';
+    if (portfolioKind) {
+      operation = 'compliance_email_settings.read';
+      const { data: settingsRow, error: settingsError } = await admin
+        .from('settings')
+        .select('data')
+        .eq('id', 'app_settings')
+        .maybeSingle();
+      if (settingsError) throw settingsError;
+      complianceEmailTestMode = settingsRow?.data?.complianceEmailTestMode === true;
+      if (complianceEmailTestMode) {
+        if (normalizeRole(callerAppUser.data?.role) !== 'Admin') {
+          return fail('Compliance email test mode is enabled. An administrator must send test emails.', 403, 'authorization.check', 'admin_test_sender_required');
+        }
+        complianceDeliveryEmail = cleanEmail(callerAppUser.data?.email || caller.email);
+        if (!complianceDeliveryEmail) {
+          return fail('Add a valid email address to your administrator account before using compliance email test mode.', 400, operation, 'admin_test_email_missing');
+        }
+      }
+    }
+
+    if (kind === 'subcontractor-compliance-requested') {
+      operation = 'subcontractor_compliance.read';
+      const [subcontractorResult, certificateResult, documentResult] = await Promise.all([
+        admin.from('subs').select('id,data').eq('id', entityId).maybeSingle(),
+        admin.from('insurance_certificates').select('id,effective_date,expiration_date').eq('subcontractor_id', entityId),
+        admin.from('subcontractor_compliance_documents').select('document_type,source_path').eq('subcontractor_id', entityId),
+      ]);
+      if (subcontractorResult.error) throw subcontractorResult.error;
+      if (certificateResult.error) throw certificateResult.error;
+      if (documentResult.error) throw documentResult.error;
+      const subcontractor = subcontractorResult.data;
+      const recipientEmail = cleanEmail(subcontractor?.data?.email);
+      if (!subcontractor || !recipientEmail) {
+        return fail('Add a valid subcontractor email before sending a compliance request.', 400, operation, 'compliance_recipient_missing');
+      }
+      if (subcontractor.data?.inactive === true) {
+        return fail('Compliance requests cannot be sent to an inactive subcontractor.', 400, operation, 'inactive_subcontractor');
+      }
+
+      const certificates = certificateResult.data || [];
+      const certificateIds = certificates.map((certificate) => certificate.id);
+      const coverageResult = certificateIds.length
+        ? await admin.from('insurance_certificate_coverages')
+          .select('certificate_id,coverage_type,effective_date,expiration_date')
+          .in('certificate_id', certificateIds)
+        : { data: [], error: null };
+      if (coverageResult.error) throw coverageResult.error;
+      const certificateById = new Map(certificates.map((certificate) => [certificate.id, certificate]));
+      const today = new Date().toISOString().slice(0, 10);
+      const currentCoverage = new Set<string>();
+      const expirationDates = certificates.map((certificate) => validEmailDate(certificate.expiration_date)).filter(Boolean);
+      (coverageResult.data || []).forEach((coverage) => {
+        const type = normalizedCoverageType(coverage.coverage_type);
+        if (!type) return;
+        const parent = certificateById.get(coverage.certificate_id);
+        const effectiveDate = validEmailDate(coverage.effective_date || parent?.effective_date);
+        const expirationDate = validEmailDate(coverage.expiration_date || parent?.expiration_date);
+        if (expirationDate) expirationDates.push(expirationDate);
+        if ((!effectiveDate || effectiveDate <= today) && expirationDate && expirationDate >= today) currentCoverage.add(type);
+      });
+      const missing: string[] = [];
+      if (!currentCoverage.has('general_liability')) missing.push('general_liability');
+      const documentTypes = new Set((documentResult.data || [])
+        .filter((document) => String(document.source_path || '').trim())
+        .map((document) => String(document.document_type || '')));
+      if (!documentTypes.has('subcontractor_agreement')) missing.push('subcontractor_agreement');
+      const companyType = String(subcontractor.data?.companyType || '').trim();
+      const w9Required = companyType
+        ? is1099ReportingCompanyType(companyType)
+        : subcontractor.data?.is1099Exempt !== true;
+      if (w9Required && !documentTypes.has('w9')) missing.push('w9');
+      if (!missing.length) return fail('This subcontractor is already compliant.', 409, operation, 'already_compliant');
+
+      const latestExpirationDate = expirationDates.sort().at(-1) || '';
+      const expiredCertificate = missing.includes('general_liability')
+        && Boolean(latestExpirationDate && latestExpirationDate < today);
+      operation = 'subcontractor_compliance.deliver';
+      const emailResult = await sendSubcontractorComplianceEmail({
+        requestId: eventId,
+        recipientEmail,
+        deliveryEmail: complianceEmailTestMode ? complianceDeliveryEmail : recipientEmail,
+        subcontractorName: String(subcontractor.data?.company || `${subcontractor.data?.first || ''} ${subcontractor.data?.last || ''}`).trim() || 'Subcontractor',
+        missing,
+        latestExpirationDate,
+        expiredCertificate,
+        testMode: complianceEmailTestMode,
+      });
+      if (!emailResult.sent) {
+        logEdgeFailure({
+          code: emailResult.status === 'unconfigured' ? 'compliance_email_unconfigured' : 'compliance_email_failed',
+          functionName: 'send-project-notification',
+          operation,
+          requestId,
+          status: 200,
+        });
+      }
+      return respond({
+        ok: true,
+        emailSent: emailResult.sent ? 1 : 0,
+        emailFailed: emailResult.sent ? 0 : 1,
+        emailStatus: emailResult.status,
+        attachmentNames: emailResult.attachmentNames,
+        requestType: expiredCertificate ? 'expired_certificate' : 'missing_compliance',
+        testMode: complianceEmailTestMode,
+      });
+    }
+
+    if (kind === 'certificate-renewal-requested') {
+      operation = 'certificate_renewal.read';
+      const renewalResult = await admin
+        .from('certificate_renewal_requests')
+        .select('id,subcontractor_id,source_certificate_id,recipient_email,delivery_status')
+        .eq('id', entityId)
+        .maybeSingle();
+      if (renewalResult.error) throw renewalResult.error;
+      const renewal = renewalResult.data;
+      if (!renewal || renewal.id !== eventId) {
+        return fail('Certificate renewal request not found.', 404, operation, 'renewal_not_found');
+      }
+      if (renewal.delivery_status === 'sent') {
+        return respond({ ok: true, duplicate: true, emailSent: 0, emailFailed: 0, emailStatus: 'sent' });
+      }
+
+      const [subcontractorResult, certificateResult] = await Promise.all([
+        admin.from('subs').select('id,data').eq('id', renewal.subcontractor_id).maybeSingle(),
+        renewal.source_certificate_id
+          ? admin.from('insurance_certificates').select('id,expiration_date').eq('id', renewal.source_certificate_id).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (subcontractorResult.error) throw subcontractorResult.error;
+      if (certificateResult.error) throw certificateResult.error;
+      const subcontractor = subcontractorResult.data;
+      const recipientEmail = cleanEmail(renewal.recipient_email);
+      if (!subcontractor || !recipientEmail) {
+        return fail('The subcontractor does not have a valid renewal email address.', 400, operation, 'renewal_recipient_missing');
+      }
+
+      operation = 'certificate_renewal.deliver';
+      const emailResult = await sendCertificateRenewalEmail({
+        requestId: renewal.id,
+        recipientEmail,
+        deliveryEmail: complianceEmailTestMode ? complianceDeliveryEmail : recipientEmail,
+        subcontractorName: String(subcontractor.data?.company || `${subcontractor.data?.first || ''} ${subcontractor.data?.last || ''}`).trim() || 'Subcontractor',
+        expirationDate: String(certificateResult.data?.expiration_date || ''),
+        requesterName: String(callerAppUser.data?.name || '').trim(),
+        requesterEmail: String(callerAppUser.data?.email || caller.email || '').trim(),
+        testMode: complianceEmailTestMode,
+      });
+      const { error: deliveryUpdateError } = await admin
+        .from('certificate_renewal_requests')
+        .update({
+          delivery_status: emailResult.status,
+          delivered_at: emailResult.sent ? new Date().toISOString() : null,
+        })
+        .eq('id', renewal.id);
+      if (deliveryUpdateError) throw deliveryUpdateError;
+      if (!emailResult.sent) {
+        logEdgeFailure({
+          code: emailResult.status === 'unconfigured' ? 'certificate_email_unconfigured' : 'certificate_email_failed',
+          functionName: 'send-project-notification',
+          operation,
+          requestId,
+          status: 200,
+        });
+      }
+      return respond({
+        ok: true,
+        emailSent: emailResult.sent ? 1 : 0,
+        emailFailed: emailResult.sent ? 0 : 1,
+        emailStatus: emailResult.status,
+        testMode: complianceEmailTestMode,
+      });
     }
 
     if (kind === 'task-created' && !projectId) {

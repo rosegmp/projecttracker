@@ -1,5 +1,6 @@
 import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
+import { W9_COMPANY_TYPES } from '../utils/companyType.js';
 
 function getPeopleTypeMeta(type) {
   const labels = { sub: 'Subcontractor', supplier: 'Supplier', consultant: 'Consultant', customer: 'Customer', emp: 'Employee' };
@@ -45,6 +46,23 @@ export default function PersonModal({ draft, type, isEditing, saving, onChange, 
             <span>Company</span>
             <input value={draft.company} onChange={(event) => onChange('company', event.target.value)} />
           </label>
+          {type === 'sub' ? (
+            <>
+              <label>
+                <span>Legal Name</span>
+                <input value={draft.legalName} onChange={(event) => onChange('legalName', event.target.value)} />
+              </label>
+              <label>
+                <span>Company Type</span>
+                <select value={draft.companyType || ''} onChange={(event) => onChange('companyType', event.target.value)}>
+                  <option value="">Not specified</option>
+                  {W9_COMPANY_TYPES.map((companyType) => (
+                    <option key={companyType} value={companyType}>{companyType}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
           <label>
             <span>Role</span>
             <input value={draft.role} onChange={(event) => onChange('role', event.target.value)} />

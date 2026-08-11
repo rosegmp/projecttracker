@@ -3,6 +3,7 @@ import { trackerQueryClient } from './queryClient.js';
 import { reportError } from './observability.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS, normalizeVisibleProjectTabs } from '../utils/projectTabs.js';
+import { is1099ReportingCompanyType, normalizeCompanyType } from '../utils/companyType.js';
 import {
   attachRequestId,
   createRequestId,
@@ -100,6 +101,7 @@ const EMPTY_SETTINGS = {
   peopleListBoldColumns: ['name'],
   emailNewTasksToInternalAssignees: false,
   emailNewTasksToExternalAssignees: false,
+  complianceEmailTestMode: false,
   users: [
     {
       id: 'user-admin',
@@ -475,6 +477,7 @@ function normalizeSettings(settings) {
     peopleListBoldColumns: Array.isArray(settings?.peopleListBoldColumns) ? settings.peopleListBoldColumns : EMPTY_SETTINGS.peopleListBoldColumns,
     emailNewTasksToInternalAssignees: settings?.emailNewTasksToInternalAssignees === true,
     emailNewTasksToExternalAssignees: settings?.emailNewTasksToExternalAssignees === true,
+    complianceEmailTestMode: settings?.complianceEmailTestMode === true,
     visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     visibleProjectTabs: normalizeVisibleProjectTabs(settings?.visibleProjectTabs),
     users,
@@ -492,6 +495,8 @@ function normalizePerson(type, person = {}) {
     first: String(person.first || '').trim(),
     last: String(person.last || '').trim(),
     company: String(person.company || '').trim(),
+    legalName: String(person.legalName || '').trim(),
+    companyType: normalizeCompanyType(person.companyType),
     role: String(person.role || '').trim(),
     phone: String(person.phone || '').trim(),
     email: String(person.email || '').trim(),
@@ -3482,11 +3487,14 @@ function normalizeTags(tags) {
 }
 
 function buildPerson(type, payload) {
+  const companyType = type === 'sub' ? normalizeCompanyType(payload.companyType) : '';
   return normalizePerson(type, {
     id: `${type === 'sub' ? 'sub' : normalizePeopleType(type)}${Date.now()}`,
     first: payload.first?.trim() || '',
     last: payload.last?.trim() || '',
     company: payload.company?.trim() || '',
+    legalName: payload.legalName?.trim() || '',
+    companyType,
     role: payload.role?.trim() || '',
     phone: payload.phone?.trim() || '',
     email: payload.email?.trim() || '',
@@ -3496,7 +3504,7 @@ function buildPerson(type, payload) {
     peopleType: type,
     ...(type === 'sub'
       ? {
-        certificateRequirement: payload.certificateRequirement === 'not_required' ? 'not_required' : 'required',
+        is1099Exempt: companyType ? !is1099ReportingCompanyType(companyType) : payload.is1099Exempt === true,
         inactive: payload.inactive === true,
       }
       : {}),

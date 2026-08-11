@@ -3,24 +3,35 @@ import { renderModalPortal, showAppAlert, showAppConfirm } from './AppDialogs.js
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { formatFileSize } from '../utils/fileUi.js';
 import { findClosestSubcontractor } from '../utils/certificateMatching.js';
+import { is1099ReportingCompanyType, normalizeCompanyType } from '../utils/companyType.js';
 import {
   certificateEligible,
   certificateMatchesStatusFilter,
-  certificateRequired,
   certificateStatus,
   sortCertificatesByExpiration,
+  subcontractorComplianceStatus,
   subcontractorCertificateStatus,
   subcontractorLabel,
 } from '../utils/certificateStatus.js';
 import { reportError } from '../services/observability.js';
 import { updatePerson } from '../services/trackerData.js';
 import {
+  createCertificateRenewalRequest,
+  deleteSubcontractorComplianceDocument,
   deleteCertificateFile,
   deleteInsuranceCertificate,
   extractInsuranceCertificate,
+  loadCertificateRenewalRequests,
   loadInsuranceCertificates,
+  loadSubcontractorComplianceDocuments,
+  loadSubcontractorTaxIdStatuses,
+  maskedTaxId,
   saveInsuranceCertificate,
+  sendSubcontractorComplianceRequest,
+  storeManualSubcontractorTaxId,
+  updateCertificateRenewalStatus,
   uploadCertificateFile,
+  uploadSubcontractorComplianceDocument,
   validateCertificateFile,
 } from '../services/insuranceCertificates.js';
 
@@ -33,6 +44,17 @@ const EMPTY_COVERAGE = {
   expirationDate: '',
 };
 const MAX_BULK_CERTIFICATES = 20;
+const RENEWAL_STATUS_LABELS = {
+  requested: 'Requested',
+  received: 'Received',
+  under_review: 'Under review',
+  accepted: 'Accepted',
+};
+const RENEWAL_NEXT_STATUS = {
+  requested: 'received',
+  received: 'under_review',
+  under_review: 'accepted',
+};
 
 function newId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -79,6 +101,12 @@ function formatCurrency(value) {
 function formatDisplayDate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return match ? `${match[2]}/${match[3]}/${match[1]}` : 'Not entered';
+}
+
+function formatDisplayDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not recorded';
+  return date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function normalizeCoverageLabel(value) {
@@ -170,9 +198,7 @@ function CertificateModal({
               <option value="">Select subcontractor</option>
               {subcontractors.map((subcontractor) => {
                 const eligible = certificateEligible(subcontractor);
-                const suffix = subcontractor.inactive
-                  ? ' (Inactive)'
-                  : !certificateRequired(subcontractor) ? ' (No cert needed)' : '';
+                const suffix = subcontractor.inactive ? ' (Inactive)' : '';
                 return (
                   <option
                     key={subcontractor.id}
@@ -372,7 +398,7 @@ function BulkCertificateModal({
                       {subcontractors.map((subcontractor) => (
                         <option key={subcontractor.id} value={subcontractor.id}>
                           {subcontractorLabel(subcontractor)}
-                          {subcontractor.inactive ? ' (Inactive)' : !certificateRequired(subcontractor) ? ' (No cert needed)' : ''}
+                          {subcontractor.inactive ? ' (Inactive)' : ''}
                         </option>
                       ))}
                     </select>
@@ -441,9 +467,13 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     [subcontractors],
   );
   const [certificates, setCertificates] = useState([]);
+  const [renewalRequests, setRenewalRequests] = useState([]);
+  const [complianceDocuments, setComplianceDocuments] = useState([]);
+  const [taxIdStatuses, setTaxIdStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
+  const [activityFilter, setActivityFilter] = useState('active');
   const [statusFilter, setStatusFilter] = useState('all');
   const [subcontractorFilter, setSubcontractorFilter] = useState('all');
   const [draft, setDraft] = useState(null);
@@ -453,7 +483,12 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [expandedCoverageIds, setExpandedCoverageIds] = useState(() => new Set());
+  const [expandedSubcontractorIds, setExpandedSubcontractorIds] = useState(() => new Set());
   const [subcontractorSavingId, setSubcontractorSavingId] = useState('');
+  const [renewalSavingId, setRenewalSavingId] = useState('');
+  const [complianceEmailSendingId, setComplianceEmailSendingId] = useState('');
+  const [complianceSavingKey, setComplianceSavingKey] = useState('');
+  const [complianceTaxIdDrafts, setComplianceTaxIdDrafts] = useState({});
   const [bulkItems, setBulkItems] = useState([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkProcessing, setBulkProcessing] = useState(false);
@@ -463,7 +498,16 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     setLoading(true);
     setLoadError('');
     try {
-      setCertificates(await loadInsuranceCertificates());
+      const [certificateRows, renewalRows, complianceRows, taxIdRows] = await Promise.all([
+        loadInsuranceCertificates(),
+        loadCertificateRenewalRequests(),
+        loadSubcontractorComplianceDocuments(),
+        loadSubcontractorTaxIdStatuses(),
+      ]);
+      setCertificates(certificateRows);
+      setRenewalRequests(renewalRows);
+      setComplianceDocuments(complianceRows);
+      setTaxIdStatuses(taxIdRows);
     } catch (error) {
       reportError(error, { operation: 'certificate.list', workspace: 'certificates' });
       setLoadError(error instanceof Error ? error.message : 'Unable to load insurance certificates.');
@@ -479,7 +523,13 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   useEffect(() => {
     if (!navigationTarget?.subcontractorId && !navigationTarget?.statusId) return;
     setSubcontractorFilter(navigationTarget.subcontractorId || 'all');
-    setStatusFilter(navigationTarget.statusId || 'all');
+    if (navigationTarget.statusId === 'inactive') {
+      setActivityFilter('inactive');
+      setStatusFilter('all');
+    } else {
+      setActivityFilter('active');
+      setStatusFilter(navigationTarget.statusId || 'all');
+    }
     setSearch('');
   }, [navigationTarget]);
 
@@ -727,6 +777,10 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       setBulkSaving(false);
     }
 
+    if (savedCount) {
+      setRenewalRequests(await loadCertificateRenewalRequests().catch(() => renewalRequests));
+    }
+
     if (savedCount === bulkItems.length) {
       setBulkItems([]);
       setBulkOpen(false);
@@ -761,6 +815,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         await deleteCertificateFile(originalCertificate).catch(() => {});
       }
       setCertificates((current) => [saved, ...current.filter((certificate) => certificate.id !== saved.id)]);
+      setRenewalRequests(await loadCertificateRenewalRequests().catch(() => renewalRequests));
       setDraft(null);
       setSelectedFile(null);
       setPendingUpload(null);
@@ -804,6 +859,233 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     }
   }
 
+  async function requestCertificateRenewal(subcontractor, latestCertificate) {
+    if (data.settings?.complianceEmailTestMode === true) {
+      const confirmed = await showAppConfirm(
+        `Compliance email test mode is on. Send this renewal email to ${activeUser?.email} instead of ${subcontractor.email}?`,
+        { title: 'Send test renewal email', confirmLabel: 'Send test email' },
+      );
+      if (!confirmed) return;
+    }
+    setRenewalSavingId(subcontractor.id);
+    try {
+      const result = await createCertificateRenewalRequest(subcontractor.id, latestCertificate?.id || '');
+      await refreshCertificates();
+      if (result.delivery?.emailStatus === 'sent') {
+        await showAppAlert(
+          result.delivery?.testMode
+            ? `Test renewal email sent to ${activeUser?.email}. Intended subcontractor: ${subcontractor.email}.`
+            : `Renewal request sent to ${subcontractor.email}.`,
+          result.delivery?.testMode ? 'Test email sent' : 'Renewal requested',
+        );
+      } else {
+        await showAppAlert(
+          'The renewal request was recorded, but email delivery is unavailable. The request remains visible for follow-up.',
+          'Email not sent',
+        );
+      }
+    } catch (error) {
+      reportError(error, { operation: 'certificate.renewal-request', workspace: 'certificates' });
+      await refreshCertificates().catch(() => {});
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to request the certificate renewal.',
+        'Renewal request failed',
+      );
+    } finally {
+      setRenewalSavingId('');
+    }
+  }
+
+  async function requestSubcontractorCompliance(subcontractor, complianceStatus) {
+    const email = String(subcontractor.email || '').trim();
+    if (!email) {
+      await showAppAlert('Add a valid subcontractor email in People before sending a compliance request.', 'Email required');
+      return;
+    }
+    const missingLabels = complianceStatus.missing.map((requirement) => requirement.label).join(', ');
+    const testModeNotice = data.settings?.complianceEmailTestMode === true
+      ? ` Test mode is on, so the email will go to ${activeUser?.email} instead of the subcontractor.`
+      : '';
+    const confirmed = await showAppConfirm(
+      `Send a compliance request for ${email} for: ${missingLabels}? Applicable blank forms and the redacted sample certificate will be attached.${testModeNotice}`,
+      {
+        title: data.settings?.complianceEmailTestMode === true ? 'Send test compliance email' : 'Email compliance request',
+        confirmLabel: data.settings?.complianceEmailTestMode === true ? 'Send test email' : 'Send email',
+      },
+    );
+    if (!confirmed) return;
+    setComplianceEmailSendingId(subcontractor.id);
+    try {
+      const result = await sendSubcontractorComplianceRequest(subcontractor.id);
+      if (result.emailStatus === 'sent') {
+        const attachmentSummary = result.attachmentNames?.length
+          ? ` Attachments: ${result.attachmentNames.join(', ')}.`
+          : '';
+        await showAppAlert(
+          result.testMode
+            ? `Test compliance email sent to ${activeUser?.email}. Intended subcontractor: ${email}.${attachmentSummary}`
+            : `Compliance request sent to ${email}.${attachmentSummary}`,
+          result.testMode ? 'Test email sent' : 'Compliance request sent',
+        );
+      } else {
+        await showAppAlert('The compliance request could not be delivered. Check email delivery configuration and try again.', 'Email not sent');
+      }
+    } catch (error) {
+      reportError(error, { operation: 'compliance.email-request', workspace: 'compliance' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to send the subcontractor compliance request.',
+        'Compliance email failed',
+      );
+    } finally {
+      setComplianceEmailSendingId('');
+    }
+  }
+
+  async function advanceCertificateRenewal(renewal) {
+    const nextStatus = RENEWAL_NEXT_STATUS[renewal.status];
+    if (!nextStatus) return;
+    setRenewalSavingId(renewal.subcontractorId);
+    try {
+      const saved = await updateCertificateRenewalStatus(renewal, nextStatus);
+      setRenewalRequests((current) => current.map((item) => item.id === saved.id ? saved : item));
+    } catch (error) {
+      reportError(error, { operation: 'certificate.renewal-status', workspace: 'certificates' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to update the renewal status.',
+        'Renewal update failed',
+      );
+    } finally {
+      setRenewalSavingId('');
+    }
+  }
+
+  async function saveComplianceDocument(subcontractor, documentType, file) {
+    if (!file) return;
+    const key = `${subcontractor.id}:${documentType}`;
+    const existing = complianceDocuments.find((document) =>
+      document.subcontractorId === subcontractor.id && document.documentType === documentType) || null;
+    const manualTaxId = documentType === 'w9' ? complianceTaxIdDrafts[key] || '' : '';
+    setComplianceSavingKey(key);
+    try {
+      const saved = await uploadSubcontractorComplianceDocument(file, {
+        id: existing?.id || newId(),
+        subcontractorId: subcontractor.id,
+        documentType,
+        signedDate: existing?.signedDate || '',
+        manualTaxId,
+        version: existing?.version || 0,
+      });
+      const { taxIdStatus, taxIdWarning, ...savedDocument } = saved;
+      if (existing?.sourcePath && existing.sourcePath !== saved.sourcePath) {
+        await deleteCertificateFile(existing).catch(() => {});
+      }
+      setComplianceDocuments((current) => [
+        savedDocument,
+        ...current.filter((document) => document.id !== savedDocument.id),
+      ]);
+      setComplianceTaxIdDrafts((current) => ({ ...current, [key]: '' }));
+      if (taxIdStatus) {
+        setTaxIdStatuses((current) => [
+          taxIdStatus,
+          ...current.filter((status) => status.subcontractorId !== taxIdStatus.subcontractorId),
+        ]);
+        const extractedCompanyType = normalizeCompanyType(taxIdStatus.companyType);
+        const peopleUpdates = {};
+        if (taxIdStatus.legalName && taxIdStatus.legalName !== subcontractor.legalName) {
+          peopleUpdates.legalName = taxIdStatus.legalName;
+        }
+        const extracted1099Exempt = extractedCompanyType ? !is1099ReportingCompanyType(extractedCompanyType) : false;
+        if (extractedCompanyType && (
+          extractedCompanyType !== subcontractor.companyType
+          || extracted1099Exempt !== (subcontractor.is1099Exempt === true)
+        )) {
+          peopleUpdates.companyType = extractedCompanyType;
+          peopleUpdates.is1099Exempt = extracted1099Exempt;
+        }
+        if (Object.keys(peopleUpdates).length) {
+          try {
+            const nextState = await updatePerson(data, 'sub', subcontractor.id, peopleUpdates);
+            onStateChange(nextState);
+          } catch (error) {
+            reportError(error, { operation: 'compliance.w9-people-save', workspace: 'compliance' });
+            await showAppAlert(
+              'The W-9 and tax ID were saved, but the extracted Legal Name or Company Type could not be saved to People. Refresh and enter it manually.',
+              'People update failed',
+            );
+          }
+        }
+      }
+      if (taxIdWarning) await showAppAlert(taxIdWarning, 'Tax ID needs review');
+    } catch (error) {
+      reportError(error, { operation: 'compliance.document-save', workspace: 'compliance' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to save the compliance document.',
+        'Document save failed',
+      );
+    } finally {
+      setComplianceSavingKey('');
+    }
+  }
+
+  async function saveManualTaxId(subcontractor) {
+    const key = `${subcontractor.id}:w9`;
+    const value = complianceTaxIdDrafts[key] || '';
+    if (!value.trim()) {
+      await showAppAlert('Enter the 9-digit tax ID.', 'Tax ID required');
+      return;
+    }
+    setComplianceSavingKey(key);
+    try {
+      const savedStatus = await storeManualSubcontractorTaxId(subcontractor.id, value);
+      setTaxIdStatuses((current) => [
+        savedStatus,
+        ...current.filter((status) => status.subcontractorId !== subcontractor.id),
+      ]);
+      setComplianceTaxIdDrafts((current) => ({ ...current, [key]: '' }));
+    } catch (error) {
+      reportError(error, { operation: 'compliance.tax-id-save', workspace: 'compliance' });
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to store the tax ID.', 'Tax ID save failed');
+    } finally {
+      setComplianceSavingKey('');
+    }
+  }
+
+  async function removeComplianceDocument(document) {
+    const confirmed = await showAppConfirm(
+      `Remove ${document.documentType === 'w9' ? 'Form W-9' : 'the subcontractor agreement'} from compliance records?`,
+      { title: 'Remove compliance document', confirmLabel: 'Remove', tone: 'danger' },
+    );
+    if (!confirmed) return;
+    const key = `${document.subcontractorId}:${document.documentType}`;
+    setComplianceSavingKey(key);
+    try {
+      await deleteSubcontractorComplianceDocument(document);
+      setComplianceDocuments((current) => current.filter((item) => item.id !== document.id));
+    } catch (error) {
+      reportError(error, { operation: 'compliance.document-delete', workspace: 'compliance' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to remove the compliance document.',
+        'Document removal failed',
+      );
+    } finally {
+      setComplianceSavingKey('');
+    }
+  }
+
+  const renewalRequestsBySubcontractor = useMemo(() => {
+    const result = new Map();
+    renewalRequests.forEach((renewal) => {
+      if (!result.has(renewal.subcontractorId)) result.set(renewal.subcontractorId, []);
+      result.get(renewal.subcontractorId).push(renewal);
+    });
+    return result;
+  }, [renewalRequests]);
+
+  const taxIdStatusBySubcontractor = useMemo(
+    () => new Map(taxIdStatuses.map((status) => [status.subcontractorId, status])),
+    [taxIdStatuses],
+  );
+
   const subcontractorRoster = useMemo(() => {
     const certificatesBySubcontractor = new Map();
     certificates.forEach((certificate) => {
@@ -812,22 +1094,34 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       }
       certificatesBySubcontractor.get(certificate.subcontractorId).push(certificate);
     });
+    const documentsBySubcontractor = new Map();
+    complianceDocuments.forEach((document) => {
+      if (!documentsBySubcontractor.has(document.subcontractorId)) documentsBySubcontractor.set(document.subcontractorId, []);
+      documentsBySubcontractor.get(document.subcontractorId).push(document);
+    });
     return subcontractors.map((subcontractor) => {
       const subcontractorCertificates = sortCertificatesByExpiration(
         certificatesBySubcontractor.get(subcontractor.id) || [],
       );
+      const subcontractorDocuments = documentsBySubcontractor.get(subcontractor.id) || [];
       return {
         subcontractor,
         certificates: subcontractorCertificates,
-        status: subcontractorCertificateStatus(subcontractor, subcontractorCertificates),
+        documents: subcontractorDocuments,
+        insuranceStatus: subcontractorCertificateStatus(subcontractor, subcontractorCertificates),
+        complianceStatus: subcontractorComplianceStatus(subcontractor, subcontractorCertificates, subcontractorDocuments),
       };
     });
-  }, [certificates, subcontractors]);
+  }, [certificates, complianceDocuments, subcontractors]);
 
   const filteredRoster = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return subcontractorRoster.filter(({ subcontractor, certificates: subcontractorCertificates, status }) => {
-      if (!certificateMatchesStatusFilter(status.id, statusFilter)) return false;
+    return subcontractorRoster.filter(({ subcontractor, certificates: subcontractorCertificates, complianceStatus, insuranceStatus }) => {
+      if (activityFilter === 'active' && subcontractor.inactive === true) return false;
+      if (activityFilter === 'inactive' && subcontractor.inactive !== true) return false;
+      if (['compliant', 'needs-attention'].includes(statusFilter)) {
+        if (complianceStatus.id !== statusFilter) return false;
+      } else if (!certificateMatchesStatusFilter(insuranceStatus.id, statusFilter)) return false;
       if (subcontractorFilter !== 'all' && subcontractor.id !== subcontractorFilter) return false;
       if (!needle) return true;
       return [
@@ -844,23 +1138,33 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         ]),
       ].some((value) => String(value || '').toLowerCase().includes(needle));
     });
-  }, [search, statusFilter, subcontractorFilter, subcontractorRoster]);
+  }, [activityFilter, search, statusFilter, subcontractorFilter, subcontractorRoster]);
 
   const stats = useMemo(() => {
+    const activityRoster = subcontractorRoster.filter(({ subcontractor }) => {
+      if (activityFilter === 'active') return subcontractor.inactive !== true;
+      if (activityFilter === 'inactive') return subcontractor.inactive === true;
+      return true;
+    });
     const result = {
-      total: subcontractorRoster.length,
+      total: activityRoster.length,
       active: 0,
       expiring: 0,
       expired: 0,
       missing: 0,
       'not-required': 0,
       inactive: 0,
+      compliant: 0,
+      'needs-attention': 0,
     };
-    subcontractorRoster.forEach(({ status }) => {
-      result[status.id] += 1;
+    activityRoster.forEach(({ insuranceStatus, complianceStatus }) => {
+      result[insuranceStatus.id] = (result[insuranceStatus.id] || 0) + 1;
+      if (complianceStatus.id !== insuranceStatus.id) {
+        result[complianceStatus.id] = (result[complianceStatus.id] || 0) + 1;
+      }
     });
     return result;
-  }, [subcontractorRoster]);
+  }, [activityFilter, subcontractorRoster]);
 
   return (
     <section className="panel native-panel workspace-page top-level-certificates-page">
@@ -894,38 +1198,58 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         ) : null}
       </div>
 
-      <div className="certificate-stats-grid" aria-label="Certificate status summary">
+      <div className="compliance-summary-tabs" aria-label="Subcontractor compliance summary">
         {[
           ['All subcontractors', stats.total, 'all'],
+          ['Compliant', stats.compliant, 'compliant'],
+          ['Needs attention', stats['needs-attention'], 'needs-attention'],
           ['Expired / expiring', stats.expired + stats.expiring, 'expired-expiring'],
-          ['Active', stats.active, 'active'],
-          ['Expiring soon', stats.expiring, 'expiring'],
-          ['Expired', stats.expired, 'expired'],
-          ['Missing', stats.missing, 'missing'],
-          ['No cert needed', stats['not-required'], 'not-required'],
-          ['Inactive', stats.inactive, 'inactive'],
         ].map(([label, count, id]) => (
-          <button className={`certificate-stat-card status-${id}${statusFilter === id ? ' active' : ''}`} type="button" key={id} onClick={() => setStatusFilter(id)}>
+          <button
+            className={`compliance-summary-tab status-${id}${statusFilter === id ? ' active' : ''}`}
+            type="button"
+            key={id}
+            onClick={() => setStatusFilter(id)}
+          >
             <span>{label}</span>
             <strong>{count}</strong>
           </button>
         ))}
+        <button
+          className={`compliance-summary-tab status-inactive${activityFilter === 'inactive' ? ' active' : ''}`}
+          type="button"
+          onClick={() => {
+            setActivityFilter('inactive');
+            setStatusFilter('all');
+          }}
+        >
+          <span>Inactive</span>
+          <strong>{stats.inactive}</strong>
+        </button>
       </div>
 
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
           <div className="certificate-toolbar">
             <label className="task-filter">
+              <span>Active / inactive</span>
+              <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value)}>
+                <option value="active">Active subcontractors</option>
+                <option value="inactive">Inactive subcontractors</option>
+                <option value="all">All subcontractors</option>
+              </select>
+            </label>
+            <label className="task-filter">
               <span>Status</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="all">All statuses</option>
+                <option value="compliant">Compliant</option>
+                <option value="needs-attention">Needs attention</option>
                 <option value="expired-expiring">Expired / expiring</option>
                 <option value="active">Active</option>
                 <option value="expiring">Expiring soon</option>
                 <option value="expired">Expired</option>
                 <option value="missing">Missing</option>
-                <option value="not-required">No cert needed</option>
-                <option value="inactive">Inactive</option>
               </select>
             </label>
             <label className="task-filter">
@@ -948,26 +1272,53 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       <section className="workspace-section">
         {loadError ? (
           <div className="empty-state">
-            <h3>Certificates are unavailable</h3>
+            <h3>Compliance is unavailable</h3>
             <p>{loadError}</p>
             <button className="button secondary" type="button" onClick={() => void refreshCertificates()}>Try again</button>
           </div>
         ) : loading ? (
-          <div className="empty-state compact" role="status"><h3>Loading certificates</h3></div>
+          <div className="empty-state compact" role="status"><h3>Loading compliance</h3></div>
         ) : !subcontractors.length ? (
           <div className="empty-state">
             <h3>Add a subcontractor first</h3>
             <p>Every insurance certificate must be linked to a subcontractor People record.</p>
           </div>
         ) : filteredRoster.length ? (
-          <div className="certificate-list">
-            {filteredRoster.map(({ subcontractor, certificates: subcontractorCertificates, status }) => {
+          <div className="compliance-list" role="table" aria-label="Subcontractor compliance register">
+            <div className="compliance-list-header" role="row">
+              <span>Subcontractor</span>
+              <span>General Liability</span>
+              <span>Workers Comp</span>
+              <span>Agreement</span>
+              <span>Form W-9</span>
+              <span>Status</span>
+            </div>
+            {filteredRoster.map(({ subcontractor, certificates: subcontractorCertificates, documents: subcontractorDocuments, complianceStatus }) => {
               const updatingSubcontractor = subcontractorSavingId === subcontractor.id;
+              const subcontractorRenewals = renewalRequestsBySubcontractor.get(subcontractor.id) || [];
+              const latestRenewal = subcontractorRenewals[0] || null;
+              const updatingRenewal = renewalSavingId === subcontractor.id;
+              const sendingComplianceEmail = complianceEmailSendingId === subcontractor.id;
+              const latestCertificate = subcontractorCertificates[0] || null;
+              const requirementsById = new Map(complianceStatus.requirements.map((requirement) => [requirement.id, requirement]));
               return (
-                <article className={`certificate-card certificate-roster-card status-${status.id}`} key={subcontractor.id}>
-                  <div className="certificate-card-header">
-                    <div>
-                      <p className="eyebrow">Subcontractor</p>
+                <details
+                  className={`compliance-list-item status-${complianceStatus.id}`}
+                  key={subcontractor.id}
+                  open={expandedSubcontractorIds.has(subcontractor.id)}
+                  onToggle={(event) => {
+                    const nextOpen = event.currentTarget.open;
+                    setExpandedSubcontractorIds((current) => {
+                      if (current.has(subcontractor.id) === nextOpen) return current;
+                      const next = new Set(current);
+                      if (nextOpen) next.add(subcontractor.id);
+                      else next.delete(subcontractor.id);
+                      return next;
+                    });
+                  }}
+                >
+                  <summary className="compliance-list-summary" role="row">
+                    <div className="compliance-list-identity" role="cell">
                       <h3>{subcontractorLabel(subcontractor)}</h3>
                       <p>
                         {subcontractorCertificates.length
@@ -975,8 +1326,154 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                           : 'No certificate on file'}
                       </p>
                     </div>
-                    <span className={`certificate-status-badge status-${status.id}`}>{status.label}</span>
-                  </div>
+                    {[
+                      ['general_liability', 'General Liability'],
+                      ['workers_compensation', 'Workers Comp'],
+                      ['subcontractor_agreement', 'Agreement'],
+                      ['w9', 'Form W-9'],
+                    ].map(([requirementId, requirementLabel]) => {
+                      const requirement = requirementsById.get(requirementId);
+                      return (
+                        <span
+                          className={`compliance-list-status${requirement?.optional ? ' optional' : requirement?.satisfied ? ' satisfied' : ' missing'}`}
+                          role="cell"
+                          data-label={requirementLabel}
+                          aria-label={`${requirementLabel}: ${complianceStatus.id === 'inactive' ? 'Inactive' : requirement?.optional ? `${requirement.detail} (optional)` : requirement?.detail || 'Missing'}`}
+                          key={requirementId}
+                        >
+                          <span aria-hidden="true">{complianceStatus.id === 'inactive' || requirement?.optional ? '—' : requirement?.satisfied ? '✓' : '!'}</span>
+                          <small>{complianceStatus.id === 'inactive' ? 'Inactive' : requirement?.optional ? `${requirement.detail} · Optional` : requirement?.detail || 'Missing'}</small>
+                        </span>
+                      );
+                    })}
+                    <span className={`certificate-status-badge status-${complianceStatus.id}`} role="cell">{complianceStatus.label}</span>
+                  </summary>
+
+                  <div className="compliance-list-detail">
+
+                  {latestRenewal ? (
+                    <section className="certificate-renewal-panel" aria-label={`Certificate renewal for ${subcontractorLabel(subcontractor)}`}>
+                      <div className="certificate-renewal-summary">
+                        <div>
+                          <span>Latest renewal request</span>
+                          <strong>{RENEWAL_STATUS_LABELS[latestRenewal.status] || latestRenewal.status}</strong>
+                        </div>
+                        <div>
+                          <span>Requested</span>
+                          <strong>{formatDisplayDateTime(latestRenewal.requestedAt)}</strong>
+                        </div>
+                        <div>
+                          <span>Email delivery</span>
+                          <strong>{latestRenewal.deliveryStatus === 'sent' ? 'Sent' : latestRenewal.deliveryStatus === 'pending' ? 'Pending' : 'Needs follow-up'}</strong>
+                        </div>
+                      </div>
+                      <details className="certificate-renewal-history">
+                        <summary>Renewal history ({subcontractorRenewals.length})</summary>
+                        <div>
+                          {subcontractorRenewals.map((renewal) => (
+                            <p key={renewal.id}>
+                              <strong>{RENEWAL_STATUS_LABELS[renewal.status] || renewal.status}</strong>
+                              <span>{formatDisplayDateTime(renewal.requestedAt)} · {renewal.recipientEmail} · Email {renewal.deliveryStatus}</span>
+                            </p>
+                          ))}
+                        </div>
+                      </details>
+                    </section>
+                  ) : null}
+
+                  {complianceStatus.id !== 'inactive' ? (
+                    <section className="compliance-document-list" aria-label="Required compliance documents">
+                      {[
+                        ['subcontractor_agreement', 'Subcontractor agreement'],
+                        ['w9', 'Form W-9'],
+                      ].map(([documentType, label]) => {
+                        const document = subcontractorDocuments.find((item) => item.documentType === documentType) || null;
+                        const key = `${subcontractor.id}:${documentType}`;
+                        const savingDocument = complianceSavingKey === key;
+                        const exempt = documentType === 'w9' && subcontractor.is1099Exempt === true;
+                        const taxIdStatus = documentType === 'w9' ? taxIdStatusBySubcontractor.get(subcontractor.id) || null : null;
+                        return (
+                          <div className={`compliance-document-row${document || exempt ? ' complete' : ' missing'}`} key={documentType}>
+                            <div>
+                              <strong>{label}</strong>
+                              <span>{exempt
+                                ? 'W-9 exempt'
+                                : document
+                                  ? 'On file'
+                                  : 'Required document missing'}</span>
+                              {documentType === 'w9' && !exempt ? (
+                                <>
+                                  <span>{taxIdStatus?.taxIdLastFour
+                                    ? `Tax ID ${maskedTaxId(taxIdStatus.taxIdLastFour)}`
+                                    : 'Tax ID not captured'}</span>
+                                  {taxIdStatus?.legalName || taxIdStatus?.businessName ? (
+                                    <span>W-9 name: {[taxIdStatus.legalName, taxIdStatus.businessName].filter(Boolean).join(' · ')}</span>
+                                  ) : null}
+                                  {taxIdStatus?.mailingAddress ? <span>Address: {taxIdStatus.mailingAddress}</span> : null}
+                                  {subcontractor.companyType ? <span>Company Type: {subcontractor.companyType}</span> : null}
+                                </>
+                              ) : null}
+                            </div>
+                            {!exempt ? (
+                              <>
+                                {canEdit && documentType === 'w9' ? (
+                                  <label className="compliance-tax-id-entry">
+                                    <span>Tax ID</span>
+                                    <input
+                                      type="password"
+                                      inputMode="numeric"
+                                      autoComplete="off"
+                                      maxLength={11}
+                                      value={complianceTaxIdDrafts[key] || ''}
+                                      onChange={(event) => setComplianceTaxIdDrafts((current) => ({ ...current, [key]: event.target.value }))}
+                                      placeholder="9-digit EIN or SSN"
+                                      aria-label={`Tax ID for ${subcontractorLabel(subcontractor)}`}
+                                      disabled={savingDocument}
+                                    />
+                                    <small>Encrypted in storage. Only the last four digits are shown.</small>
+                                  </label>
+                                ) : null}
+                                <div className="compliance-document-actions">
+                                  {canEdit && documentType === 'w9' && document && complianceTaxIdDrafts[key] ? (
+                                    <button className="button secondary" type="button" disabled={savingDocument} onClick={() => void saveManualTaxId(subcontractor)}>
+                                      Save tax ID
+                                    </button>
+                                  ) : null}
+                                  {document ? (
+                                    <button className="button secondary" type="button" onClick={() => void downloadFileWithUi(sourceFile(document), { fileName: document.sourceFileName })}>
+                                      Open file
+                                    </button>
+                                  ) : null}
+                                  {canEdit ? (
+                                    <>
+                                      <label className={`button secondary${savingDocument ? ' disabled' : ''}`}>
+                                        {savingDocument ? 'Saving...' : document ? 'Replace file' : 'Upload signed file'}
+                                        <input
+                                          type="file"
+                                          accept=".pdf,image/jpeg,image/png,image/webp"
+                                          disabled={savingDocument}
+                                          onChange={(event) => {
+                                            const file = event.target.files?.[0] || null;
+                                            event.target.value = '';
+                                            void saveComplianceDocument(subcontractor, documentType, file);
+                                          }}
+                                        />
+                                      </label>
+                                      {document ? (
+                                        <button className="button secondary danger" type="button" disabled={savingDocument} onClick={() => void removeComplianceDocument(document)}>
+                                          Remove
+                                        </button>
+                                      ) : null}
+                                    </>
+                                  ) : null}
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </section>
+                  ) : null}
 
                   {subcontractorCertificates.length ? (
                     <div className="certificate-record-list">
@@ -1072,16 +1569,59 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
 
                   {canEdit ? (
                     <div className="certificate-roster-actions">
-                      <button
-                        className="button secondary"
-                        type="button"
-                        disabled={updatingSubcontractor}
-                        onClick={() => void updateSubcontractorCompliance(subcontractor, {
-                          certificateRequirement: certificateRequired(subcontractor) ? 'not_required' : 'required',
-                        })}
-                      >
-                        {certificateRequired(subcontractor) ? 'No cert needed' : 'Require certificate'}
-                      </button>
+                      {complianceStatus.id === 'needs-attention' ? (
+                        <button
+                          className={`button secondary${sendingComplianceEmail ? ' is-loading' : ''}`}
+                          type="button"
+                          disabled={sendingComplianceEmail || !String(subcontractor.email || '').trim()}
+                          title={String(subcontractor.email || '').trim() ? '' : 'Add a subcontractor email before sending a compliance request.'}
+                          aria-busy={sendingComplianceEmail}
+                          onClick={() => void requestSubcontractorCompliance(subcontractor, complianceStatus)}
+                        >
+                          {sendingComplianceEmail
+                            ? 'Sending...'
+                            : String(subcontractor.email || '').trim()
+                              ? 'Email compliance request'
+                              : 'Add email to request compliance'}
+                        </button>
+                      ) : null}
+                      {certificateEligible(subcontractor) ? (
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={updatingRenewal || !String(subcontractor.email || '').trim()}
+                          title={String(subcontractor.email || '').trim() ? '' : 'Add a subcontractor email before requesting renewal.'}
+                          onClick={() => void requestCertificateRenewal(subcontractor, latestCertificate)}
+                        >
+                          {updatingRenewal
+                            ? 'Working...'
+                            : String(subcontractor.email || '').trim()
+                              ? 'Request renewal'
+                              : 'Add email to request renewal'}
+                        </button>
+                      ) : null}
+                      {latestRenewal && RENEWAL_NEXT_STATUS[latestRenewal.status] ? (
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={updatingRenewal}
+                          onClick={() => void advanceCertificateRenewal(latestRenewal)}
+                        >
+                          Mark {RENEWAL_STATUS_LABELS[RENEWAL_NEXT_STATUS[latestRenewal.status]]}
+                        </button>
+                      ) : null}
+                      {!subcontractor.companyType ? (
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={updatingSubcontractor}
+                          onClick={() => void updateSubcontractorCompliance(subcontractor, {
+                            is1099Exempt: subcontractor.is1099Exempt !== true,
+                          })}
+                        >
+                          {subcontractor.is1099Exempt ? 'Remove W-9 exemption' : 'Mark W-9 exempt'}
+                        </button>
+                      ) : null}
                       <button
                         className="button secondary"
                         type="button"
@@ -1099,7 +1639,8 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                       ) : null}
                     </div>
                   ) : null}
-                </article>
+                  </div>
+                </details>
               );
             })}
           </div>

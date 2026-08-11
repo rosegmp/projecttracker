@@ -1,6 +1,6 @@
 begin;
 
-select plan(33);
+select plan(52);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -26,7 +26,15 @@ insert into public.project_inspections (project_id, id, position, data) values
   ('auth-project-a', 'auth-inspection-a', 0, '{"id":"auth-inspection-a","inspectionType":"Framing","status":"scheduled"}');
 
 insert into public.subs (id, data) values
-  ('auth-sub-a', '{"company":"Authorized Subcontractor","peopleType":"sub"}');
+  ('auth-sub-a', '{"company":"Authorized Subcontractor","email":"certs@sub.test","peopleType":"sub"}');
+
+insert into public.subcontractor_tax_identifiers (
+  subcontractor_id, encrypted_tax_id, encryption_iv, tax_id_last_four, tax_id_type,
+  legal_name, business_name, mailing_address, source, extraction_confidence
+) values (
+  'auth-sub-a', 'ciphertext-without-plaintext', 'test-iv', '6789', 'ein',
+  'Authorized Subcontractor LLC', '', '123 Test Street, Trenton, NJ 08608', 'w9_extraction', 'High'
+);
 
 set local role authenticated;
 
@@ -72,6 +80,77 @@ select lives_ok(
   )$$,
   'editors can create subcontractor insurance certificates'
 );
+select lives_ok(
+  $$select public.create_certificate_renewal_request(
+    'auth-sub-a',
+    '20000000-0000-4000-8000-000000000001'::uuid
+  )$$,
+  'editors can create a server-authoritative certificate renewal request'
+);
+select results_eq(
+  $$select status from public.certificate_renewal_requests where subcontractor_id = 'auth-sub-a'$$,
+  array['requested'::text],
+  'new certificate renewal requests begin in requested status'
+);
+select lives_ok(
+  $$select public.save_insurance_certificate(
+    '{"id":"20000000-0000-4000-8000-000000000003","subcontractorId":"auth-sub-a","insured":"Authorized Subcontractor","policyNumber":"TEST-RENEWED","effectiveDate":"2027-01-01","expirationDate":"2028-01-01"}'::jsonb,
+    '[{"id":"30000000-0000-4000-8000-000000000003","type":"General Liability","amount":1000000}]'::jsonb,
+    null
+  )$$,
+  'editors can save the replacement certificate'
+);
+select results_eq(
+  $$select status from public.certificate_renewal_requests where subcontractor_id = 'auth-sub-a'$$,
+  array['received'::text],
+  'a replacement certificate automatically advances an open renewal to received'
+);
+select lives_ok(
+  $$select public.update_certificate_renewal_status(
+    (select id from public.certificate_renewal_requests where subcontractor_id = 'auth-sub-a'),
+    'under_review',
+    2
+  )$$,
+  'editors can advance a received renewal to under review'
+);
+select lives_ok(
+  $$select public.update_certificate_renewal_status(
+    (select id from public.certificate_renewal_requests where subcontractor_id = 'auth-sub-a'),
+    'accepted',
+    3
+  )$$,
+  'editors can accept a reviewed certificate renewal'
+);
+select lives_ok(
+  $$select public.save_subcontractor_compliance_document(
+    '{"id":"70000000-0000-4000-8000-000000000001","subcontractorId":"auth-sub-a","documentType":"subcontractor_agreement","sourceFileName":"agreement.pdf","sourceBucket":"certificate-files","sourcePath":"certificates/test/compliance/agreement.pdf"}'::jsonb,
+    null
+  )$$,
+  'editors can save a signed subcontractor agreement'
+);
+select lives_ok(
+  $$select public.save_subcontractor_compliance_document(
+    '{"id":"70000000-0000-4000-8000-000000000002","subcontractorId":"auth-sub-a","documentType":"w9","sourceFileName":"undated-w9.pdf","sourceBucket":"certificate-files","sourcePath":"certificates/test/compliance/undated-w9.pdf"}'::jsonb,
+    null
+  )$$,
+  'editors can save a Form W-9 without a date'
+);
+select results_eq(
+  $$select document_type from public.subcontractor_compliance_documents order by document_type$$,
+  array['subcontractor_agreement'::text, 'w9'::text],
+  'editors can read the subcontractor compliance documents they saved'
+);
+select results_eq(
+  $$select tax_id_last_four from public.get_subcontractor_tax_id_statuses()$$,
+  array['6789'::text],
+  'editors can read only masked subcontractor tax ID status'
+);
+select throws_ok(
+  $$select encrypted_tax_id from public.subcontractor_tax_identifiers$$,
+  '42501',
+  'permission denied for table subcontractor_tax_identifiers',
+  'editors cannot read encrypted subcontractor tax ID records directly'
+);
 select throws_ok(
   $$select public.delete_project_inspection('auth-project-a', 'auth-inspection-a', 99, '{}'::jsonb)$$,
   '40001',
@@ -105,6 +184,36 @@ select throws_ok(
   'You do not have permission to edit insurance certificates.',
   'view-only users cannot edit subcontractor insurance certificates'
 );
+select results_eq(
+  $$select status from public.certificate_renewal_requests where subcontractor_id = 'auth-sub-a'$$,
+  array['accepted'::text],
+  'view-only users can read certificate renewal history'
+);
+select throws_ok(
+  $$select public.create_certificate_renewal_request('auth-sub-a', null)$$,
+  '42501',
+  'You do not have permission to request certificate renewals.',
+  'view-only users cannot create certificate renewal requests'
+);
+select results_eq(
+  $$select document_type from public.subcontractor_compliance_documents order by document_type$$,
+  array['subcontractor_agreement'::text, 'w9'::text],
+  'view-only users can read subcontractor compliance documents'
+);
+select results_eq(
+  $$select tax_id_last_four from public.get_subcontractor_tax_id_statuses()$$,
+  array['6789'::text],
+  'view-only users can read only masked subcontractor tax ID status'
+);
+select throws_ok(
+  $$select public.save_subcontractor_compliance_document(
+    '{"subcontractorId":"auth-sub-a","documentType":"w9","signedDate":"2026-02-01","sourceFileName":"replacement.pdf","sourceBucket":"certificate-files","sourcePath":"certificates/test/compliance/replacement.pdf"}'::jsonb,
+    null
+  )$$,
+  '42501',
+  'You do not have permission to edit subcontractor compliance documents.',
+  'view-only users cannot edit subcontractor compliance documents'
+);
 select throws_ok(
   $$select public.delete_project_inspection('auth-project-a', 'auth-inspection-a', 1, '{}'::jsonb)$$,
   '42501',
@@ -127,6 +236,22 @@ select results_eq(
   'select count(*)::bigint from public.insurance_certificates',
   array[0::bigint],
   'portal users cannot read internal insurance certificates'
+);
+select results_eq(
+  'select count(*)::bigint from public.certificate_renewal_requests',
+  array[0::bigint],
+  'portal users cannot read internal certificate renewal history'
+);
+select results_eq(
+  'select count(*)::bigint from public.subcontractor_compliance_documents',
+  array[0::bigint],
+  'portal users cannot read internal subcontractor compliance documents'
+);
+select throws_ok(
+  $$select * from public.get_subcontractor_tax_id_statuses()$$,
+  '42501',
+  'You do not have permission to view subcontractor tax ID status.',
+  'portal users cannot read subcontractor tax ID status'
 );
 
 reset role;

@@ -81,6 +81,8 @@ async function mockStaffBackend(page, {
   subs = [],
   certificateRows = [],
   coverageRows = [],
+  renewalRows = [],
+  complianceDocumentRows = [],
   warrantyRows = [],
   dailyLogRows = [],
   rfiRows = [],
@@ -206,6 +208,10 @@ async function mockStaffBackend(page, {
       body = certificateRows;
     } else if (url.pathname.endsWith('/insurance_certificate_coverages')) {
       body = coverageRows;
+    } else if (url.pathname.endsWith('/certificate_renewal_requests')) {
+      body = renewalRows;
+    } else if (url.pathname.endsWith('/subcontractor_compliance_documents')) {
+      body = complianceDocumentRows;
     } else if (url.pathname.endsWith('/project_warranty_items')) {
       body = warrantyRows;
     } else if (url.pathname.endsWith('/project_daily_logs')) {
@@ -936,6 +942,11 @@ test('administrator creates a subcontractor insurance certificate without projec
   const certificateId = '50000000-0000-4000-8000-000000000001';
   let certificateSave = null;
   const certificateSaves = [];
+  const renewalRows = [];
+  const complianceDocumentRows = [];
+  const taxIdRequests = [];
+  let renewalEmailPayload = null;
+  let complianceEmailPayload = null;
   const subcontractorOperations = [];
 
   await mockStaffBackend(page, {
@@ -949,6 +960,7 @@ test('administrator creates a subcontractor insurance certificate without projec
         company: 'Bright Electric LLC',
         first: 'Bea',
         last: 'Tester',
+        email: 'certificates@bright-electric.test',
       },
       {
         id: excludedSubcontractorId,
@@ -957,6 +969,8 @@ test('administrator creates a subcontractor insurance certificate without projec
         last: 'Tester',
       },
     ],
+    renewalRows,
+    complianceDocumentRows,
     handleRpc: async ({ request, url }) => {
       if (url.pathname.endsWith('/rpc/apply_tracker_batch')) {
         const operations = request.postDataJSON()?.p_operations || [];
@@ -970,6 +984,54 @@ test('administrator creates a subcontractor insurance certificate without projec
             deleted: false,
           })),
         };
+      }
+      if (url.pathname.endsWith('/rpc/create_certificate_renewal_request')) {
+        const payload = request.postDataJSON();
+        const renewal = {
+          id: '60000000-0000-4000-8000-000000000001',
+          subcontractor_id: payload.p_subcontractor_id,
+          source_certificate_id: payload.p_source_certificate_id,
+          received_certificate_id: null,
+          status: 'requested',
+          recipient_email: 'certificates@bright-electric.test',
+          requested_by_name: 'Admin Browser User',
+          requested_by_email: 'certificate-admin@example.test',
+          delivery_status: 'pending',
+          requested_at: '2026-08-09T18:00:00.000Z',
+          version: 1,
+        };
+        renewalRows.unshift(renewal);
+        return { status: 200, body: renewal };
+      }
+      if (url.pathname.endsWith('/rpc/update_certificate_renewal_status')) {
+        const payload = request.postDataJSON();
+        const renewal = renewalRows.find((item) => item.id === payload.p_request_id);
+        renewal.status = payload.p_status;
+        renewal.version += 1;
+        return { status: 200, body: renewal };
+      }
+      if (url.pathname.endsWith('/rpc/save_subcontractor_compliance_document')) {
+        const payload = request.postDataJSON();
+        const document = {
+          id: payload.p_document.id || `70000000-0000-4000-8000-00000000000${complianceDocumentRows.length + 1}`,
+          subcontractor_id: payload.p_document.subcontractorId,
+          document_type: payload.p_document.documentType,
+          signed_date: payload.p_document.signedDate,
+          source_file_name: payload.p_document.sourceFileName,
+          source_bucket: payload.p_document.sourceBucket,
+          source_path: payload.p_document.sourcePath,
+          version: Number(payload.p_expected_version || 0) + 1,
+        };
+        const existingIndex = complianceDocumentRows.findIndex((item) => item.id === document.id);
+        if (existingIndex >= 0) complianceDocumentRows.splice(existingIndex, 1, document);
+        else complianceDocumentRows.push(document);
+        return { status: 200, body: document };
+      }
+      if (url.pathname.endsWith('/rpc/delete_subcontractor_compliance_document')) {
+        const payload = request.postDataJSON();
+        const index = complianceDocumentRows.findIndex((item) => item.id === payload.p_document_id);
+        const [document] = complianceDocumentRows.splice(index, 1);
+        return { status: 200, body: document };
       }
       if (!url.pathname.endsWith('/rpc/save_insurance_certificate')) return null;
       certificateSave = request.postDataJSON();
@@ -1035,33 +1097,101 @@ test('administrator creates a subcontractor insurance certificate without projec
       }),
     });
   });
+  await page.route(`${SUPABASE_ORIGIN}/functions/v1/manage-subcontractor-tax-id`, async (route) => {
+    const payload = route.request().postDataJSON();
+    taxIdRequests.push(payload);
+    const manual = payload.action === 'manual';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        taxIdLastFour: manual ? '4321' : '6789',
+        taxIdType: 'ein',
+        legalName: 'Bright Electric LLC',
+        businessName: 'Bright Electric',
+        mailingAddress: '123 Main Street, Trenton, NJ 08608',
+        companyType: 'Limited Liability Company',
+        source: manual ? 'manual' : 'w9_extraction',
+        confidence: manual ? '' : 'High',
+      }),
+    });
+  });
+  await page.route(`${SUPABASE_ORIGIN}/functions/v1/send-project-notification`, async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.kind === 'subcontractor-compliance-requested') {
+      complianceEmailPayload = payload;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          emailSent: 1,
+          emailFailed: 0,
+          emailStatus: 'sent',
+          requestType: 'missing_compliance',
+          attachmentNames: ['Form W-9.pdf', 'Destiny Homes Subcontractor Agreement.pdf'],
+        }),
+      });
+      return;
+    }
+    renewalEmailPayload = payload;
+    renewalRows[0].delivery_status = 'sent';
+    renewalRows[0].delivered_at = '2026-08-09T18:00:01.000Z';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, emailSent: 1, emailFailed: 0, emailStatus: 'sent' }),
+    });
+  });
 
   await page.goto('/?tab=certificates');
+  const activityFilter = page.getByLabel('Active / inactive');
+  await expect(activityFilter).toHaveValue('active');
+  await expect(page.getByRole('button', { name: 'All subcontractors 2' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Bright Electric LLC' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'No Certificate Roofing' })).toBeVisible();
 
-  const brightElectricCard = page.locator('article.certificate-roster-card').filter({
+  const brightElectricCard = page.locator('details.compliance-list-item').filter({
     has: page.getByRole('heading', { name: 'Bright Electric LLC' }),
   });
-  const excludedCard = page.locator('article.certificate-roster-card').filter({
+  const excludedCard = page.locator('details.compliance-list-item').filter({
     has: page.getByRole('heading', { name: 'No Certificate Roofing' }),
   });
-  await excludedCard.getByRole('button', { name: 'No cert needed' }).click();
-  await expect(excludedCard.locator('.certificate-status-badge')).toHaveText('No cert needed');
+  await expect(brightElectricCard.getByLabel('Workers Comp: Missing (optional)')).toHaveClass(/optional/);
+  await excludedCard.locator('summary').click();
+  await excludedCard.getByRole('button', { name: 'Mark W-9 exempt' }).click();
+  await expect(excludedCard.getByLabel('Form W-9: Not subject to 1099 reporting')).toBeVisible();
+  await expect(excludedCard.locator('.compliance-list-summary > .certificate-status-badge')).toHaveText(/Needs attention.*2/);
   expect(subcontractorOperations.at(-1)).toMatchObject({
     table: 'subs',
     id: excludedSubcontractorId,
-    data: { certificateRequirement: 'not_required', inactive: false },
+    data: { is1099Exempt: true, inactive: false },
   });
 
   await excludedCard.getByRole('button', { name: 'Mark inactive' }).click();
-  await expect(excludedCard.locator('.certificate-status-badge')).toHaveText('Inactive');
+  await expect(excludedCard).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'All subcontractors 1' })).toBeVisible();
   expect(subcontractorOperations.at(-1)).toMatchObject({
     table: 'subs',
     id: excludedSubcontractorId,
-    data: { certificateRequirement: 'not_required', inactive: true },
+    data: { is1099Exempt: true, inactive: true },
   });
 
+  await activityFilter.selectOption('inactive');
+  await expect(excludedCard).toBeVisible();
+  await expect(excludedCard.locator('.certificate-status-badge')).toHaveText('Inactive');
+  await expect(brightElectricCard).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'All subcontractors 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Inactive 1' })).toBeVisible();
+  await activityFilter.selectOption('all');
+  await expect(excludedCard).toBeVisible();
+  await expect(brightElectricCard).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All subcontractors 2' })).toBeVisible();
+  await activityFilter.selectOption('active');
+  await expect(excludedCard).toHaveCount(0);
+  await expect(brightElectricCard).toBeVisible();
+
+  await brightElectricCard.locator('summary').click();
   await brightElectricCard.getByRole('button', { name: 'Add certificate' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add insurance certificate' });
   await dialog.getByLabel('Subcontractor *').selectOption(subcontractorId);
@@ -1121,6 +1251,94 @@ test('administrator creates a subcontractor insurance certificate without projec
       expirationDate: '2027-02-01',
     }),
   ]);
+
+  await brightElectricCard.getByRole('button', { name: 'Email compliance request' }).click();
+  const complianceConfirm = page.getByRole('dialog', { name: 'Email compliance request' });
+  await expect(complianceConfirm).toContainText('Signed subcontractor agreement');
+  await expect(complianceConfirm).toContainText('Signed Form W-9');
+  await complianceConfirm.getByRole('button', { name: 'Send email' }).click();
+  const complianceSent = page.getByRole('dialog', { name: 'Compliance request sent' });
+  await expect(complianceSent).toContainText('Form W-9.pdf');
+  await expect(complianceSent).toContainText('Destiny Homes Subcontractor Agreement.pdf');
+  await complianceSent.getByRole('button', { name: 'OK' }).click();
+  expect(complianceEmailPayload).toMatchObject({
+    kind: 'subcontractor-compliance-requested',
+    entityId: subcontractorId,
+  });
+
+  const agreementCard = brightElectricCard.locator('.compliance-document-row').filter({ hasText: 'Subcontractor agreement' });
+  await expect(agreementCard.getByLabel('Signed date')).toHaveCount(0);
+  await agreementCard.locator('input[type="file"]').setInputFiles({
+    name: 'signed-subcontractor-agreement.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 signed subcontractor agreement'),
+  });
+  await expect(agreementCard.getByText('On file', { exact: true })).toBeVisible();
+  await expect(brightElectricCard.locator('.compliance-list-summary > .certificate-status-badge')).toHaveText(/Needs attention.*1/);
+
+  const w9Card = brightElectricCard.locator('.compliance-document-row').filter({ hasText: 'Form W-9' });
+  await expect(w9Card.getByLabel('Signed date')).toHaveCount(0);
+  await w9Card.locator('input[type="file"]').setInputFiles({
+    name: 'signed-w9.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 signed w9'),
+  });
+  await expect(w9Card.getByText('On file', { exact: true })).toBeVisible();
+  await expect(w9Card.getByText('Tax ID •••• 6789')).toBeVisible();
+  await expect(w9Card.getByText('W-9 name: Bright Electric LLC · Bright Electric')).toBeVisible();
+  await expect(w9Card.getByText('Address: 123 Main Street, Trenton, NJ 08608')).toBeVisible();
+  await expect(w9Card.getByText('Company Type: Limited Liability Company')).toBeVisible();
+  expect(taxIdRequests[0]).toMatchObject({
+    action: 'extract',
+    subcontractorId,
+  });
+  expect(JSON.stringify(taxIdRequests[0])).not.toContain('123456789');
+  expect(subcontractorOperations.at(-1)).toMatchObject({
+    table: 'subs',
+    id: subcontractorId,
+    data: {
+      company: 'Bright Electric LLC',
+      legalName: 'Bright Electric LLC',
+      companyType: 'Limited Liability Company',
+      is1099Exempt: false,
+    },
+  });
+
+  const taxIdInput = w9Card.getByLabel('Tax ID for Bright Electric LLC');
+  await taxIdInput.fill('98-7654321');
+  await w9Card.getByRole('button', { name: 'Save tax ID' }).click();
+  await expect(taxIdInput).toHaveValue('');
+  await expect(w9Card.getByText('Tax ID •••• 4321')).toBeVisible();
+  expect(taxIdRequests.at(-1)).toMatchObject({
+    action: 'manual',
+    subcontractorId,
+    taxId: '98-7654321',
+  });
+  await expect(brightElectricCard.locator('.compliance-list-summary > .certificate-status-badge')).toHaveText('Compliant');
+  expect(complianceDocumentRows.map((document) => document.document_type).sort()).toEqual([
+    'subcontractor_agreement',
+    'w9',
+  ]);
+
+  await brightElectricCard.getByRole('button', { name: 'Request renewal' }).click();
+  await expect(page.getByRole('dialog', { name: 'Renewal requested' })).toBeVisible();
+  await page.getByRole('dialog', { name: 'Renewal requested' }).getByRole('button', { name: 'OK' }).click();
+  const renewalSummary = brightElectricCard.locator('.certificate-renewal-summary');
+  await expect(renewalSummary.locator('strong').filter({ hasText: /^Requested$/ })).toBeVisible();
+  await expect(renewalSummary.locator('strong').filter({ hasText: /^Sent$/ })).toBeVisible();
+  expect(renewalEmailPayload).toEqual({
+    kind: 'certificate-renewal-requested',
+    eventId: renewalRows[0].id,
+    entityId: renewalRows[0].id,
+  });
+  await brightElectricCard.getByRole('button', { name: 'Mark Received' }).click();
+  await expect(renewalSummary.locator('strong').filter({ hasText: /^Received$/ })).toBeVisible();
+  await brightElectricCard.getByRole('button', { name: 'Mark Under review' }).click();
+  await expect(renewalSummary.locator('strong').filter({ hasText: /^Under review$/ })).toBeVisible();
+  await brightElectricCard.getByRole('button', { name: 'Mark Accepted' }).click();
+  await expect(renewalSummary.locator('strong').filter({ hasText: /^Accepted$/ })).toBeVisible();
+  await brightElectricCard.getByText('Renewal history (1)').click();
+  await expect(brightElectricCard.getByText(/certificates@bright-electric\.test/)).toBeVisible();
 
   await page.locator('.certificate-bulk-upload-button input').setInputFiles([
     {

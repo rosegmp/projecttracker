@@ -1,3 +1,5 @@
+import { is1099ReportingCompanyType, normalizeCompanyType } from './companyType.js';
+
 function cleanText(value) {
   return String(value || '').trim();
 }
@@ -41,11 +43,100 @@ export function certificateMatchesStatusFilter(statusId, filterId = 'all') {
 }
 
 export function certificateRequired(subcontractor) {
-  return subcontractor?.certificateRequirement !== 'not_required';
+  return subcontractor?.inactive !== true;
 }
 
 export function certificateEligible(subcontractor) {
-  return subcontractor?.inactive !== true && certificateRequired(subcontractor);
+  return subcontractor?.inactive !== true;
+}
+
+function normalizedCoverageType(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function coverageMatches(value, patterns) {
+  const normalized = normalizedCoverageType(value);
+  return patterns.some((pattern) => normalized === pattern || normalized.includes(pattern));
+}
+
+export function requiredInsuranceCoverageStatus(certificates = [], coverageType, todayIso = localIsoDate()) {
+  const patterns = coverageType === 'workers_compensation'
+    ? ['workers compensation', 'workmans compensation', 'workmens compensation']
+    : ['general liability', 'commercial general liability'];
+  const candidates = [];
+  (certificates || []).forEach((certificate) => {
+    (certificate?.coverages || []).forEach((coverage) => {
+      if (!coverageMatches(coverage.type, patterns)) return;
+      candidates.push({
+        effectiveDate: coverage.effectiveDate || certificate.effectiveDate || '',
+        expirationDate: coverage.expirationDate || certificate.expirationDate || '',
+        certificate,
+        coverage,
+      });
+    });
+  });
+  candidates.sort((left, right) => String(right.expirationDate || '').localeCompare(String(left.expirationDate || '')));
+  const todayDay = isoDayNumber(todayIso);
+  const currentlyEffective = candidates.filter((candidate) => {
+    const effectiveDay = isoDayNumber(candidate.effectiveDate);
+    return effectiveDay === null || todayDay === null || effectiveDay <= todayDay;
+  });
+  const current = currentlyEffective[0] || candidates[0] || null;
+  const currentEffectiveDay = isoDayNumber(current?.effectiveDate);
+  const notYetEffective = currentEffectiveDay !== null && todayDay !== null && currentEffectiveDay > todayDay;
+  return {
+    id: coverageType,
+    label: coverageType === 'workers_compensation' ? 'Workers Compensation' : 'General Liability',
+    status: current
+      ? notYetEffective
+        ? { id: 'pending', label: 'Not yet effective', days: currentEffectiveDay - todayDay }
+        : certificateStatus(current.expirationDate, todayIso)
+      : { id: 'missing', label: 'Missing', days: null },
+    effectiveDate: current?.effectiveDate || '',
+    expirationDate: current?.expirationDate || '',
+    certificateId: current?.certificate?.id || '',
+  };
+}
+
+export function subcontractorComplianceStatus(
+  subcontractor,
+  certificates = [],
+  documents = [],
+  todayIso = localIsoDate(),
+) {
+  if (subcontractor?.inactive === true) {
+    return { id: 'inactive', label: 'Inactive', missing: [], requirements: [] };
+  }
+  const generalLiability = requiredInsuranceCoverageStatus(certificates, 'general_liability', todayIso);
+  const workersCompensation = requiredInsuranceCoverageStatus(certificates, 'workers_compensation', todayIso);
+  const agreement = (documents || []).find((document) =>
+    document.documentType === 'subcontractor_agreement' && document.sourcePath);
+  const w9 = (documents || []).find((document) =>
+    document.documentType === 'w9' && document.sourcePath);
+  const companyType = normalizeCompanyType(subcontractor?.companyType);
+  const w9Exempt = companyType
+    ? !is1099ReportingCompanyType(companyType)
+    : subcontractor?.is1099Exempt === true;
+  const requirements = [
+    { id: 'general_liability', label: 'Current General Liability', satisfied: ['active', 'expiring'].includes(generalLiability.status.id), detail: generalLiability.status.label },
+    { id: 'workers_compensation', label: 'Workers Compensation', satisfied: true, optional: true, detail: workersCompensation.status.label },
+    { id: 'subcontractor_agreement', label: 'Signed subcontractor agreement', satisfied: Boolean(agreement), detail: agreement ? 'On file' : 'Missing' },
+    { id: 'w9', label: 'Signed Form W-9', satisfied: w9Exempt || Boolean(w9), detail: w9Exempt ? 'Not subject to 1099 reporting' : w9 ? 'On file' : 'Missing' },
+  ];
+  const missing = requirements.filter((requirement) => !requirement.satisfied);
+  return {
+    id: missing.length ? 'needs-attention' : 'compliant',
+    label: missing.length ? `Needs attention · ${missing.length}` : 'Compliant',
+    missing,
+    requirements,
+    generalLiability,
+    workersCompensation,
+  };
 }
 
 export function sortCertificatesByExpiration(certificates = []) {
@@ -58,7 +149,6 @@ export function sortCertificatesByExpiration(certificates = []) {
 
 export function subcontractorCertificateStatus(subcontractor, certificates = [], todayIso = localIsoDate()) {
   if (subcontractor?.inactive === true) return { id: 'inactive', label: 'Inactive', days: null };
-  if (!certificateRequired(subcontractor)) return { id: 'not-required', label: 'No cert needed', days: null };
   if (!certificates.length) return { id: 'missing', label: 'Missing certificate', days: null };
   return certificateStatus(certificates[0].expirationDate, todayIso);
 }
