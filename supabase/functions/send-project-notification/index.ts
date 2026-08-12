@@ -86,6 +86,12 @@ function cleanEmail(value: unknown) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
+function senderCc(senderEmail: unknown, deliveryEmails: unknown[]) {
+  const sender = cleanEmail(senderEmail);
+  const destinations = new Set(deliveryEmails.map(cleanEmail).filter(Boolean));
+  return sender && !destinations.has(sender) ? [sender] : [];
+}
+
 function personAssignmentKeys(data: Record<string, unknown> = {}) {
   const first = String(data.first || '').trim();
   const last = String(data.last || '').trim();
@@ -207,6 +213,7 @@ async function sendSubcontractorComplianceEmail({
   latestExpirationDate,
   expiredCertificate,
   testMode,
+  senderEmail,
 }: {
   requestId: string;
   recipientEmail: string;
@@ -216,6 +223,7 @@ async function sendSubcontractorComplianceEmail({
   latestExpirationDate: string;
   expiredCertificate: boolean;
   testMode: boolean;
+  senderEmail: string;
 }) {
   const apiKey = Deno.env.get('RESEND_API_KEY') || '';
   const from = Deno.env.get('CERTIFICATE_RENEWAL_EMAIL_FROM') || Deno.env.get('TASK_ASSIGNMENT_EMAIL_FROM') || '';
@@ -256,6 +264,7 @@ async function sendSubcontractorComplianceEmail({
     : '';
   const htmlTestHeader = testMode ? `<p><strong>TEST MODE - Intended subcontractor email: ${escapeHtml(recipientEmail)}</strong></p>` : '';
   const html = `${htmlTestHeader}<p>Hello ${escapeHtml(subcontractorName)},</p>${htmlOpening}${htmlAdditional}<p>Please reply to this email with the requested documents, or send them to ${escapeHtml(destination)}. Any applicable blank forms or sample certificate are attached.</p><p>Sincerely,</p><p>Roisie Engelman<br>Destiny Homes LLC</p>`;
+  const cc = senderCc(senderEmail, [deliveryEmail]);
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -266,6 +275,7 @@ async function sendSubcontractorComplianceEmail({
     body: JSON.stringify({
       from,
       to: [deliveryEmail],
+      ...(cc.length ? { cc } : {}),
       ...(replyTo ? { reply_to: replyTo } : {}),
       subject,
       text,
@@ -299,6 +309,7 @@ async function sendTaskAssignmentEmails({
   projectName,
   taskLabel,
   due,
+  senderEmail,
 }: {
   recipients: Array<{ email: string; name: string }>;
   eventId: string;
@@ -307,6 +318,7 @@ async function sendTaskAssignmentEmails({
   projectName: string;
   taskLabel: string;
   due: string;
+  senderEmail: string;
 }) {
   if (!recipients.length) return { sent: 0, failed: 0, status: 'disabled' };
   const apiKey = Deno.env.get('RESEND_API_KEY') || '';
@@ -318,6 +330,7 @@ async function sendTaskAssignmentEmails({
   const results = await Promise.all(recipients.map(async (recipient, index) => {
     const text = `Hello ${recipient.name},\n\nYou were assigned a new task in ${projectName}.\n\nTask: ${taskLabel}\n${dueLine}\n\nOpen task: ${taskUrl}`;
     const html = `<p>Hello ${escapeHtml(recipient.name)},</p><p>You were assigned a new task in <strong>${escapeHtml(projectName)}</strong>.</p><p><strong>Task:</strong> ${escapeHtml(taskLabel)}<br><strong>${escapeHtml(dueLine)}</strong></p><p><a href="${escapeHtml(taskUrl)}">Open task in Destiny Project Hub</a></p>`;
+    const cc = senderCc(senderEmail, [recipient.email]);
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -325,7 +338,7 @@ async function sendTaskAssignmentEmails({
         'Content-Type': 'application/json',
         'Idempotency-Key': `${eventId}:task-assignment:${index}`,
       },
-      body: JSON.stringify({ from, to: [recipient.email], subject, text, html }),
+      body: JSON.stringify({ from, to: [recipient.email], ...(cc.length ? { cc } : {}), subject, text, html }),
     });
     return response.ok;
   }));
@@ -371,6 +384,7 @@ async function sendCertificateRenewalEmail({
   const htmlTestHeader = testMode ? `<p><strong>TEST MODE - Intended subcontractor email: ${escapeHtml(recipientEmail)}</strong></p>` : '';
   const html = `${htmlTestHeader}<p>Hello ${escapeHtml(subcontractorName)},</p><p>${escapeHtml(expirationLine)}</p><p>${escapeHtml(requirement)}</p><p>A redacted sample certificate showing the requested format is attached. Please reply to this email with the renewed certificate, or send it to ${escapeHtml(destination)}.</p><p>Sincerely,</p><p>${escapeHtml(contactName)}<br>Destiny Homes LLC</p>`;
   const attachments = [await loadComplianceAttachment('sample_coi')];
+  const cc = senderCc(requesterEmail, [deliveryEmail]);
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -381,6 +395,7 @@ async function sendCertificateRenewalEmail({
     body: JSON.stringify({
       from,
       to: [deliveryEmail],
+      ...(cc.length ? { cc } : {}),
       ...(replyTo ? { reply_to: replyTo } : {}),
       subject,
       text,
@@ -543,6 +558,7 @@ Deno.serve(async (request) => {
         latestExpirationDate,
         expiredCertificate,
         testMode: complianceEmailTestMode,
+        senderEmail: String(callerAppUser.data?.email || caller.email || '').trim(),
       });
       if (!emailResult.sent) {
         logEdgeFailure({
@@ -671,6 +687,7 @@ Deno.serve(async (request) => {
         projectName: 'General tasks',
         taskLabel,
         due: taskDue,
+        senderEmail: String(callerAppUser.data?.email || caller.email || '').trim(),
       });
       if (emailResult.failed) {
         logEdgeFailure({
@@ -776,6 +793,7 @@ Deno.serve(async (request) => {
       projectName: String(project.data?.name || 'Project').slice(0, 160),
       taskLabel,
       due: taskDue,
+      senderEmail: String(callerAppUser.data?.email || caller.email || '').trim(),
     });
     if (emailResult.status === 'unconfigured') {
       logEdgeFailure({

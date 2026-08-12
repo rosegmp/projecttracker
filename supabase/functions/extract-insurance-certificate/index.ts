@@ -23,6 +23,11 @@ Return only JSON with this exact shape:
 {"subcontractorName":"","holder":"","insured":"","insurer":"","policyNumber":"","effectiveDate":"YYYY-MM-DD","expirationDate":"YYYY-MM-DD","additionalInsured":false,"coverages":[{"type":"","generalLimit":0,"aggregateLimit":0,"effectiveDate":"YYYY-MM-DD","expirationDate":"YYYY-MM-DD"}],"confidence":"High|Medium|Low","extractionNotes":""}
 Use an empty string when text is not present. Use 0 when a coverage limit is not present. For each coverage, return only the primary general, each-occurrence, or equivalent limit as generalLimit and the overall aggregate as aggregateLimit; omit other sublimits. Recognize General Aggregate, Policy Aggregate, Annual Aggregate, Total Aggregate, and close equivalent wording as aggregate values. When both General Aggregate and Products-Completed Operations Aggregate are present, prefer General Aggregate. Extract the effective and expiration dates for each distinct coverage, including Commercial General Liability and Workers Compensation. Do not infer an additional-insured endorsement unless the document indicates it. Preserve each distinct coverage type as a separate coverages entry.`;
 
+const CLASSIFICATION_SYSTEM = `Classify the supplied subcontractor compliance document before any detailed extraction.
+Return only JSON with this exact shape:
+{"documentType":"insurance_certificate|w9|subcontractor_agreement|unknown","subcontractorName":"","confidence":"High|Medium|Low"}
+Use insurance_certificate for certificates of insurance, ACORD certificates, or insurance evidence. Use w9 only for IRS Form W-9 or a substitute W-9. Use subcontractor_agreement for signed or unsigned subcontractor agreements, hold-harmless agreements, or subcontractor contracts. Extract only the company or individual name that identifies the subcontractor or vendor. Use unknown when the document is not one of these types or the type is uncertain. Do not return tax IDs, policy details, addresses, signatures, or any other document text.`;
+
 function requiredEnv(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`${name} is not configured.`);
@@ -91,6 +96,22 @@ function parseExtraction(payload: Record<string, unknown>) {
   };
 }
 
+function parseClassification(payload: Record<string, unknown>) {
+  const text = Array.isArray(payload?.content)
+    ? payload.content.map((item: Record<string, unknown>) => item?.type === 'text' ? String(item.text || '') : '').join('')
+    : '';
+  const parsed = JSON.parse(text.replace(/```json|```/gi, '').trim());
+  const documentType = ['insurance_certificate', 'w9', 'subcontractor_agreement', 'unknown']
+    .includes(cleanText(parsed?.documentType, 40))
+    ? cleanText(parsed?.documentType, 40)
+    : 'unknown';
+  return {
+    documentType,
+    subcontractorName: cleanText(parsed?.subcontractorName, 240),
+    confidence: ['High', 'Medium', 'Low'].includes(parsed?.confidence) ? parsed.confidence : 'Low',
+  };
+}
+
 Deno.serve(async (request) => {
   const requestId = getRequestId(request);
   const respond = (body: Record<string, unknown>, status = 200) =>
@@ -148,6 +169,10 @@ Deno.serve(async (request) => {
 
     operation = 'request.validate';
     const body = await request.json().catch(() => ({}));
+    const action = cleanText(body?.action, 20) || 'extract';
+    if (!['extract', 'classify'].includes(action)) {
+      return fail('Select a valid compliance document action.', 400, operation, 'invalid_action');
+    }
     const sourcePath = cleanText(body?.sourcePath, 600);
     const requestedType = cleanText(body?.contentType, 100).toLowerCase();
     const requiredPrefix = `certificates/${caller.id}/`;
@@ -184,6 +209,7 @@ Deno.serve(async (request) => {
         type: 'image',
         source: { type: 'base64', media_type: contentType, data: bytesToBase64(bytes) },
       };
+    const classifying = action === 'classify';
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -193,11 +219,16 @@ Deno.serve(async (request) => {
       },
       body: JSON.stringify({
         model: anthropicModel,
-        max_tokens: 1400,
-        system: EXTRACTION_SYSTEM,
+        max_tokens: classifying ? 180 : 1400,
+        system: classifying ? CLASSIFICATION_SYSTEM : EXTRACTION_SYSTEM,
         messages: [{
           role: 'user',
-          content: [contentBlock, { type: 'text', text: 'Extract this insurance certificate for human review.' }],
+          content: [contentBlock, {
+            type: 'text',
+            text: classifying
+              ? 'Identify this compliance document type and subcontractor name.'
+              : 'Extract this insurance certificate for human review.',
+          }],
         }],
       }),
     });
@@ -208,9 +239,16 @@ Deno.serve(async (request) => {
     operation = 'response.validate';
     const providerPayload = await upstream.json();
     try {
-      return respond(parseExtraction(providerPayload));
+      return respond(classifying ? parseClassification(providerPayload) : parseExtraction(providerPayload));
     } catch {
-      return fail('Certificate extraction returned an invalid result.', 502, operation, 'invalid_provider_response');
+      return fail(
+        classifying
+          ? 'Compliance document classification returned an invalid result.'
+          : 'Certificate extraction returned an invalid result.',
+        502,
+        operation,
+        'invalid_provider_response',
+      );
     }
   } catch (error) {
     return fail('Certificate extraction failed.', 500, operation, error instanceof Error ? error.name : 'unknown');

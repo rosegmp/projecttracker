@@ -2272,6 +2272,9 @@ const tests = [
       assert.match(functionSource, /buildTaskDeepLink/);
       assert.match(functionSource, /url\.searchParams\.set\('projectTab', 'tasks'\)/);
       assert.match(functionSource, /Open task in Destiny Project Hub/);
+      assert.match(functionSource, /function senderCc\(senderEmail/);
+      assert.match(functionSource, /const cc = senderCc\(senderEmail, \[recipient\.email\]\)/);
+      assert.match(functionSource, /\.\.\.\(cc\.length \? \{ cc \} : \{\}\)/);
       assert.match(functionSource, /task_email\.projectless_task\.read/);
       assert.match(functionSource, /projectName: 'General tasks'/);
       assert.match(functionSource, /url\.searchParams\.set\('tab', projectId \? 'projects' : 'tasks'\)/);
@@ -5159,6 +5162,10 @@ const tests = [
       assert.match(functionSource, /requiredPrefix = `certificates\/\$\{caller\.id\}\//);
       assert.match(functionSource, /ANTHROPIC_CERTIFICATE_MODEL/);
       assert.match(functionSource, /Extract insurance certificate data/);
+      assert.match(functionSource, /Classify the supplied subcontractor compliance document/);
+      assert.match(functionSource, /insurance_certificate\|w9\|subcontractor_agreement\|unknown/);
+      assert.match(functionSource, /Do not return tax IDs, policy details, addresses, signatures/);
+      assert.match(functionSource, /classifying \? parseClassification\(providerPayload\) : parseExtraction\(providerPayload\)/);
       assert.match(functionSource, /subcontractorName/);
       assert.match(functionSource, /omit other sublimits/);
       assert.match(functionSource, /General Aggregate and Products-Completed Operations Aggregate/);
@@ -5204,6 +5211,9 @@ const tests = [
       assert.match(functionSource, /Sample Certificate of Insurance\.pdf/);
       assert.match(serviceSource, /sendSubcontractorComplianceRequest/);
       assert.match(componentSource, /Email compliance request/);
+      assert.match(componentSource, /Email address for \$\{subcontractorLabel\(subcontractor\)\}/);
+      assert.match(componentSource, /saveSubcontractorEmail\(subcontractor\)/);
+      assert.match(componentSource, /compliance\.subcontractor-email-save/);
       assert.match(settingsSource, /Compliance email test mode/);
       assert.match(settingsSource, /Send compliance emails to me for testing/);
       assert.match(trackerSource, /complianceEmailTestMode: settings\?\.complianceEmailTestMode === true/);
@@ -5211,11 +5221,35 @@ const tests = [
       assert.match(functionSource, /admin_test_sender_required/);
       assert.match(functionSource, /TEST MODE - Intended subcontractor email:/);
       assert.match(functionSource, /to: \[deliveryEmail\]/);
+      assert.match(functionSource, /const cc = senderCc\(senderEmail, \[deliveryEmail\]\)/);
+      assert.match(functionSource, /const cc = senderCc\(requesterEmail, \[deliveryEmail\]\)/);
+      assert.match(functionSource, /senderEmail: String\(callerAppUser\.data\?\.email \|\| caller\.email/);
       assert.match(functionSource, /testMode: complianceEmailTestMode/);
       assert.match(functionSource, /Please include Workers Compensation coverage when it applies to your business/);
       assert.doesNotMatch(functionSource, /missing\.push\('workers_compensation'\)/);
       assert.match(configSource, /static_files = \[ "\.\/functions\/send-project-notification\/attachments\/\*\.pdf" \]/);
       assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(recipientEmail|requesterEmail)/);
+    },
+  },
+  {
+    name: 'compliance drag and drop classifies before routing to document-specific extraction',
+    async run() {
+      const [componentSource, serviceSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/insuranceCertificates.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(componentSource, /Drop a compliance document here/);
+      assert.match(componentSource, /onDrop=\{\(event\) =>/);
+      assert.match(componentSource, /classifyComplianceDocument\(uploaded\)/);
+      assert.match(componentSource, /Review compliance upload/);
+      assert.match(componentSource, /Confirm the document type and subcontractor before detailed extraction/);
+      assert.match(componentSource, /saveUploadedSubcontractorComplianceDocument/);
+      assert.match(serviceSource, /action: 'classify'/);
+      assert.match(serviceSource, /export async function classifyComplianceDocument/);
+      assert.match(serviceSource, /export async function saveUploadedSubcontractorComplianceDocument/);
+      assert.match(styleSource, /\.compliance-upload-drop-zone/);
+      assert.match(styleSource, /\.compliance-upload-routing-modal/);
     },
   },
   {

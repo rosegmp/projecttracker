@@ -453,22 +453,26 @@ export async function saveSubcontractorComplianceDocument(document) {
 export async function uploadSubcontractorComplianceDocument(file, document) {
   const uploaded = await uploadCertificateStorageFile(file, 'compliance');
   try {
-    const saved = await saveSubcontractorComplianceDocument({ ...document, ...uploaded });
-    if (document.documentType !== 'w9') return saved;
-    try {
-      const taxIdStatus = document.manualTaxId
-        ? await storeManualSubcontractorTaxId(document.subcontractorId, document.manualTaxId)
-        : await extractAndStoreSubcontractorTaxId(document.subcontractorId, uploaded);
-      return { ...saved, taxIdStatus };
-    } catch (error) {
-      return {
-        ...saved,
-        taxIdWarning: error instanceof Error ? error.message : 'Tax ID extraction failed. Enter it manually.',
-      };
-    }
+    return await saveUploadedSubcontractorComplianceDocument(uploaded, document);
   } catch (error) {
     await deleteCertificateFile(uploaded).catch(() => {});
     throw error;
+  }
+}
+
+export async function saveUploadedSubcontractorComplianceDocument(uploaded, document) {
+  const saved = await saveSubcontractorComplianceDocument({ ...document, ...uploaded });
+  if (document.documentType !== 'w9') return saved;
+  try {
+    const taxIdStatus = document.manualTaxId
+      ? await storeManualSubcontractorTaxId(document.subcontractorId, document.manualTaxId)
+      : await extractAndStoreSubcontractorTaxId(document.subcontractorId, uploaded);
+    return { ...saved, taxIdStatus };
+  } catch (error) {
+    return {
+      ...saved,
+      taxIdWarning: error instanceof Error ? error.message : 'Tax ID extraction failed. Enter it manually.',
+    };
   }
 }
 
@@ -563,5 +567,33 @@ export async function extractInsuranceCertificate(file) {
     coverages: (Array.isArray(payload.coverages) ? payload.coverages : [])
       .map(normalizeCoverage)
       .filter((coverage) => coverage.type),
+  };
+}
+
+export async function classifyComplianceDocument(file) {
+  const response = await fetchAuthorizedSupabase(
+    '/functions/v1/extract-insurance-certificate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'classify',
+        sourcePath: file.sourcePath,
+        contentType: file.contentType,
+      }),
+    },
+    'Compliance document classification',
+    45000,
+  );
+  if (!response.ok) await readApiError(response, 'Unable to identify the compliance document.');
+  const payload = await response.json();
+  const documentType = ['insurance_certificate', 'w9', 'subcontractor_agreement', 'unknown']
+    .includes(cleanText(payload.documentType))
+    ? cleanText(payload.documentType)
+    : 'unknown';
+  return {
+    documentType,
+    subcontractorName: cleanText(payload.subcontractorName),
+    confidence: ['High', 'Medium', 'Low'].includes(payload.confidence) ? payload.confidence : 'Low',
   };
 }
