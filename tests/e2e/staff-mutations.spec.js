@@ -948,6 +948,7 @@ test('administrator creates a subcontractor insurance certificate without projec
   let renewalEmailPayload = null;
   let complianceEmailPayload = null;
   const subcontractorOperations = [];
+  const certificateExtractionActions = [];
 
   await mockStaffBackend(page, {
     role: 'Admin',
@@ -1073,6 +1074,20 @@ test('administrator creates a subcontractor insurance certificate without projec
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
   await page.route(`${SUPABASE_ORIGIN}/functions/v1/extract-insurance-certificate`, async (route) => {
+    const payload = route.request().postDataJSON();
+    certificateExtractionActions.push(payload.action || 'extract');
+    if (payload.action === 'classify') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          documentType: 'insurance_certificate',
+          subcontractorName: 'Bright Electric LLC',
+          confidence: 'High',
+        }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -1145,6 +1160,29 @@ test('administrator creates a subcontractor insurance certificate without projec
   });
 
   await page.goto('/?tab=certificates');
+  const complianceDropZone = page.getByText('Drop a compliance document here').locator('..');
+  const complianceDropData = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(
+      ['%PDF-1.4 dropped compliance certificate'],
+      'dropped-bright-electric-coi.pdf',
+      { type: 'application/pdf' },
+    ));
+    return transfer;
+  });
+  await complianceDropZone.dispatchEvent('dragenter', { dataTransfer: complianceDropData });
+  await expect(complianceDropZone).toHaveClass(/is-drag-over/);
+  await complianceDropZone.dispatchEvent('drop', { dataTransfer: complianceDropData });
+  const routingDialog = page.getByRole('dialog', { name: 'Review compliance upload' });
+  await expect(routingDialog).toBeVisible({ timeout: 30_000 });
+  await expect(routingDialog.getByLabel('Document type *')).toHaveValue('insurance_certificate');
+  await expect(routingDialog.getByLabel('Subcontractor *')).toHaveValue(subcontractorId);
+  await routingDialog.getByRole('button', { name: 'Extract certificate' }).click();
+  const routedCertificateDialog = page.getByRole('dialog', { name: 'Add insurance certificate' });
+  await expect(routedCertificateDialog.getByLabel('Insurance company')).toHaveValue('Bulk Test Mutual');
+  await routedCertificateDialog.getByRole('button', { name: 'Cancel' }).click();
+  expect(certificateExtractionActions.slice(0, 2)).toEqual(['classify', 'extract']);
+
   const activityFilter = page.getByLabel('Active / inactive');
   await expect(activityFilter).toHaveValue('active');
   await expect(page.getByRole('button', { name: 'All subcontractors 2' })).toBeVisible();
@@ -1159,6 +1197,16 @@ test('administrator creates a subcontractor insurance certificate without projec
   });
   await expect(brightElectricCard.getByLabel('Workers Comp: Missing (optional)')).toHaveClass(/optional/);
   await excludedCard.locator('summary').click();
+  const inlineEmail = excludedCard.getByLabel('Email address for No Certificate Roofing');
+  await expect(inlineEmail).toBeVisible();
+  await inlineEmail.fill('roofing-compliance@example.test');
+  await excludedCard.getByRole('button', { name: 'Save email' }).click();
+  await expect(inlineEmail).toHaveCount(0);
+  expect(subcontractorOperations.at(-1)).toMatchObject({
+    table: 'subs',
+    id: excludedSubcontractorId,
+    data: { email: 'roofing-compliance@example.test' },
+  });
   await excludedCard.getByRole('button', { name: 'Mark W-9 exempt' }).click();
   await expect(excludedCard.getByLabel('Form W-9: Not subject to 1099 reporting')).toBeVisible();
   await expect(excludedCard.locator('.compliance-list-summary > .certificate-status-badge')).toHaveText(/Needs attention.*2/);

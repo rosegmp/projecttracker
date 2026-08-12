@@ -16,6 +16,7 @@ import {
 import { reportError } from '../services/observability.js';
 import { updatePerson } from '../services/trackerData.js';
 import {
+  classifyComplianceDocument,
   createCertificateRenewalRequest,
   deleteSubcontractorComplianceDocument,
   deleteCertificateFile,
@@ -27,6 +28,7 @@ import {
   loadSubcontractorTaxIdStatuses,
   maskedTaxId,
   saveInsuranceCertificate,
+  saveUploadedSubcontractorComplianceDocument,
   sendSubcontractorComplianceRequest,
   storeManualSubcontractorTaxId,
   updateCertificateRenewalStatus,
@@ -44,6 +46,12 @@ const EMPTY_COVERAGE = {
   expirationDate: '',
 };
 const MAX_BULK_CERTIFICATES = 20;
+const COMPLIANCE_DOCUMENT_TYPE_LABELS = {
+  insurance_certificate: 'Insurance certificate',
+  w9: 'Form W-9',
+  subcontractor_agreement: 'Subcontractor agreement',
+  unknown: 'Needs review',
+};
 const RENEWAL_STATUS_LABELS = {
   requested: 'Requested',
   received: 'Received',
@@ -452,6 +460,81 @@ function BulkCertificateModal({
   );
 }
 
+function ComplianceUploadRoutingModal({
+  upload,
+  subcontractors,
+  busy,
+  onChange,
+  onClose,
+  onContinue,
+}) {
+  const detectedLabel = COMPLIANCE_DOCUMENT_TYPE_LABELS[upload.classification.documentType] || 'Needs review';
+  const continueLabel = upload.documentType === 'insurance_certificate'
+    ? 'Extract certificate'
+    : upload.documentType === 'w9'
+      ? 'Save and extract W-9'
+      : 'Save agreement';
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-card compliance-upload-routing-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="compliance-upload-routing-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Document identified</p>
+            <h2 id="compliance-upload-routing-title">Review compliance upload</h2>
+            <p className="panel-copy">Confirm the document type and subcontractor before detailed extraction.</p>
+          </div>
+        </div>
+        <div className="compliance-upload-detection">
+          <div><span>File</span><strong>{upload.file.name}</strong></div>
+          <div><span>Detected type</span><strong>{detectedLabel}</strong></div>
+          <div><span>Confidence</span><strong>{upload.classification.confidence}</strong></div>
+          <div><span>Detected company</span><strong>{upload.classification.subcontractorName || 'Not identified'}</strong></div>
+        </div>
+        <div className="project-form-grid">
+          <label>
+            <span>Document type *</span>
+            <select value={upload.documentType} onChange={(event) => onChange('documentType', event.target.value)} disabled={busy}>
+              <option value="unknown">Select document type</option>
+              <option value="insurance_certificate">Insurance certificate</option>
+              <option value="w9">Form W-9</option>
+              <option value="subcontractor_agreement">Subcontractor agreement</option>
+            </select>
+          </label>
+          <label>
+            <span>Subcontractor *</span>
+            <select value={upload.subcontractorId} onChange={(event) => onChange('subcontractorId', event.target.value)} disabled={busy}>
+              <option value="">Select subcontractor</option>
+              {subcontractors.map((subcontractor) => (
+                <option key={subcontractor.id} value={subcontractor.id}>
+                  {subcontractorLabel(subcontractor)}{subcontractor.inactive ? ' (Inactive)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {upload.error ? <p className="certificate-bulk-error">{upload.error}</p> : null}
+        <div className="modal-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            className={`button primary${busy ? ' is-loading' : ''}`}
+            type="button"
+            onClick={onContinue}
+            disabled={busy || upload.documentType === 'unknown' || !upload.subcontractorId}
+          >
+            {busy ? 'Processing...' : continueLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
 export default function NativeCertificatesView({ data, activeUser, onStateChange, navigationTarget = null }) {
   const canEdit = ['Admin', 'Edit'].includes(activeUser?.role);
   const subcontractors = useMemo(
@@ -487,12 +570,17 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const [subcontractorSavingId, setSubcontractorSavingId] = useState('');
   const [renewalSavingId, setRenewalSavingId] = useState('');
   const [complianceEmailSendingId, setComplianceEmailSendingId] = useState('');
+  const [complianceEmailSavingId, setComplianceEmailSavingId] = useState('');
+  const [complianceEmailDrafts, setComplianceEmailDrafts] = useState({});
   const [complianceSavingKey, setComplianceSavingKey] = useState('');
   const [complianceTaxIdDrafts, setComplianceTaxIdDrafts] = useState({});
   const [bulkItems, setBulkItems] = useState([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [complianceDropActive, setComplianceDropActive] = useState(false);
+  const [complianceUpload, setComplianceUpload] = useState(null);
+  const [complianceUploadBusy, setComplianceUploadBusy] = useState(false);
 
   async function refreshCertificates() {
     setLoading(true);
@@ -718,6 +806,99 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     await processBulkItems(items);
   }
 
+  async function startComplianceUpload(file) {
+    if (!file || complianceUploadBusy) return;
+    let uploaded = null;
+    setComplianceDropActive(false);
+    setComplianceUploadBusy(true);
+    try {
+      validateCertificateFile(file);
+      uploaded = await uploadCertificateFile(file);
+      const classification = await classifyComplianceDocument(uploaded);
+      const match = findClosestSubcontractor(classification.subcontractorName, subcontractors);
+      setComplianceUpload({
+        file,
+        uploaded,
+        classification,
+        documentType: classification.documentType,
+        subcontractorId: match?.subcontractor?.id || '',
+        error: '',
+      });
+    } catch (error) {
+      if (uploaded?.sourcePath) await deleteCertificateFile(uploaded).catch(() => {});
+      reportError(error, { operation: 'compliance.document-classify', workspace: 'compliance' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to identify the compliance document.',
+        'Document classification failed',
+      );
+    } finally {
+      setComplianceUploadBusy(false);
+    }
+  }
+
+  async function handleComplianceFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (files.length > 1) {
+      await showAppAlert(
+        'Drop one compliance document at a time so its type and subcontractor can be confirmed.',
+        'One document at a time',
+      );
+      return;
+    }
+    await startComplianceUpload(files[0]);
+  }
+
+  async function closeComplianceUpload() {
+    if (complianceUploadBusy) return;
+    if (complianceUpload?.uploaded?.sourcePath) {
+      await deleteCertificateFile(complianceUpload.uploaded).catch(() => {});
+    }
+    setComplianceUpload(null);
+  }
+
+  async function continueComplianceUpload() {
+    if (!complianceUpload || complianceUploadBusy) return;
+    const subcontractor = subcontractorById.get(complianceUpload.subcontractorId);
+    if (!subcontractor || complianceUpload.documentType === 'unknown') return;
+    setComplianceUploadBusy(true);
+    setComplianceUpload((current) => current ? { ...current, error: '' } : current);
+    try {
+      if (complianceUpload.documentType === 'insurance_certificate') {
+        const extracted = await extractInsuranceCertificate(complianceUpload.uploaded);
+        const base = emptyCertificate(subcontractor.id);
+        base.insured = subcontractorLabel(subcontractor);
+        const nextDraft = buildExtractedCertificate(
+          base,
+          complianceUpload.uploaded,
+          extracted,
+          subcontractors,
+        );
+        setOriginalCertificate(null);
+        setPendingUpload(complianceUpload.uploaded);
+        setSelectedFile(complianceUpload.file);
+        setDraft({ ...nextDraft, subcontractorId: subcontractor.id });
+        setComplianceUpload(null);
+      } else {
+        const saved = await saveComplianceDocument(
+          subcontractor,
+          complianceUpload.documentType,
+          null,
+          complianceUpload.uploaded,
+        );
+        if (saved) setComplianceUpload(null);
+      }
+    } catch (error) {
+      reportError(error, { operation: 'compliance.document-route', workspace: 'compliance' });
+      setComplianceUpload((current) => current ? {
+        ...current,
+        error: error instanceof Error ? error.message : 'Unable to process this compliance document.',
+      } : current);
+    } finally {
+      setComplianceUploadBusy(false);
+    }
+  }
+
   async function retryBulkItem(item) {
     setBulkProcessing(true);
     try {
@@ -896,6 +1077,32 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     }
   }
 
+  async function saveSubcontractorEmail(subcontractor) {
+    const email = String(complianceEmailDrafts[subcontractor.id] || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      await showAppAlert('Enter a valid email address.', 'Valid email required');
+      return;
+    }
+    setComplianceEmailSavingId(subcontractor.id);
+    try {
+      const nextState = await updatePerson(data, 'sub', subcontractor.id, { email });
+      onStateChange(nextState);
+      setComplianceEmailDrafts((current) => {
+        const next = { ...current };
+        delete next[subcontractor.id];
+        return next;
+      });
+    } catch (error) {
+      reportError(error, { operation: 'compliance.subcontractor-email-save', workspace: 'compliance' });
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to save the subcontractor email address.',
+        'Email save failed',
+      );
+    } finally {
+      setComplianceEmailSavingId('');
+    }
+  }
+
   async function requestSubcontractorCompliance(subcontractor, complianceStatus) {
     const email = String(subcontractor.email || '').trim();
     if (!email) {
@@ -959,22 +1166,25 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     }
   }
 
-  async function saveComplianceDocument(subcontractor, documentType, file) {
-    if (!file) return;
+  async function saveComplianceDocument(subcontractor, documentType, file, uploadedFile = null) {
+    if (!file && !uploadedFile) return false;
     const key = `${subcontractor.id}:${documentType}`;
     const existing = complianceDocuments.find((document) =>
       document.subcontractorId === subcontractor.id && document.documentType === documentType) || null;
     const manualTaxId = documentType === 'w9' ? complianceTaxIdDrafts[key] || '' : '';
     setComplianceSavingKey(key);
     try {
-      const saved = await uploadSubcontractorComplianceDocument(file, {
+      const documentPayload = {
         id: existing?.id || newId(),
         subcontractorId: subcontractor.id,
         documentType,
         signedDate: existing?.signedDate || '',
         manualTaxId,
         version: existing?.version || 0,
-      });
+      };
+      const saved = uploadedFile
+        ? await saveUploadedSubcontractorComplianceDocument(uploadedFile, documentPayload)
+        : await uploadSubcontractorComplianceDocument(file, documentPayload);
       const { taxIdStatus, taxIdWarning, ...savedDocument } = saved;
       if (existing?.sourcePath && existing.sourcePath !== saved.sourcePath) {
         await deleteCertificateFile(existing).catch(() => {});
@@ -1016,12 +1226,14 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         }
       }
       if (taxIdWarning) await showAppAlert(taxIdWarning, 'Tax ID needs review');
+      return true;
     } catch (error) {
       reportError(error, { operation: 'compliance.document-save', workspace: 'compliance' });
       await showAppAlert(
         error instanceof Error ? error.message : 'Unable to save the compliance document.',
         'Document save failed',
       );
+      return false;
     } finally {
       setComplianceSavingKey('');
     }
@@ -1198,6 +1410,42 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         ) : null}
       </div>
 
+      {canEdit ? (
+        <label
+          className={`compliance-upload-drop-zone${complianceDropActive ? ' is-drag-over' : ''}${complianceUploadBusy ? ' is-busy' : ''}`}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (!complianceUploadBusy) setComplianceDropActive(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            if (!complianceUploadBusy) setComplianceDropActive(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setComplianceDropActive(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setComplianceDropActive(false);
+            if (!complianceUploadBusy) void handleComplianceFiles(event.dataTransfer.files);
+          }}
+        >
+          <strong>{complianceUploadBusy ? 'Identifying document...' : 'Drop a compliance document here'}</strong>
+          <span>or choose a PDF or image · document type is identified before detailed extraction</span>
+          <input
+            type="file"
+            accept=".pdf,image/jpeg,image/png,image/webp"
+            disabled={complianceUploadBusy}
+            onChange={(event) => {
+              const files = Array.from(event.target.files || []);
+              event.target.value = '';
+              void handleComplianceFiles(files);
+            }}
+          />
+        </label>
+      ) : null}
+
       <div className="compliance-summary-tabs" aria-label="Subcontractor compliance summary">
         {[
           ['All subcontractors', stats.total, 'all'],
@@ -1299,6 +1547,8 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
               const latestRenewal = subcontractorRenewals[0] || null;
               const updatingRenewal = renewalSavingId === subcontractor.id;
               const sendingComplianceEmail = complianceEmailSendingId === subcontractor.id;
+              const savingSubcontractorEmail = complianceEmailSavingId === subcontractor.id;
+              const hasSubcontractorEmail = Boolean(String(subcontractor.email || '').trim());
               const latestCertificate = subcontractorCertificates[0] || null;
               const requirementsById = new Map(complianceStatus.requirements.map((requirement) => [requirement.id, requirement]));
               return (
@@ -1569,35 +1819,57 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
 
                   {canEdit ? (
                     <div className="certificate-roster-actions">
-                      {complianceStatus.id === 'needs-attention' ? (
+                      {!hasSubcontractorEmail ? (
+                        <div className="compliance-inline-email">
+                          <label>
+                            <span>Email address</span>
+                            <input
+                              type="email"
+                              value={complianceEmailDrafts[subcontractor.id] || ''}
+                              onChange={(event) => setComplianceEmailDrafts((current) => ({
+                                ...current,
+                                [subcontractor.id]: event.target.value,
+                              }))}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  void saveSubcontractorEmail(subcontractor);
+                                }
+                              }}
+                              placeholder="subcontractor@example.com"
+                              aria-label={`Email address for ${subcontractorLabel(subcontractor)}`}
+                              disabled={savingSubcontractorEmail}
+                            />
+                          </label>
+                          <button
+                            className={`button secondary${savingSubcontractorEmail ? ' is-loading' : ''}`}
+                            type="button"
+                            disabled={savingSubcontractorEmail || !String(complianceEmailDrafts[subcontractor.id] || '').trim()}
+                            onClick={() => void saveSubcontractorEmail(subcontractor)}
+                          >
+                            {savingSubcontractorEmail ? 'Saving...' : 'Save email'}
+                          </button>
+                        </div>
+                      ) : null}
+                      {complianceStatus.id === 'needs-attention' && hasSubcontractorEmail ? (
                         <button
                           className={`button secondary${sendingComplianceEmail ? ' is-loading' : ''}`}
                           type="button"
-                          disabled={sendingComplianceEmail || !String(subcontractor.email || '').trim()}
-                          title={String(subcontractor.email || '').trim() ? '' : 'Add a subcontractor email before sending a compliance request.'}
+                          disabled={sendingComplianceEmail}
                           aria-busy={sendingComplianceEmail}
                           onClick={() => void requestSubcontractorCompliance(subcontractor, complianceStatus)}
                         >
-                          {sendingComplianceEmail
-                            ? 'Sending...'
-                            : String(subcontractor.email || '').trim()
-                              ? 'Email compliance request'
-                              : 'Add email to request compliance'}
+                          {sendingComplianceEmail ? 'Sending...' : 'Email compliance request'}
                         </button>
                       ) : null}
-                      {certificateEligible(subcontractor) ? (
+                      {certificateEligible(subcontractor) && hasSubcontractorEmail ? (
                         <button
                           className="button secondary"
                           type="button"
-                          disabled={updatingRenewal || !String(subcontractor.email || '').trim()}
-                          title={String(subcontractor.email || '').trim() ? '' : 'Add a subcontractor email before requesting renewal.'}
+                          disabled={updatingRenewal}
                           onClick={() => void requestCertificateRenewal(subcontractor, latestCertificate)}
                         >
-                          {updatingRenewal
-                            ? 'Working...'
-                            : String(subcontractor.email || '').trim()
-                              ? 'Request renewal'
-                              : 'Add email to request renewal'}
+                          {updatingRenewal ? 'Working...' : 'Request renewal'}
                         </button>
                       ) : null}
                       {latestRenewal && RENEWAL_NEXT_STATUS[latestRenewal.status] ? (
@@ -1684,6 +1956,16 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
           onRemove={(item) => void removeBulkItem(item)}
           onClose={() => void closeBulkModal()}
           onSave={() => void handleBulkSave()}
+        />
+      ) : null}
+      {complianceUpload ? (
+        <ComplianceUploadRoutingModal
+          upload={complianceUpload}
+          subcontractors={subcontractors}
+          busy={complianceUploadBusy}
+          onChange={(key, value) => setComplianceUpload((current) => current ? { ...current, [key]: value, error: '' } : current)}
+          onClose={() => void closeComplianceUpload()}
+          onContinue={() => void continueComplianceUpload()}
         />
       ) : null}
     </section>

@@ -1951,6 +1951,48 @@ a {
   overflow-x: auto;
   border-bottom: 1px solid var(--divider);
 }
+.compliance-upload-drop-zone {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 16px 18px;
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: 8px;
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.compliance-upload-drop-zone:hover,
+.compliance-upload-drop-zone:focus-within,
+.compliance-upload-drop-zone.is-drag-over {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 1px var(--brand);
+}
+.compliance-upload-drop-zone.is-busy { cursor: wait; opacity: 0.72; }
+.compliance-upload-drop-zone span { color: var(--muted); font-size: 0.82rem; }
+.compliance-upload-drop-zone input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.compliance-upload-routing-modal { width: min(680px, calc(100vw - 32px)); }
+.compliance-upload-detection {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 4px 0 18px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+.compliance-upload-detection > div { display: grid; gap: 3px; padding: 11px 12px; }
+.compliance-upload-detection > div:nth-child(odd) { border-right: 1px solid var(--divider); }
+.compliance-upload-detection span { color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.compliance-upload-detection strong { overflow-wrap: anywhere; }
 .compliance-summary-tab {
   min-width: max-content;
   padding: 10px 14px 9px;
@@ -2307,6 +2349,33 @@ a {
   padding-top: 14px;
   border-top: 1px solid var(--divider);
 }
+.compliance-inline-email {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.compliance-inline-email label {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 5px;
+}
+.compliance-inline-email label > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.compliance-inline-email input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: var(--control-radius);
+  font: inherit;
+}
 .certificate-card-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2614,7 +2683,12 @@ a {
   .certificate-card-actions { justify-content: stretch; }
   .certificate-card-actions .button,
   .certificate-roster-actions .button { flex: 1 1 auto; }
+  .compliance-inline-email { align-items: stretch; flex-direction: column; }
+  .compliance-inline-email label { width: 100%; }
   .compliance-list-summary { padding: 14px 12px 14px 34px; }
+  .compliance-upload-detection { grid-template-columns: 1fr; }
+  .compliance-upload-detection > div:nth-child(odd) { border-right: 0; }
+  .compliance-upload-detection > div + div { border-top: 1px solid var(--divider); }
   .compliance-list-summary::before { left: 12px; }
   .compliance-list-detail { padding: 4px 12px 14px; }
   .compliance-document-row { grid-template-columns: 1fr; gap: 10px; }
