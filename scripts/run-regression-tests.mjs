@@ -79,7 +79,7 @@ import {
   listProjectPdfFiles,
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
-import { buildProjectPhotoGallery } from '../src/utils/projectPhotoGallery.js';
+import { buildProjectPhotoGallery, groupProjectPhotosBySource } from '../src/utils/projectPhotoGallery.js';
 import {
   attachRequestId,
   createRequestId,
@@ -961,6 +961,19 @@ const tests = [
         new Set(gallery.map((photo) => photo.gallerySourceType)),
         new Set(['project', 'files', 'selections', 'inspections', 'tasks', 'dailyLogs', 'changeOrders', 'rfis', 'submittals', 'commitments', 'warrantyItems', 'closeoutItems']),
       );
+      const groups = groupProjectPhotosBySource(gallery);
+      assert.equal(groups.length, 12);
+      assert.deepEqual(groups[0], {
+        key: 'project',
+        label: 'Project Photos',
+        photos: [{ ...gallery[0], gallerySourceItem: 'Project Photos' }],
+      });
+      assert.deepEqual(
+        groups.map((group) => group.label),
+        ['Project Photos', 'Files', 'Selections', 'Inspections', 'Tasks', 'Daily Logs', 'Change Orders', 'RFIs', 'Submittals', 'Commitments', 'Warranty', 'Closeout'],
+      );
+      assert.deepEqual(groups.find((group) => group.key === 'selections').photos.map((photo) => photo.gallerySourceItem), ['Tile', 'Tile']);
+      assert.deepEqual(groups.find((group) => group.key === 'commitments').photos.map((photo) => photo.gallerySourceItem), ['COM-1', 'COM-1 · Invoices']);
     },
   },
   {
@@ -2007,6 +2020,38 @@ const tests = [
       assert.match(platformSource, /import\('@capacitor\/filesystem'\)/);
       assert.doesNotMatch(fileSource, /@capacitor|window\.|document\./);
       migratedSources.forEach((source) => assert.match(source, /platformAdapter\.js/));
+    },
+  },
+  {
+    name: 'project files and photos expose routed drop zones and platform share actions',
+    async run() {
+      const [filesSource, photosSource, dialogsSource, downloadSource, platformSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPhotosManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/FormDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/downloadUi.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/platform/platformAdapter.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+
+      assert.match(filesSource, /Drop files here/);
+      assert.match(filesSource, /prepareWorkspaceUpload\(event\.dataTransfer\.files\)/);
+      assert.match(filesSource, /targetFolderId: ''/);
+      assert.match(filesSource, /<UploadFilesModal/);
+      assert.match(dialogsSource, /export function UploadFilesModal/);
+      assert.match(dialogsSource, /<option value="">Choose a folder<\/option>/);
+      assert.match(filesSource, /runAndroidFileAction\(file, 'share'\)/);
+      assert.match(photosSource, /Drop photos here/);
+      assert.match(photosSource, /handleUploadPhotos\(event\.dataTransfer\.files\)/);
+      assert.match(photosSource, /function sharePhoto\(photo\)/);
+      assert.match(photosSource, /action: 'share'/);
+      assert.match(downloadSource, /isNativeAndroidApp\(\) \? 'share' : 'download'/);
+      assert.match(platformSource, /new File\(\[blob\], name/);
+      assert.match(platformSource, /navigator\.share\(shareData\)/);
+      assert.match(styleSource, /\.project-upload-drop-zone/);
+      assert.match(styleSource, /\.project-upload-drop-zone\.is-drag-over/);
+      assert.match(styleSource, /\.photos-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/s);
+      assert.match(styleSource, /@media \(max-width: 480px\)[\s\S]*?\.photos-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
     },
   },
   {

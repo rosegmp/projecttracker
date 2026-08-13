@@ -7,7 +7,7 @@ import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
-import { buildProjectPhotoGallery, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
+import { buildProjectPhotoGallery, groupProjectPhotosBySource, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
 
 export default function ProjectPhotosManager({
   data,
@@ -24,6 +24,7 @@ export default function ProjectPhotosManager({
   const [previewUrls, setPreviewUrls] = useState({});
   const [workflowRecords, setWorkflowRecords] = useState([]);
   const [workflowPhotosLoading, setWorkflowPhotosLoading] = useState(false);
+  const [photoUploadDragActive, setPhotoUploadDragActive] = useState(false);
   const previewUrlsRef = useRef({});
   const dataRef = useRef(data);
   const uploadInputRef = useRef(null);
@@ -40,6 +41,7 @@ export default function ProjectPhotosManager({
     }),
     [data?.tasks, project, workflowRecords],
   );
+  const photoGroups = useMemo(() => groupProjectPhotosBySource(photos), [photos]);
   const mainPhotoId = String(project?.mainPhotoId || '');
 
   useEffect(() => {
@@ -219,6 +221,28 @@ export default function ProjectPhotosManager({
       if (uploadInputRef.current) uploadInputRef.current.value = '';
       endMutation(mutationKey);
     }
+  }
+
+  function isExternalFileDrag(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+  }
+
+  function handlePhotoUploadDragOver(event) {
+    if (!canAddPhotos || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setPhotoUploadDragActive(true);
+  }
+
+  function handlePhotoUploadDragLeave(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) setPhotoUploadDragActive(false);
+  }
+
+  function handlePhotoUploadDrop(event) {
+    if (!canAddPhotos || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setPhotoUploadDragActive(false);
+    void handleUploadPhotos(event.dataTransfer.files);
   }
 
   useEffect(() => {
@@ -405,6 +429,14 @@ export default function ProjectPhotosManager({
     void downloadFileWithUi(photo, { failureMessage: 'Failed to download photo.' });
   }
 
+  function sharePhoto(photo) {
+    void downloadFileWithUi(photo, {
+      action: 'share',
+      failureMessage: 'Failed to share photo.',
+      failureTitle: 'Share failed',
+    });
+  }
+
   function openPhoto(photo) {
     void (async () => {
       try {
@@ -447,6 +479,18 @@ export default function ProjectPhotosManager({
             multiple
             onChange={(event) => handleUploadPhotos(event.target.files)}
           />
+          <button
+            className={`project-upload-drop-zone project-photos-upload-drop-zone${photoUploadDragActive ? ' is-drag-over' : ''}`}
+            type="button"
+            onClick={triggerPhotoUpload}
+            onDragOver={handlePhotoUploadDragOver}
+            onDragLeave={handlePhotoUploadDragLeave}
+            onDrop={handlePhotoUploadDrop}
+            disabled={isMutating(['project', project.id, 'photos-upload'])}
+          >
+            <FluentIcon name="upload" />
+            <span><strong>Drop photos here</strong><small>or choose images</small></span>
+          </button>
           {nativeAndroid ? (
             <>
               <input
@@ -473,8 +517,15 @@ export default function ProjectPhotosManager({
       </div>
 
       {photos.length ? (
-        <div className="photos-grid">
-          {photos.map((photo) => {
+        <div className="photo-source-groups">
+          {photoGroups.map((group, groupIndex) => (
+            <section key={group.key} className="photo-source-group" aria-labelledby={`photo-source-heading-${groupIndex}`}>
+              <div className="photo-source-group-header">
+                <h3 id={`photo-source-heading-${groupIndex}`}>{group.label}</h3>
+                <span>{group.photos.length} photo{group.photos.length === 1 ? '' : 's'}</span>
+              </div>
+              <div className="photos-grid">
+          {group.photos.map((photo) => {
             const isProjectPhoto = photo.gallerySourceType === 'project';
             const isMainPhoto = isProjectPhoto && photo.id === mainPhotoId;
             return (
@@ -522,7 +573,7 @@ export default function ProjectPhotosManager({
                 ) : (
                   <strong>{getDisplayPhotoName(photo)}</strong>
                 )}
-                <small className="photo-source-label">{photo.gallerySource}</small>
+                {photo.gallerySourceItem !== group.label ? <small className="photo-source-caption">{photo.gallerySourceItem}</small> : null}
                 <small className="photo-meta">
                   {photo.size ? `${formatFileSize(photo.size)}` : ''}
                   {photo.uploadedAt ? ` • ${new Date(photo.uploadedAt).toLocaleDateString('en-US')}` : ''}
@@ -558,6 +609,15 @@ export default function ProjectPhotosManager({
                   <button
                     className="button secondary gantt-icon-button"
                     type="button"
+                    onClick={() => sharePhoto(photo)}
+                    title="Share photo"
+                    aria-label={`Share ${getDisplayPhotoName(photo)}`}
+                  >
+                    <FluentIcon name="share" />
+                  </button>
+                  <button
+                    className="button secondary gantt-icon-button"
+                    type="button"
                     onClick={() => triggerReplacePhoto(photo.id)}
                     disabled={isMutating(['photo', photo.id])}
                     title="Replace photo"
@@ -588,11 +648,19 @@ export default function ProjectPhotosManager({
                 </div> : !isProjectPhoto ? <div className="files-list-actions photo-actions">
                   <button className="button secondary gantt-icon-button" type="button" onClick={() => void openPhoto(photo)} title="Open photo" aria-label={`Open ${getDisplayPhotoName(photo)}`}><FluentIcon name="eye" /></button>
                   <button className="button secondary gantt-icon-button" type="button" onClick={() => downloadPhoto(photo)} title="Download photo" aria-label={`Download ${getDisplayPhotoName(photo)}`}><FluentIcon name="download" /></button>
-                </div> : null}
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => sharePhoto(photo)} title="Share photo" aria-label={`Share ${getDisplayPhotoName(photo)}`}><FluentIcon name="share" /></button>
+                </div> : <div className="files-list-actions photo-actions">
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => void openPhoto(photo)} title="Open photo" aria-label={`Open ${getDisplayPhotoName(photo)}`}><FluentIcon name="eye" /></button>
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => downloadPhoto(photo)} title="Download photo" aria-label={`Download ${getDisplayPhotoName(photo)}`}><FluentIcon name="download" /></button>
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => sharePhoto(photo)} title="Share photo" aria-label={`Share ${getDisplayPhotoName(photo)}`}><FluentIcon name="share" /></button>
+                </div>}
               </div>
             </article>
             );
           })}
+              </div>
+            </section>
+          ))}
         </div>
       ) : (
         <div className="empty-state compact">

@@ -12,6 +12,7 @@ import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 
 const MoveFileModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.MoveFileModal })));
 const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
+const UploadFilesModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.UploadFilesModal })));
 
 export default function ProjectFilesManager({
   data,
@@ -31,8 +32,11 @@ export default function ProjectFilesManager({
   const [folderNameDraft, setFolderNameDraft] = useState(null);
   const [dragItem, setDragItem] = useState(null);
   const [uploadTargetFolderId, setUploadTargetFolderId] = useState('');
+  const [workspaceUploadActive, setWorkspaceUploadActive] = useState(false);
+  const [workspaceUploadDraft, setWorkspaceUploadDraft] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState({});
   const fileInputRefs = useRef({});
+  const workspaceUploadInputRef = useRef(null);
   const fileRowRefs = useRef({});
   const dataRef = useRef(data);
   const [highlightedFileId, setHighlightedFileId] = useState('');
@@ -374,6 +378,45 @@ export default function ProjectFilesManager({
     fileInputRefs.current[folderId]?.click();
   }
 
+  function closeWorkspaceUpload() {
+    setWorkspaceUploadDraft(null);
+    if (workspaceUploadInputRef.current) workspaceUploadInputRef.current.value = '';
+  }
+
+  function prepareWorkspaceUpload(fileList) {
+    if (readOnly) return;
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (!folders.length) {
+      void showAppAlert('Add a project folder before uploading files.', 'Folder required');
+      if (workspaceUploadInputRef.current) workspaceUploadInputRef.current.value = '';
+      return;
+    }
+    setWorkspaceUploadDraft({
+      files,
+      targetFolderId: '',
+      folders: folders.map((folder) => ({ id: folder.id, name: folder.name })),
+    });
+  }
+
+  function handleWorkspaceUploadDragOver(event) {
+    if (readOnly || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setWorkspaceUploadActive(true);
+  }
+
+  function handleWorkspaceUploadDragLeave(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) setWorkspaceUploadActive(false);
+  }
+
+  function handleWorkspaceUploadDrop(event) {
+    if (readOnly || !isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setWorkspaceUploadActive(false);
+    prepareWorkspaceUpload(event.dataTransfer.files);
+  }
+
   async function createProjectFileRecord(folderId, file) {
     if (!project?.id) throw new Error('Project not found.');
     if (!isSupabaseStorageConfigured()) {
@@ -396,7 +439,7 @@ export default function ProjectFilesManager({
 
   async function handleFolderUpload(folderId, fileList) {
     const files = Array.from(fileList || []);
-    if (!files.length || !project?.id) return;
+    if (!files.length || !project?.id) return false;
 
     const mutationKey = ['folder', folderId, 'upload'];
     beginMutation(mutationKey);
@@ -404,8 +447,9 @@ export default function ProjectFilesManager({
       const uploadResults = await Promise.all(files.map((file) => createProjectFileRecord(folderId, file)));
       const uploads = uploadResults.map((result) => result.fileRecord);
       setStorageNotice('');
-      const currentProject = data.projects.find((item) => item.id === project.id);
-      if (!currentProject) return;
+      const currentState = dataRef.current;
+      const currentProject = currentState.projects.find((item) => item.id === project.id);
+      if (!currentProject) return false;
       const nextProject = {
         ...currentProject,
         files: {
@@ -419,15 +463,24 @@ export default function ProjectFilesManager({
           ),
         },
       };
-      const nextState = await updateProject(data, project.id, nextProject);
+      const nextState = await updateProject(currentState, project.id, nextProject);
+      dataRef.current = nextState;
       onStateChange(nextState);
+      return true;
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to upload file.', 'Upload failed');
+      return false;
     } finally {
       const input = fileInputRefs.current[folderId];
       if (input) input.value = '';
       endMutation(mutationKey);
     }
+  }
+
+  async function saveWorkspaceUpload() {
+    if (!workspaceUploadDraft?.targetFolderId) return;
+    const uploaded = await handleFolderUpload(workspaceUploadDraft.targetFolderId, workspaceUploadDraft.files);
+    if (uploaded) closeWorkspaceUpload();
   }
 
   function downloadProjectFile(file) {
@@ -779,11 +832,10 @@ export default function ProjectFilesManager({
     );
   }
 
-  function renderAndroidFileActions(file) {
-    if (!nativeAndroid) return null;
+  function renderFileAccessActions(file) {
     return (
       <div className="files-list-actions android-file-access-actions">
-        <button
+        {nativeAndroid ? <button
           className="button secondary gantt-icon-button"
           type="button"
           onClick={() => runAndroidFileAction(file, 'open')}
@@ -791,7 +843,7 @@ export default function ProjectFilesManager({
           aria-label={`Open ${getDisplayFileName(file)}`}
         >
           <FluentIcon name="eye" />
-        </button>
+        </button> : null}
         <button
           className="button secondary gantt-icon-button"
           type="button"
@@ -843,6 +895,28 @@ export default function ProjectFilesManager({
             </button>
           ) : null}
         </div>
+        {!readOnly ? (
+          <>
+            <input
+              ref={workspaceUploadInputRef}
+              className="visually-hidden"
+              type="file"
+              multiple
+              onChange={(event) => prepareWorkspaceUpload(event.target.files)}
+            />
+            <button
+              className={`project-upload-drop-zone project-files-upload-drop-zone${workspaceUploadActive ? ' is-drag-over' : ''}`}
+              type="button"
+              onClick={() => workspaceUploadInputRef.current?.click()}
+              onDragOver={handleWorkspaceUploadDragOver}
+              onDragLeave={handleWorkspaceUploadDragLeave}
+              onDrop={handleWorkspaceUploadDrop}
+            >
+              <FluentIcon name="upload" />
+              <span><strong>Drop files here</strong><small>or choose files, then select a folder</small></span>
+            </button>
+          </>
+        ) : null}
         <button className={`button primary${isMutating(['folder', 'create']) ? ' is-loading' : ''}`} type="button" onClick={openCreateFolderModal} disabled={isMutating(['folder', 'create']) || readOnly} aria-busy={isMutating(['folder', 'create'])}>
           {isMutating(['folder', 'create']) ? 'Adding...' : 'Add folder'}
         </button>
@@ -918,13 +992,11 @@ export default function ProjectFilesManager({
                               {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
                             </small>
                           </div>
-                          {nativeAndroid || !readOnly ? (
-                            <div className="files-card-trailing">
-                              {renderAndroidFileActions(file)}
+                          <div className="files-card-trailing">
+                              {renderFileAccessActions(file)}
                               {readOnly ? null : renderFileActions(file, folder.id, false)}
                               {readOnly ? null : renderFileDragHandle(file, folder.id)}
-                            </div>
-                          ) : null}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1020,12 +1092,10 @@ export default function ProjectFilesManager({
                           {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
                         </small>
                       </div>
-                      {nativeAndroid || !readOnly ? (
-                        <div className="files-card-trailing">
-                          {renderAndroidFileActions(file)}
+                      <div className="files-card-trailing">
+                          {renderFileAccessActions(file)}
                           {readOnly ? null : renderFileActions(file, folder.id)}
-                        </div>
-                      ) : null}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1053,6 +1123,15 @@ export default function ProjectFilesManager({
           onChange={updateMoveFileDraft}
           onClose={() => setMoveFileDraft(null)}
           onSave={saveMoveFile}
+        />
+      ) : null}
+      {!readOnly && workspaceUploadDraft ? (
+        <UploadFilesModal
+          draft={workspaceUploadDraft}
+          saving={isMutating(['folder', workspaceUploadDraft.targetFolderId, 'upload'])}
+          onChange={(targetFolderId) => setWorkspaceUploadDraft((current) => (current ? { ...current, targetFolderId } : current))}
+          onClose={closeWorkspaceUpload}
+          onSave={saveWorkspaceUpload}
         />
       ) : null}
       {!readOnly && fileNameDraft ? (

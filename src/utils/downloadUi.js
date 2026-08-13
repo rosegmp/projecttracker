@@ -8,10 +8,10 @@ export async function downloadFileWithUi(file, options = {}) {
   const fileName = String(
     options.fileName || file.originalName || file.name || 'download',
   ).trim() || 'download';
-  let androidAction = options.action || 'share';
+  let selectedAction = options.action || (isNativeAndroidApp() ? 'share' : 'download');
 
   if (isNativeAndroidApp() && !options.action) {
-    androidAction = await showAppChoice(`Choose what to do with "${fileName}".`, {
+    selectedAction = await showAppChoice(`Choose what to do with "${fileName}".`, {
       title: 'Download file',
       options: [
         { value: 'open', label: 'Open file', tone: 'primary' },
@@ -19,7 +19,7 @@ export async function downloadFileWithUi(file, options = {}) {
         { value: 'share', label: 'Share' },
       ],
     });
-    if (!androidAction) return null;
+    if (!selectedAction) return null;
   }
 
   const progress = beginDownloadProgress(`Downloading ${fileName}`);
@@ -38,7 +38,7 @@ export async function downloadFileWithUi(file, options = {}) {
       return null;
     }
 
-    const result = await deliverBlob(blob, fileName, { action: androidAction });
+    const result = await deliverBlob(blob, fileName, { action: selectedAction });
     progress.complete(
       result?.action === 'opened'
         ? 'Opened file'

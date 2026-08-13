@@ -1161,6 +1161,10 @@ test('administrator creates a subcontractor insurance certificate without projec
 
   await page.goto('/?tab=certificates');
   const complianceDropZone = page.getByText('Drop a compliance document here').locator('..');
+  await expect(complianceDropZone).toBeVisible();
+  const actionRowTops = await page.locator('.certificates-page-actions > *').evaluateAll((items) =>
+    items.map((item) => Math.round(item.getBoundingClientRect().top)));
+  expect(new Set(actionRowTops).size).toBe(1);
   const complianceDropData = await page.evaluateHandle(() => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(
@@ -1185,7 +1189,19 @@ test('administrator creates a subcontractor insurance certificate without projec
 
   const activityFilter = page.getByLabel('Active / inactive');
   await expect(activityFilter).toHaveValue('active');
+  const toolbarControlTops = await page.locator('.certificate-toolbar > label').evaluateAll((controls) =>
+    controls.map((control) => Math.round(control.getBoundingClientRect().top)));
+  expect(new Set(toolbarControlTops).size).toBe(1);
+  await expect(page.locator('.compliance-list-header')).toHaveCSS('position', 'sticky');
+  const stickyHeaderOffset = await page.locator('.compliance-list').evaluate((list) => {
+    list.scrollTop = 240;
+    const header = list.querySelector('.compliance-list-header');
+    return Math.round(header.getBoundingClientRect().top - list.getBoundingClientRect().top);
+  });
+  expect(stickyHeaderOffset).toBeLessThanOrEqual(2);
   await expect(page.getByRole('button', { name: 'All subcontractors 2' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Liability compliant 0' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Liability non-compliant 2' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Bright Electric LLC' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'No Certificate Roofing' })).toBeVisible();
 
@@ -1261,6 +1277,8 @@ test('administrator creates a subcontractor insurance certificate without projec
   await dialog.getByRole('button', { name: 'Save certificate' }).click();
 
   await expect(page.getByRole('heading', { name: 'Bright Electric LLC' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Liability compliant 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Liability non-compliant 0' })).toBeVisible();
   await expect(page.getByText('Test Mutual')).toBeVisible();
   await expect(page.getByText('GL-TEST-100')).toBeVisible();
   await expect(page.getByRole('table', { name: 'Insurance coverage details' })).toHaveCount(0);
@@ -1312,6 +1330,16 @@ test('administrator creates a subcontractor insurance certificate without projec
   expect(complianceEmailPayload).toMatchObject({
     kind: 'subcontractor-compliance-requested',
     entityId: subcontractorId,
+  });
+  await expect(brightElectricCard.getByLabel('Agreement: Requested · Missing')).toBeVisible();
+  await expect(brightElectricCard.getByLabel('Form W-9: Requested · Missing')).toBeVisible();
+  await expect(brightElectricCard.locator('.compliance-list-summary > .certificate-status-badge')).not.toContainText('Requested');
+  expect(subcontractorOperations.at(-1)).toMatchObject({
+    table: 'subs',
+    id: subcontractorId,
+    data: {
+      complianceRequestedRequirements: ['subcontractor_agreement', 'w9'],
+    },
   });
 
   const agreementCard = brightElectricCard.locator('.compliance-document-row').filter({ hasText: 'Subcontractor agreement' });
@@ -1372,6 +1400,7 @@ test('administrator creates a subcontractor insurance certificate without projec
   await expect(page.getByRole('dialog', { name: 'Renewal requested' })).toBeVisible();
   await page.getByRole('dialog', { name: 'Renewal requested' }).getByRole('button', { name: 'OK' }).click();
   const renewalSummary = brightElectricCard.locator('.certificate-renewal-summary');
+  await expect(brightElectricCard.getByLabel(/General Liability: Requested/)).toBeVisible();
   await expect(renewalSummary.locator('strong').filter({ hasText: /^Requested$/ })).toBeVisible();
   await expect(renewalSummary.locator('strong').filter({ hasText: /^Sent$/ })).toBeVisible();
   expect(renewalEmailPayload).toEqual({
@@ -1380,6 +1409,7 @@ test('administrator creates a subcontractor insurance certificate without projec
     entityId: renewalRows[0].id,
   });
   await brightElectricCard.getByRole('button', { name: 'Mark Received' }).click();
+  await expect(brightElectricCard.getByLabel(/General Liability: Requested/)).toHaveCount(0);
   await expect(renewalSummary.locator('strong').filter({ hasText: /^Received$/ })).toBeVisible();
   await brightElectricCard.getByRole('button', { name: 'Mark Under review' }).click();
   await expect(renewalSummary.locator('strong').filter({ hasText: /^Under review$/ })).toBeVisible();

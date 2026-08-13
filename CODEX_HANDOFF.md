@@ -1,6 +1,23 @@
 # Project Tracker handoff
 
-Updated: 2026-08-12
+Updated: 2026-08-13
+
+## In progress: Files and Photos uploads and sharing
+
+- The Files workspace now has a visible desktop drag-and-drop/file-picker target in its toolbar. Files selected through this workspace-level target are held locally until an editor chooses one of the project's existing folders in a required review dialog; Upload remains disabled with no folder selected. Existing direct-to-folder pickers and folder-card drop targets remain intact.
+- Every project file now has a desktop Share action, including read-only file views. Android retains its existing Open and native Share actions. Desktop Share downloads the authorized Blob through the established storage path and invokes the browser/operating-system file share sheet; ordinary desktop Download remains a download.
+- The Photos workspace now has a visible drag-and-drop/file-picker target that accepts multiple images through the established project/customer photo mutation path. Every project and workflow photo exposes Share on desktop and Android, including read-only project photos; Android uses the Capacitor share sheet and desktop uses the browser file-share API.
+- Photos are grouped by their originating project tab instead of appearing in one undifferentiated grid or one group per record. Group headings use **Project Photos**, **Files**, **Selections**, **Inspections**, **Tasks**, Daily Logs, and the other workflow tabs, with a tab-scoped photo count. Each card from a record-based source carries the specific source-item caption—such as **Plans**, **Stone**, or **Discuss foyer niche**—while Project Photos avoids a redundant caption. All existing photo actions remain unchanged.
+- Desktop photo source groups use four fixed equal columns, so a group containing one photo never stretches that card beyond the width it would have in a four-photo row. Responsive layouts step down to two columns at tablet/phone width and one below 480 px.
+- Focused verification passes 165 regression tests, the 702-module production Vite build, and `git diff --check`. Signed-in local rendered QA confirmed the Files drop target, a required folder chooser populated from the live project, 16 visible desktop file Share actions, the Photos drop target, 11 visible photo Share actions, and tab-level source grouping with no console errors. On the live 105 Destiny Way desktop gallery, one **Selections** group contains the **Stone**, **Interior Doors**, and **Moldings** captions; one **Inspections** group contains **Sheathing** and **Rough**; and one **Tasks** group contains the task captions. Every card measured the same 233 px width inside a 985 px gallery. The QA chooser used a temporary nonsensitive text fixture, canceled before upload, and changed no project data. No migration, Edge Function, remote mutation, deployment, commit, push, Capacitor sync, or APK build was performed.
+
+## In progress: Compliance per-requirement requested status
+
+- Requested state is shown with a compact mail icon in the affected General Liability, Agreement, and Form W-9 columns instead of altering the overall status badge. A successfully delivered compliance request records its requested missing requirements on the subcontractor People record through the existing versioned mutation path; test-mode delivery does not mark the subcontractor as requested. Satisfied requirements suppress their prior request marker. A successfully delivered certificate renewal marks General Liability while it remains Requested and removes the icon at Received or later.
+- At desktop widths, Active/Inactive, Status, Subcontractor, and Search subcontractors share one filter row. The Compliance register now owns its vertical scrolling region so its sticky column-name header stays fixed inside the list; below 900 px, the column header remains hidden and normal page scrolling is restored.
+- The compact drag-and-drop/file-picker target now shares the desktop action row with Refresh, Bulk upload & extract, and Add certificate, growing into the remaining width instead of consuming a separate row. It becomes a full-width row beneath the buttons below 900 px.
+- The top summary now includes filter-scoped **Liability compliant** and **Liability non-compliant** counts. These are driven only by the current General Liability requirement, exclude inactive subcontractors from both liability totals, and act as roster filters from both the summary tabs and Status dropdown.
+- Focused browser coverage asserts the one-row toolbar, real in-list sticky scrolling, per-column compliance-request icons, the General Liability renewal icon, and request-marker removal after requirements are satisfied or a renewal advances to Received. No schema, migration, Edge Function, or notification-content change is required.
 
 ## Completed release: Compliance drag-and-drop document routing
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { renderModalPortal, showAppAlert, showAppConfirm } from './AppDialogs.jsx';
+import FluentIcon from './FluentIcon.jsx';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { formatFileSize } from '../utils/fileUi.js';
 import { findClosestSubcontractor } from '../utils/certificateMatching.js';
@@ -1125,13 +1126,29 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     try {
       const result = await sendSubcontractorComplianceRequest(subcontractor.id);
       if (result.emailStatus === 'sent') {
+        let requestMarkerSaveError = false;
+        if (!result.testMode) {
+          try {
+            const nextState = await updatePerson(data, 'sub', subcontractor.id, {
+              complianceRequestedRequirements: complianceStatus.missing.map((requirement) => requirement.id),
+              complianceRequestedAt: new Date().toISOString(),
+            });
+            onStateChange(nextState);
+          } catch (markerError) {
+            requestMarkerSaveError = true;
+            reportError(markerError, { operation: 'compliance.request-marker-save', workspace: 'compliance' });
+          }
+        }
         const attachmentSummary = result.attachmentNames?.length
           ? ` Attachments: ${result.attachmentNames.join(', ')}.`
+          : '';
+        const markerSummary = requestMarkerSaveError
+          ? ' The email was sent, but the Requested icons could not be saved; refresh and review before sending again.'
           : '';
         await showAppAlert(
           result.testMode
             ? `Test compliance email sent to ${activeUser?.email}. Intended subcontractor: ${email}.${attachmentSummary}`
-            : `Compliance request sent to ${email}.${attachmentSummary}`,
+            : `Compliance request sent to ${email}.${attachmentSummary}${markerSummary}`,
           result.testMode ? 'Test email sent' : 'Compliance request sent',
         );
       } else {
@@ -1331,7 +1348,10 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     return subcontractorRoster.filter(({ subcontractor, certificates: subcontractorCertificates, complianceStatus, insuranceStatus }) => {
       if (activityFilter === 'active' && subcontractor.inactive === true) return false;
       if (activityFilter === 'inactive' && subcontractor.inactive !== true) return false;
-      if (['compliant', 'needs-attention'].includes(statusFilter)) {
+      if (['liability-compliant', 'liability-non-compliant'].includes(statusFilter)) {
+        const generalLiability = complianceStatus.requirements.find((requirement) => requirement.id === 'general_liability');
+        if (!generalLiability || generalLiability.satisfied !== (statusFilter === 'liability-compliant')) return false;
+      } else if (['compliant', 'needs-attention'].includes(statusFilter)) {
         if (complianceStatus.id !== statusFilter) return false;
       } else if (!certificateMatchesStatusFilter(insuranceStatus.id, statusFilter)) return false;
       if (subcontractorFilter !== 'all' && subcontractor.id !== subcontractorFilter) return false;
@@ -1368,11 +1388,18 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       inactive: 0,
       compliant: 0,
       'needs-attention': 0,
+      'liability-compliant': 0,
+      'liability-non-compliant': 0,
     };
     activityRoster.forEach(({ insuranceStatus, complianceStatus }) => {
       result[insuranceStatus.id] = (result[insuranceStatus.id] || 0) + 1;
       if (complianceStatus.id !== insuranceStatus.id) {
         result[complianceStatus.id] = (result[complianceStatus.id] || 0) + 1;
+      }
+      const generalLiability = complianceStatus.requirements.find((requirement) => requirement.id === 'general_liability');
+      if (generalLiability) {
+        const key = generalLiability.satisfied ? 'liability-compliant' : 'liability-non-compliant';
+        result[key] += 1;
       }
     });
     return result;
@@ -1406,51 +1433,50 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
             <button className="button primary" type="button" onClick={() => startCreate()} disabled={!eligibleSubcontractors.length}>
               Add certificate
             </button>
+            <label
+              className={`compliance-upload-drop-zone${complianceDropActive ? ' is-drag-over' : ''}${complianceUploadBusy ? ' is-busy' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (!complianceUploadBusy) setComplianceDropActive(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                if (!complianceUploadBusy) setComplianceDropActive(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setComplianceDropActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setComplianceDropActive(false);
+                if (!complianceUploadBusy) void handleComplianceFiles(event.dataTransfer.files);
+              }}
+            >
+              <strong>{complianceUploadBusy ? 'Identifying document...' : 'Drop a compliance document here'}</strong>
+              <span>or choose a PDF or image · type is identified first</span>
+              <input
+                type="file"
+                accept=".pdf,image/jpeg,image/png,image/webp"
+                disabled={complianceUploadBusy}
+                onChange={(event) => {
+                  const files = Array.from(event.target.files || []);
+                  event.target.value = '';
+                  void handleComplianceFiles(files);
+                }}
+              />
+            </label>
           </>
         ) : null}
       </div>
-
-      {canEdit ? (
-        <label
-          className={`compliance-upload-drop-zone${complianceDropActive ? ' is-drag-over' : ''}${complianceUploadBusy ? ' is-busy' : ''}`}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            if (!complianceUploadBusy) setComplianceDropActive(true);
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'copy';
-            if (!complianceUploadBusy) setComplianceDropActive(true);
-          }}
-          onDragLeave={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setComplianceDropActive(false);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            setComplianceDropActive(false);
-            if (!complianceUploadBusy) void handleComplianceFiles(event.dataTransfer.files);
-          }}
-        >
-          <strong>{complianceUploadBusy ? 'Identifying document...' : 'Drop a compliance document here'}</strong>
-          <span>or choose a PDF or image · document type is identified before detailed extraction</span>
-          <input
-            type="file"
-            accept=".pdf,image/jpeg,image/png,image/webp"
-            disabled={complianceUploadBusy}
-            onChange={(event) => {
-              const files = Array.from(event.target.files || []);
-              event.target.value = '';
-              void handleComplianceFiles(files);
-            }}
-          />
-        </label>
-      ) : null}
 
       <div className="compliance-summary-tabs" aria-label="Subcontractor compliance summary">
         {[
           ['All subcontractors', stats.total, 'all'],
           ['Compliant', stats.compliant, 'compliant'],
           ['Needs attention', stats['needs-attention'], 'needs-attention'],
+          ['Liability compliant', stats['liability-compliant'], 'liability-compliant'],
+          ['Liability non-compliant', stats['liability-non-compliant'], 'liability-non-compliant'],
           ['Expired / expiring', stats.expired + stats.expiring, 'expired-expiring'],
         ].map(([label, count, id]) => (
           <button
@@ -1493,6 +1519,8 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                 <option value="all">All statuses</option>
                 <option value="compliant">Compliant</option>
                 <option value="needs-attention">Needs attention</option>
+                <option value="liability-compliant">Liability compliant</option>
+                <option value="liability-non-compliant">Liability non-compliant</option>
                 <option value="expired-expiring">Expired / expiring</option>
                 <option value="active">Active</option>
                 <option value="expiring">Expiring soon</option>
@@ -1545,6 +1573,13 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
               const updatingSubcontractor = subcontractorSavingId === subcontractor.id;
               const subcontractorRenewals = renewalRequestsBySubcontractor.get(subcontractor.id) || [];
               const latestRenewal = subcontractorRenewals[0] || null;
+              const renewalRequested = latestRenewal?.status === 'requested'
+                && latestRenewal?.deliveryStatus === 'sent';
+              const complianceRequestedRequirements = new Set(
+                Array.isArray(subcontractor.complianceRequestedRequirements)
+                  ? subcontractor.complianceRequestedRequirements
+                  : [],
+              );
               const updatingRenewal = renewalSavingId === subcontractor.id;
               const sendingComplianceEmail = complianceEmailSendingId === subcontractor.id;
               const savingSubcontractorEmail = complianceEmailSavingId === subcontractor.id;
@@ -1583,15 +1618,20 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                       ['w9', 'Form W-9'],
                     ].map(([requirementId, requirementLabel]) => {
                       const requirement = requirementsById.get(requirementId);
+                      const requested = requirementId === 'general_liability'
+                        ? renewalRequested || (!requirement?.satisfied && complianceRequestedRequirements.has(requirementId))
+                        : !requirement?.satisfied && complianceRequestedRequirements.has(requirementId);
                       return (
                         <span
-                          className={`compliance-list-status${requirement?.optional ? ' optional' : requirement?.satisfied ? ' satisfied' : ' missing'}`}
+                          className={`compliance-list-status${requested ? ' requested' : requirement?.optional ? ' optional' : requirement?.satisfied ? ' satisfied' : ' missing'}`}
                           role="cell"
                           data-label={requirementLabel}
-                          aria-label={`${requirementLabel}: ${complianceStatus.id === 'inactive' ? 'Inactive' : requirement?.optional ? `${requirement.detail} (optional)` : requirement?.detail || 'Missing'}`}
+                          aria-label={`${requirementLabel}: ${complianceStatus.id === 'inactive' ? 'Inactive' : requested ? `Requested · ${requirement?.detail || 'Missing'}` : requirement?.optional ? `${requirement.detail} (optional)` : requirement?.detail || 'Missing'}`}
                           key={requirementId}
                         >
-                          <span aria-hidden="true">{complianceStatus.id === 'inactive' || requirement?.optional ? '—' : requirement?.satisfied ? '✓' : '!'}</span>
+                          <span aria-hidden="true" title={requested ? 'Requested' : undefined}>
+                            {requested ? <FluentIcon name="mail" size={13} /> : complianceStatus.id === 'inactive' || requirement?.optional ? '—' : requirement?.satisfied ? '✓' : '!'}
+                          </span>
                           <small>{complianceStatus.id === 'inactive' ? 'Inactive' : requirement?.optional ? `${requirement.detail} · Optional` : requirement?.detail || 'Missing'}</small>
                         </span>
                       );
