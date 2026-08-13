@@ -10,6 +10,15 @@ const WORKFLOW_LABELS = {
   closeoutItems: 'Closeout',
 };
 
+const PHOTO_SOURCE_TAB_LABELS = {
+  project: 'Project Photos',
+  files: 'Files',
+  selections: 'Selections',
+  inspections: 'Inspections',
+  tasks: 'Tasks',
+  ...WORKFLOW_LABELS,
+};
+
 function appendImage(target, file, sourceType, sourceLabel, ownerId = '') {
   if (!isImageFile(file)) return;
   const galleryKey = [sourceType, ownerId, file.id || file.storagePath || file.name].filter(Boolean).join(':');
@@ -65,6 +74,26 @@ export function buildProjectPhotoGallery({ project, tasks = [], workflowRecords 
   });
 
   return gallery;
+}
+
+export function groupProjectPhotosBySource(photos = []) {
+  const groups = [];
+  const groupsByKey = new Map();
+  (photos || []).forEach((photo) => {
+    const key = String(photo?.gallerySourceType || 'other');
+    const label = PHOTO_SOURCE_TAB_LABELS[key] || 'Other Photos';
+    const fullSource = String(photo?.gallerySource || label).trim() || label;
+    const sourcePrefix = `${label} · `;
+    const sourceItem = fullSource.startsWith(sourcePrefix) ? fullSource.slice(sourcePrefix.length) : fullSource;
+    let group = groupsByKey.get(key);
+    if (!group) {
+      group = { key, label, photos: [] };
+      groupsByKey.set(key, group);
+      groups.push(group);
+    }
+    group.photos.push({ ...photo, gallerySourceItem: sourceItem });
+  });
+  return groups;
 }
 
 export const PROJECT_PHOTO_WORKFLOW_TYPES = [

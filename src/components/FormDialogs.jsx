@@ -114,6 +114,49 @@ export function MoveFileModal({ draft, saving, onChange, onClose, onSave }) {
   );
 }
 
+export function UploadFilesModal({ draft, saving, onChange, onClose, onSave }) {
+  if (!draft) return null;
+  const fileCount = draft.files?.length || 0;
+  return renderModalPortal(
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card move-file-modal-card" role="dialog" aria-modal="true" aria-labelledby="upload-files-dialog-title" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Upload files</p>
+            <h2 id="upload-files-dialog-title">Choose a folder</h2>
+            <p className="panel-copy">
+              Select where to upload {fileCount === 1 ? <strong>{draft.files[0].name}</strong> : `${fileCount} files`}.
+            </p>
+          </div>
+        </div>
+
+        <div className="project-form-grid">
+          <label className="full">
+            <span>Project folder</span>
+            <select autoFocus value={draft.targetFolderId} onChange={(event) => onChange(event.target.value)} disabled={saving}>
+              <option value="">Choose a folder</option>
+              {draft.folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving || !draft.targetFolderId} aria-busy={saving}>
+            {saving ? 'Uploading...' : `Upload ${fileCount === 1 ? 'file' : `${fileCount} files`}`}
+          </button>
+        </div>
+      </div>
+    </div>,
+  );
+}
+
 export function TextEntryModal({ draft, saving, onChange, onClose, onSave }) {
   if (!draft) return null;
   return renderModalPortal(

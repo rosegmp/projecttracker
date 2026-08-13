@@ -3488,6 +3488,11 @@ function normalizeTags(tags) {
 
 function buildPerson(type, payload) {
   const companyType = type === 'sub' ? normalizeCompanyType(payload.companyType) : '';
+  const complianceRequestedRequirements = type === 'sub' && Array.isArray(payload.complianceRequestedRequirements)
+    ? [...new Set(payload.complianceRequestedRequirements
+      .map((requirement) => String(requirement || '').trim())
+      .filter((requirement) => ['general_liability', 'subcontractor_agreement', 'w9'].includes(requirement)))]
+    : [];
   return normalizePerson(type, {
     id: `${type === 'sub' ? 'sub' : normalizePeopleType(type)}${Date.now()}`,
     first: payload.first?.trim() || '',
@@ -3506,6 +3511,10 @@ function buildPerson(type, payload) {
       ? {
         is1099Exempt: companyType ? !is1099ReportingCompanyType(companyType) : payload.is1099Exempt === true,
         inactive: payload.inactive === true,
+        complianceRequestedRequirements,
+        complianceRequestedAt: complianceRequestedRequirements.length
+          ? String(payload.complianceRequestedAt || '').trim()
+          : '',
       }
       : {}),
   });

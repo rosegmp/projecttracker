@@ -152,6 +152,21 @@ export async function deliverBlob(blob, fileName = 'download', options = {}) {
     }
   }
 
+  if (options.action === 'share') {
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function' || typeof File === 'undefined') {
+      throw new Error('File sharing is not available in this browser.');
+    }
+    const shareData = {
+      title: name,
+      files: [new File([blob], name, { type: blob.type || 'application/octet-stream' })],
+    };
+    if (typeof navigator.canShare === 'function' && !navigator.canShare(shareData)) {
+      throw new Error('This browser cannot share this file type.');
+    }
+    await navigator.share(shareData);
+    return { action: 'shared' };
+  }
+
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = objectUrl;
