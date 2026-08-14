@@ -32,6 +32,7 @@ import {
   DEFAULT_RUNTIME_STATUS,
   maintenanceDisplayMessage,
 } from './services/runtimeStatus.js';
+import * as trackerDataModule from './services/trackerData.js';
 
 function applyQueuedFieldOperations(state, operations) {
   return applyQueuedTaskOperations(applyQueuedInspectionOperations(state, operations), operations);
@@ -61,11 +62,10 @@ import {
 } from './platform/platformAdapter.js';
 
 const USER_ROLE_OPTIONS = ['Admin', 'Edit', 'Customer', 'Subcontractor', 'View Only'];
-let trackerDataModulePromise = null;
+const trackerDataModulePromise = Promise.resolve(trackerDataModule);
 let androidNotificationsModulePromise = null;
 
 function loadTrackerDataModule() {
-  if (!trackerDataModulePromise) trackerDataModulePromise = import('./services/trackerData.js');
   return trackerDataModulePromise;
 }
 
@@ -1125,7 +1125,7 @@ export default function App() {
     setWorkflowSearchData({ scopeKey: workflowSearchScopeKey, status: enabledTypes.length && projectIds.length ? 'loading' : 'ready', records: EMPTY_WORKFLOW_SEARCH_RECORDS });
     if (!enabledTypes.length || !projectIds.length) return () => { cancelled = true; };
 
-    void import('./services/constructionWorkflows.js')
+    void import('./services/workflowSearch.js')
       .then(async ({ loadWorkflowSearchItemsForProjects }) => {
         const results = await Promise.allSettled(enabledTypes.map((type) => loadWorkflowSearchItemsForProjects(type, projectIds)));
         if (cancelled) return;
@@ -1525,10 +1525,10 @@ export default function App() {
   }
 
   async function handleSignOut() {
-    const { signOutAuthSession } = await loadTrackerDataModule();
-    await signOutAuthSession();
     refreshRequestIdRef.current += 1;
     initialWorkspaceLoadedRef.current = false;
+    const { signOutAuthSession } = await loadTrackerDataModule();
+    await signOutAuthSession();
     setAuthSession(null);
     setRecoveryMode(false);
     setRecoveryMessage(null);

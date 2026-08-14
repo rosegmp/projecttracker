@@ -9,6 +9,7 @@ import {
 } from '@fluentui/react-icons';
 import { isOverdue } from '../utils/schedule.js';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
+import TaskLocationField from './TaskLocationField.jsx';
 
 function Icon({ component: Component }) {
   return (
@@ -46,6 +47,7 @@ function formatDateTime(iso) {
 export default function TaskRow({
   projectName,
   projectOptions,
+  locationOptions = [],
   task,
   selectionLink,
   highlighted = false,
@@ -56,6 +58,9 @@ export default function TaskRow({
   editDraft,
   editPendingFiles,
   assigneeOptions,
+  complianceWarnings,
+  onAddPerson,
+  onAddLocation,
   onEditStart,
   onEditCancel,
   onEditDraftChange,
@@ -103,6 +108,14 @@ export default function TaskRow({
               <option key={project.id} value={project.id}>{project.name}</option>
             ))}
           </select>
+          <TaskLocationField
+            projectId={editDraft.projectId}
+            locations={locationOptions}
+            value={editDraft.location || ''}
+            onChange={(value) => onEditDraftChange('location', value)}
+            onAddLocation={onAddLocation}
+            disabled={saving}
+          />
           <input
             className="task-input"
             type="date"
@@ -113,7 +126,9 @@ export default function TaskRow({
             className="task-input"
             value={editDraft.assignees}
             options={assigneeOptions}
+            warnings={complianceWarnings}
             onChange={(value) => onEditDraftChange('assignees', value)}
+            onAddPerson={onAddPerson}
             disabled={saving}
           />
           <div className="task-row-actions">
@@ -208,6 +223,7 @@ export default function TaskRow({
       </div>
 
       <div className="task-meta">
+        {task.location ? <span className="task-location-chip">{task.location}</span> : null}
         <span className="task-assignee-chip">{assigneeLabel || 'Unassigned'}</span>
         <div className="task-date-meta">
           {task.due ? (

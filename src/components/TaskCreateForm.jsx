@@ -1,13 +1,17 @@
 import React from 'react';
 import FluentIcon from './FluentIcon.jsx';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
+import TaskLocationField from './TaskLocationField.jsx';
 
 export default function TaskCreateForm({
   task,
   onTaskChange,
   lockedProjectName = '',
   projects,
+  locationOptions = [],
+  onAddLocation,
   assigneeOptions,
+  complianceWarnings,
   onAddPerson,
   saving,
   attachmentInputKey,
@@ -62,24 +66,39 @@ export default function TaskCreateForm({
             ))}
           </select>
         )}
+        <TaskLocationField
+          projectId={task.projectId}
+          locations={locationOptions}
+          value={task.location || ''}
+          onChange={(value) => onTaskChange('location', value)}
+          onAddLocation={onAddLocation}
+          disabled={saving}
+        />
         <input
           className="task-input"
           type="date"
           value={task.due}
           onChange={(event) => onTaskChange('due', event.target.value)}
         />
-        <div className="inline-action-field task-assignee-field">
-          <AssigneeMultiSelect
-            value={task.assignees}
-            options={assigneeOptions}
-            onChange={(value) => onTaskChange('assignees', value)}
-            disabled={saving}
-            className="task-input"
-          />
-          <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
-            Add person
-          </button>
-        </div>
+        <AssigneeMultiSelect
+          value={task.assignees}
+          options={assigneeOptions}
+          warnings={complianceWarnings}
+          onChange={(value) => onTaskChange('assignees', value)}
+          onAddPerson={onAddPerson}
+          disabled={saving}
+          className="task-input task-assignee-field"
+        />
+        <button
+          className="button secondary task-add-attachment-button"
+          type="button"
+          onClick={onOpenAttachmentPicker}
+          disabled={saving}
+          title={files.length ? 'Add more attachments' : 'Add attachment'}
+          aria-label={files.length ? 'Add more attachments' : 'Add attachment'}
+        >
+          <FluentIcon name="attach" />
+        </button>
         {!modal ? (
           <button className={`button primary${saving ? ' is-loading' : ''}`} type="submit" disabled={saving}>
             {saving ? 'Saving...' : 'Add task'}
@@ -98,9 +117,6 @@ export default function TaskCreateForm({
           <div className="task-attachment-editor task-create-attachments">
             <div className="task-attachment-editor-header">
               <strong>Attachments</strong>
-              <button className="button secondary" type="button" onClick={onOpenAttachmentPicker} disabled={saving}>
-                Add more files
-              </button>
             </div>
             <div className="task-attachment-list">
               {files.map((file, index) => (
@@ -120,11 +136,7 @@ export default function TaskCreateForm({
               ))}
             </div>
           </div>
-        ) : (
-          <button className="button secondary task-add-attachment-button" type="button" onClick={onOpenAttachmentPicker} disabled={saving}>
-            Add attachment
-          </button>
-        )}
+        ) : null}
         <div className={`task-save-notice${saveMessage ? ' visible' : ''}`} aria-live="polite">
           {saveMessage || '\u00A0'}
         </div>

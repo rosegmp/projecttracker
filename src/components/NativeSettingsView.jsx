@@ -122,6 +122,37 @@ function ComplianceEmailTestSettings({ enabled, saving, status, adminEmail, onTo
   );
 }
 
+function ComplianceScheduledReminderSettings({ enabled, saving, status, onToggle }) {
+  return (
+    <section className="settings-card compliance-scheduled-reminder-settings">
+      <div className="settings-card-header">
+        <div>
+          <h3>Scheduled compliance reminders</h3>
+          <p>Automatically request an updated General Liability certificate before expiration and follow up on unresolved compliance requests.</p>
+        </div>
+      </div>
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => void onToggle(event.target.checked)}
+          disabled={saving}
+        />
+        <span>
+          <strong>Send scheduled compliance reminders</strong>
+          <small>Send certificate reminders 60, 30, 14, and 7 days before expiration, plus follow-ups 7, 14, and 30 days after a compliance request.</small>
+        </span>
+      </label>
+      <p className="panel-copy">Follow-ups include only requirements still missing from a prior manual request. Inactive subcontractors, invalid email addresses, and reminders already delivered for the same checkpoint are skipped. Test mode pauses unattended delivery.</p>
+      {status?.message ? (
+        <p className={status.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">
+          {status.message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function getNthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
   const firstDay = new Date(year, monthIndex, 1);
   const offset = (weekday - firstDay.getDay() + 7) % 7;
@@ -298,6 +329,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [taskAssignmentEmailStatus, setTaskAssignmentEmailStatus] = useState({ tone: '', message: '' });
   const [complianceEmailTestDraft, setComplianceEmailTestDraft] = useState(data.settings?.complianceEmailTestMode === true);
   const [complianceEmailTestStatus, setComplianceEmailTestStatus] = useState({ tone: '', message: '' });
+  const [complianceScheduledRemindersDraft, setComplianceScheduledRemindersDraft] = useState(data.settings?.complianceScheduledRemindersEnabled === true);
+  const [complianceScheduledRemindersStatus, setComplianceScheduledRemindersStatus] = useState({ tone: '', message: '' });
   const [notificationPermission, setNotificationPermission] = useState('');
   const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
@@ -341,6 +374,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         emailNewTasksToInternalAssignees: data.settings?.emailNewTasksToInternalAssignees === true,
         emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
         complianceEmailTestMode: data.settings?.complianceEmailTestMode === true,
+        complianceScheduledRemindersEnabled: data.settings?.complianceScheduledRemindersEnabled === true,
         visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
         visibleProjectTabs: normalizeVisibleProjectTabs(data.settings?.visibleProjectTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
@@ -448,6 +482,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   useEffect(() => {
     setComplianceEmailTestDraft(data.settings?.complianceEmailTestMode === true);
   }, [data.settings?.complianceEmailTestMode]);
+
+  useEffect(() => {
+    setComplianceScheduledRemindersDraft(data.settings?.complianceScheduledRemindersEnabled === true);
+  }, [data.settings?.complianceScheduledRemindersEnabled]);
 
   useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
@@ -619,6 +657,26 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       setComplianceEmailTestStatus({
         tone: 'error',
         message: error instanceof Error ? error.message : 'Unable to save compliance email test mode.',
+      });
+    }
+  }
+
+  async function handleComplianceScheduledRemindersToggle(value) {
+    setComplianceScheduledRemindersDraft(value);
+    setComplianceScheduledRemindersStatus({ tone: '', message: 'Saving scheduled reminder preference…' });
+    try {
+      await runSettingsMutation({ complianceScheduledRemindersEnabled: value }, ['settings', 'complianceScheduledRemindersEnabled']);
+      setComplianceScheduledRemindersStatus({
+        tone: 'success',
+        message: value
+          ? 'Scheduled compliance reminders enabled.'
+          : 'Scheduled compliance reminders disabled.',
+      });
+    } catch (error) {
+      setComplianceScheduledRemindersDraft(settingsStateRef.current.settings?.complianceScheduledRemindersEnabled === true);
+      setComplianceScheduledRemindersStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to save the scheduled reminder preference.',
       });
     }
   }
@@ -1200,6 +1258,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const internalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToInternalAssignees']);
   const externalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToExternalAssignees']);
   const complianceEmailTestSaving = isMutating(['settings', 'complianceEmailTestMode']);
+  const complianceScheduledRemindersSaving = isMutating(['settings', 'complianceScheduledRemindersEnabled']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1570,6 +1629,12 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
               />
+              <ComplianceScheduledReminderSettings
+                enabled={complianceScheduledRemindersDraft}
+                saving={complianceScheduledRemindersSaving}
+                status={complianceScheduledRemindersStatus}
+                onToggle={handleComplianceScheduledRemindersToggle}
+              />
               <ComplianceEmailTestSettings
                 enabled={complianceEmailTestDraft}
                 saving={complianceEmailTestSaving}
@@ -1692,6 +1757,12 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 savingExternal={externalTaskEmailSaving}
                 status={taskAssignmentEmailStatus}
                 onToggle={handleTaskAssignmentEmailToggle}
+              />
+              <ComplianceScheduledReminderSettings
+                enabled={complianceScheduledRemindersDraft}
+                saving={complianceScheduledRemindersSaving}
+                status={complianceScheduledRemindersStatus}
+                onToggle={handleComplianceScheduledRemindersToggle}
               />
               <ComplianceEmailTestSettings
                 enabled={complianceEmailTestDraft}

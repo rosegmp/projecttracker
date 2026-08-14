@@ -5,8 +5,9 @@ import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperatio
 import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { formatCurrentWeather, loadCurrentWeatherConditions } from '../utils/weather.js';
-import { isNativeAndroidApp, openPreview } from '../platform/platformAdapter.js';
-import { showAppConfirm } from './AppDialogs.jsx';
+import { deliverBlob, isNativeAndroidApp, openPreview } from '../platform/platformAdapter.js';
+import { buildChangeOrderApprovalPdf, getChangeOrderApprovalPdfFileName } from '../utils/changeOrderPdf.js';
+import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import PersonModal from './PersonModal.jsx';
 import WorkflowAttachments, { addPendingWorkflowAttachments, deleteWorkflowAttachments, prepareWorkflowAttachments, removeWorkflowAttachment } from './WorkflowAttachments.jsx';
@@ -139,6 +140,7 @@ export default function ProjectWorkflowManager({
   const lastCreateRequestTokenRef = useRef('');
   const recordRefs = useRef({});
   const [highlightedRecordId, setHighlightedRecordId] = useState('');
+  const [creatingPdfId, setCreatingPdfId] = useState('');
   const subcontractorOptions = useMemo(() => (subcontractors || [])
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
@@ -428,6 +430,23 @@ export default function ProjectWorkflowManager({
     finally { setSaving(false); }
   }
 
+  async function createCustomerApprovalPdf(record) {
+    if (daily || !record || creatingPdfId) return;
+    setCreatingPdfId(record.id);
+    try {
+      const pdf = buildChangeOrderApprovalPdf(project, record);
+      const fileName = getChangeOrderApprovalPdfFileName(project, record);
+      await deliverBlob(pdf, fileName, { action: nativeAndroid ? 'share' : 'download' });
+    } catch (error) {
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to create the change order PDF.',
+        'PDF creation failed',
+      );
+    } finally {
+      setCreatingPdfId('');
+    }
+  }
+
   return (
     <div className="project-workflow-manager">
       <header className="project-workflow-header">
@@ -537,7 +556,10 @@ export default function ProjectWorkflowManager({
             >
               <div className="project-workflow-card-heading">
                 <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : record._offlineDeleted ? 'Delete saved on device' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
-                {canEdit && !record._offlineDeleted ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button> : null}
+                {canEdit && !record._offlineDeleted ? <div className="project-workflow-card-actions">
+                  {!daily ? <button className={`button secondary${creatingPdfId === record.id ? ' is-loading' : ''}`} type="button" onClick={() => void createCustomerApprovalPdf(record)} disabled={Boolean(creatingPdfId)} aria-busy={creatingPdfId === record.id} aria-label={`Create customer approval PDF for ${record.number}`}><FluentIcon name="document" size={16} />{creatingPdfId === record.id ? 'Creating PDF...' : 'Customer PDF'}</button> : null}
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button>
+                </div> : null}
               </div>
               {daily ? (
                 <>

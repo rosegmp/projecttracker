@@ -1642,10 +1642,16 @@ a {
   background: var(--surface);
 }
 
-.task-create-grid,
+.task-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.2fr) auto auto;
+  gap: 12px;
+  align-items: center;
+}
+
 .task-edit-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
   gap: 12px;
   align-items: center;
 }
@@ -1673,6 +1679,10 @@ a {
 }
 
 .task-add-attachment-button {
+  width: var(--control-height);
+  min-width: var(--control-height);
+  height: var(--control-height);
+  padding: 0;
   justify-self: start;
 }
 
@@ -1685,6 +1695,18 @@ a {
 
 .inline-action-field > * {
   min-width: 0;
+}
+
+.task-location-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-location-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
 }
 
 .assignee-multi-select {
@@ -1760,6 +1782,20 @@ a {
   font-size: 12px;
 }
 
+.assignee-picker-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assignee-add-person-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
 .assignee-picker-search {
   flex: 0 0 auto;
   padding: 10px 12px;
@@ -1804,6 +1840,44 @@ a {
   width: 18px;
   height: 18px;
   margin: 0;
+}
+
+.assignee-option-label {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.assignee-option-warning,
+.assignee-trigger-warning {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--warning-text, #8a4b08);
+}
+
+.assignee-multi-trigger.has-compliance-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-color: var(--warning-border, #d69a43);
+}
+
+.assignee-compliance-warning {
+  display: flex;
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  align-items: flex-start;
+  gap: 8px;
+  border-top: 1px solid var(--warning-border, #d69a43);
+  background: var(--warning-surface, #fff8e8);
+  color: var(--warning-text, #6f3d06);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.assignee-compliance-warning .fluent-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .assignee-multi-empty {
@@ -5746,7 +5820,8 @@ button.calendar-chip {
   color: var(--muted);
 }
 
-.task-assignee-chip {
+.task-assignee-chip,
+.task-location-chip {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
@@ -7524,7 +7599,7 @@ button.calendar-chip {
 
 .home-quick-task-fields {
   display: grid;
-  grid-template-columns: minmax(220px, 1.5fr) minmax(170px, 0.8fr) minmax(150px, 0.55fr) minmax(170px, 0.8fr) auto;
+  grid-template-columns: minmax(210px, 1.4fr) minmax(150px, 0.75fr) minmax(170px, 0.85fr) minmax(140px, 0.55fr) minmax(160px, 0.75fr) auto;
   gap: var(--space-3);
 }
 
@@ -7542,6 +7617,19 @@ button.calendar-chip {
 
 .home-quick-task-message.success { color: var(--success); }
 .home-quick-task-message.error { color: var(--danger); }
+
+.home-quick-task-compliance-warning {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: 7px;
+  color: var(--warning-text, #6f3d06);
+  font-size: var(--font-size-sm);
+}
+
+.home-quick-task-fields > .task-location-field {
+  min-width: 0;
+}
 
 .home-changes-section,
 .home-tasks-section,
@@ -8038,6 +8126,10 @@ button.calendar-chip {
   color: var(--muted);
   font-size: var(--font-size-xs);
   font-weight: 700;
+}
+
+.task-location-chip {
+  background: rgba(32, 112, 153, 0.1);
 }
 
 .project-detail-offline-actions {
@@ -10695,9 +10787,20 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .task-create-grid .task-location-field {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .task-assignee-field > *,
   .task-create-grid > .button {
     width: 100%;
+  }
+
+  .task-create-grid > .task-add-attachment-button {
+    width: var(--touch-target-size);
+    min-width: var(--touch-target-size);
+    height: var(--touch-target-size);
+    justify-self: start;
   }
 
   .people-page-actions {

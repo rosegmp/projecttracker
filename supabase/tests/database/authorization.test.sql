@@ -1,6 +1,6 @@
 begin;
 
-select plan(52);
+select plan(60);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -263,6 +263,92 @@ select results_eq(
       and column_name = 'project_id'$$,
   array[0::bigint],
   'insurance certificate schema has no project relationship'
+);
+
+select ok(
+  not has_table_privilege(
+    'authenticated',
+    'public.compliance_scheduled_reminder_deliveries',
+    'SELECT, INSERT, UPDATE, DELETE'
+  ),
+  'authenticated application users cannot access scheduled compliance reminder deliveries'
+);
+select ok(
+  not has_table_privilege(
+    'authenticated',
+    'public.compliance_scheduled_followup_deliveries',
+    'SELECT, INSERT, UPDATE, DELETE'
+  ),
+  'authenticated application users cannot access scheduled compliance follow-up deliveries'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.claim_scheduled_compliance_reminder(text, uuid, uuid, date, integer, date, text)',
+    'EXECUTE'
+  ),
+  'authenticated application users cannot claim scheduled compliance reminders'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.claim_scheduled_compliance_followup(text, timestamptz, integer, date, text[], text)',
+    'EXECUTE'
+  ),
+  'authenticated application users cannot claim scheduled compliance follow-ups'
+);
+
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select is(
+  public.claim_scheduled_compliance_reminder(
+    'auth-sub-a',
+    '20000000-0000-4000-8000-000000000001'::uuid,
+    '30000000-0000-4000-8000-000000000001'::uuid,
+    '2027-01-01'::date,
+    30,
+    '2026-12-02'::date,
+    'CERTS@SUB.TEST'
+  )->>'subcontractor_id',
+  'auth-sub-a',
+  'the service role can claim a scheduled compliance reminder'
+);
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+select results_eq(
+  $$select recipient_email
+      from public.compliance_scheduled_reminder_deliveries
+     where subcontractor_id = 'auth-sub-a'$$,
+  array['certs@sub.test'::text],
+  'a service-role reminder claim persists a normalized delivery record'
+);
+
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select is(
+  public.claim_scheduled_compliance_followup(
+    'auth-sub-a',
+    '2026-08-01 12:00:00+00'::timestamptz,
+    14,
+    '2026-08-15'::date,
+    array['general_liability', 'w9']::text[],
+    'CERTS@SUB.TEST'
+  )->>'subcontractor_id',
+  'auth-sub-a',
+  'the service role can claim a scheduled compliance follow-up'
+);
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+select is(
+  (
+    select missing_requirements::text
+    from public.compliance_scheduled_followup_deliveries
+    where subcontractor_id = 'auth-sub-a'
+  ),
+  '{general_liability,w9}',
+  'a service-role follow-up claim persists its unresolved requirements'
 );
 
 select is(

@@ -9,6 +9,11 @@ const COLORS = {
   scale: "#f2b84b",
 };
 
+function normalizeTakeoffColor(value, fallback = COLORS.length) {
+  const candidate = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toLowerCase() : fallback;
+}
+
 const COUNT_SYMBOL_OPTIONS = [
   { value: "duplex-receptacle", label: "Duplex Receptacle", imageUrl: "https://www.archtoolbox.com/wp-content/uploads/power-duplex.svg" },
   { value: "weatherproof-duplex", label: "Weatherproof Duplex Receptacle", imageUrl: "https://www.archtoolbox.com/wp-content/uploads/power-duplex-wp.svg" },
@@ -1829,8 +1834,8 @@ function applyHistorySnapshot(snapshot) {
   state.selectedType = snapshot.selectedType || null;
   state.selectedPointIndex = Number.isInteger(snapshot.selectedPointIndex) ? snapshot.selectedPointIndex : null;
   state.countSymbol = normalizeCountSymbol(snapshot.countSymbol);
-  state.countColor = snapshot.countColor || COLORS.count;
-  state.markupColor = snapshot.markupColor || "#e4572e";
+  state.countColor = normalizeTakeoffColor(snapshot.countColor, COLORS.count);
+  state.markupColor = normalizeTakeoffColor(snapshot.markupColor, COLORS.length);
   state.markupThickness = normalizeMarkupThickness(snapshot.markupThickness);
   state.draft = [];
   state.previewPoint = null;
@@ -2167,8 +2172,8 @@ async function hydrateProject(project, options = {}) {
   state.redoStack = [];
   state.pageMetrics = {};
   state.countSymbol = normalizeCountSymbol(project.countSymbol);
-  state.countColor = project.countColor || COLORS.count;
-  state.markupColor = project.markupColor || "#e4572e";
+  state.countColor = normalizeTakeoffColor(project.countColor, COLORS.count);
+  state.markupColor = normalizeTakeoffColor(project.markupColor, COLORS.length);
   state.markupThickness = normalizeMarkupThickness(project.markupThickness);
 
   els.countColor.value = state.countColor;
@@ -3052,13 +3057,14 @@ function renderMarkupsList() {
       button.type = "button";
       button.className = `measure-row ${markup.id === state.selectedId && state.selectedType === "markup" ? "active" : ""}`;
       button.innerHTML = `
-        <span class="measure-swatch" style="background: ${markup.color}"></span>
+        <span class="measure-swatch"></span>
         <span>
           <strong>${escapeHtml(markupLabel(markup))}</strong>
-          <span>${markupTypeLabel(markup.type)} on sheet ${markup.pageNumber}</span>
+          <span>${escapeHtml(markupTypeLabel(markup.type))} on sheet ${escapeHtml(markup.pageNumber)}</span>
         </span>
         <span class="measure-value">${markup.type === "text" ? "Text" : `${markup.points.length} pts`}</span>
       `;
+      button.querySelector(".measure-swatch").style.backgroundColor = normalizeTakeoffColor(markup.color, COLORS.length);
       button.addEventListener("click", () => {
         state.selectedId = markup.id;
         state.selectedType = "markup";
@@ -3088,13 +3094,14 @@ function renderMeasurementsList() {
       button.type = "button";
       button.className = `measure-row ${measurement.id === state.selectedId && state.selectedType === "measurement" ? "active" : ""}`;
       button.innerHTML = `
-        <span class="measure-swatch" style="background: ${measurement.color}"></span>
+        <span class="measure-swatch"></span>
         <span>
           <strong>${escapeHtml(measurement.label)}</strong>
-          <span>${capitalize(measurement.type)} on sheet ${measurement.pageNumber}</span>
+          <span>${escapeHtml(capitalize(measurement.type))} on sheet ${escapeHtml(measurement.pageNumber)}</span>
         </span>
         <span class="measure-value">${escapeHtml(formatMeasurementValue(measurement))}</span>
       `;
+      button.querySelector(".measure-swatch").style.backgroundColor = normalizeTakeoffColor(measurement.color, COLORS[measurement.type] || COLORS.length);
       button.addEventListener("click", () => {
         state.selectedId = measurement.id;
         state.selectedType = "measurement";
@@ -3126,7 +3133,7 @@ function renderSelection() {
         <span>Sheet ${markup.pageNumber}</span>
       </div>
       <div class="selection-grid">
-        <span>Type: ${markupTypeLabel(markup.type)}</span>
+        <span>Type: ${escapeHtml(markupTypeLabel(markup.type))}</span>
         <span>Color: ${escapeHtml(markup.color)}</span>
         ${markup.type === "text" ? "" : `<span>Line: ${normalizeMarkupThickness(markup.thickness)} px</span>`}
         <span>Points: ${markup.points.length}</span>
@@ -3160,7 +3167,7 @@ function renderSelection() {
       <span>Sheet ${measurement.pageNumber}</span>
     </div>
     <div class="selection-grid">
-      <span>Type: ${capitalize(measurement.type)}</span>
+      <span>Type: ${escapeHtml(capitalize(measurement.type))}</span>
       <span>Value: ${escapeHtml(formatMeasurementValue(measurement))}</span>
       <span>Points: ${measurement.points.length}</span>
     </div>
@@ -3299,13 +3306,16 @@ function normalizeScalesPayload(source) {
 }
 
 function normalizeMeasurement(measurement) {
-  if (measurement.type !== "count") return measurement;
+  const fallbackColor = COLORS[measurement?.type] || COLORS.length;
+  if (measurement.type !== "count") {
+    return { ...measurement, color: normalizeTakeoffColor(measurement.color, fallbackColor) };
+  }
   const symbol = normalizeCountSymbol(measurement.symbol);
   return {
     ...measurement,
     label: measurement.label || defaultCountLabel(symbol),
     symbol,
-    color: measurement.color || COLORS.count,
+    color: normalizeTakeoffColor(measurement.color, COLORS.count),
   };
 }
 
@@ -3321,6 +3331,7 @@ function normalizeMarkupThickness(value) {
 function normalizeMarkups(markups) {
   return (Array.isArray(markups) ? markups : []).map((markup) => ({
     ...markup,
+    color: normalizeTakeoffColor(markup?.color, COLORS.length),
     thickness: normalizeMarkupThickness(markup?.thickness),
   }));
 }

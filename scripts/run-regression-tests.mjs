@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import {
   applyDelayToStep,
   cascadePhaseDates,
@@ -80,6 +80,12 @@ import {
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
 import { buildProjectPhotoGallery, groupProjectPhotosBySource } from '../src/utils/projectPhotoGallery.js';
+import { buildChangeOrderApprovalPdf, getChangeOrderApprovalPdfFileName } from '../src/utils/changeOrderPdf.js';
+import {
+  buildScheduledComplianceFollowupCandidates,
+  buildScheduledComplianceReminderCandidates,
+} from '../supabase/functions/_shared/complianceReminders.js';
+import { buildSubcontractorComplianceWarnings } from '../src/utils/complianceAssignmentWarnings.js';
 import {
   attachRequestId,
   createRequestId,
@@ -256,13 +262,14 @@ const tests = [
       assert.deepEqual(loadGlobalSearchRecentIds('user-1', storage), ['project:project-1', 'task:task-1']);
       assert.deepEqual(loadGlobalSearchRecentIds('other-user', storage), []);
 
-       const [appSource, paletteSource, peopleSource, filesSource, workflowSource, workflowServiceSource, styleSource] = await Promise.all([
+       const [appSource, paletteSource, peopleSource, filesSource, workflowSource, workflowServiceSource, workflowSearchSource, styleSource] = await Promise.all([
          readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
          readFile(new URL('../src/components/GlobalCommandPalette.jsx', import.meta.url), 'utf8'),
          readFile(new URL('../src/components/NativePeopleView.jsx', import.meta.url), 'utf8'),
          readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
          readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
          readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+         readFile(new URL('../src/services/workflowSearch.js', import.meta.url), 'utf8'),
          readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
       ]);
       assert.match(appSource, /event\.key\.toLowerCase\(\) !== 'k'/);
@@ -274,6 +281,8 @@ const tests = [
        assert.match(appSource, /visibleProjectTabIds\.has\('daily-logs'\)/);
        assert.match(appSource, /WORKFLOW_SEARCH_CACHE_TTL_MS = 60_000/);
        assert.match(appSource, /loadWorkflowSearchItemsForProjects/);
+       assert.match(appSource, /import\('\.\/services\/workflowSearch\.js'\)/);
+       assert.doesNotMatch(appSource, /import\('\.\/services\/constructionWorkflows\.js'\)/);
        assert.match(appSource, /workflowSearchCacheRef\.current\.size > 8/);
        assert.match(appSource, /detailTab: 'files'/);
        assert.match(appSource, /detailTab: 'rfis-submittals'/);
@@ -286,6 +295,7 @@ const tests = [
       assert.match(paletteSource, /item\.recent \? 'Recent'/);
       assert.match(paletteSource, /field categories show the latest 250 records/);
       assert.match(workflowServiceSource, /WORKFLOW_SEARCH_RESULT_LIMIT = 250/);
+      assert.match(workflowSearchSource, /from '\.\/constructionWorkflows\.js'/);
       assert.match(workflowServiceSource, /select=\$\{select\}[^`]+limit=\$\{boundedLimit\}/);
       assert.doesNotMatch(
         workflowServiceSource.match(/export async function loadWorkflowSearchItemsForProjects[\s\S]*?\n}\n/)?.[0] || '',
@@ -1649,6 +1659,8 @@ const tests = [
     name: 'tasks filter by assignee and preserve the selection in saved filters',
     async run() {
       const tasksSource = await readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8');
+      assert.match(tasksSource, /const \[statusFilter, setStatusFilter\] = useState\('open'\)/);
+      assert.match(tasksSource, /setStatusFilter\(\['all', 'open', 'completed'\]\.includes\(filter\.status\) \? filter\.status : 'open'\)/);
       assert.match(tasksSource, /const \[assigneeFilter, setAssigneeFilter\] = useState\('all'\)/);
       assert.match(tasksSource, /assigneeFilter === '__unassigned__'/);
       assert.match(tasksSource, /<span>Assignee<\/span>/);
@@ -1658,7 +1670,46 @@ const tests = [
       assert.match(tasksSource, /all: assigneeScopedTasks\.length/);
       assert.match(tasksSource, /<option value="project">Project<\/option>/);
       assert.match(tasksSource, /groupBy === 'project'[\s\S]*?projectMap\.get\(key\)\?\.name \|\| 'No project assigned'/s);
-      assert.match(tasksSource, /setGroupBy\(\['project', 'assignee'\]\.includes\(filter\.groupBy\)/);
+      assert.match(tasksSource, /<option value="location">Location<\/option>/);
+      assert.match(tasksSource, /groupBy === 'location'[\s\S]*?task\.location \|\| '__no_location__'/s);
+      assert.match(tasksSource, /setGroupBy\(\['project', 'location', 'assignee'\]\.includes\(filter\.groupBy\)/);
+    },
+  },
+  {
+    name: 'tasks use project-owned locations with inline creation and editing',
+    async run() {
+      const [tasksSource, formSource, rowSource, fieldSource, dataSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskCreateForm.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskRow.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskLocationField.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(dataSource, /locations: Array\.from\(new Map\(/);
+      assert.match(dataSource, /location: String\(task\?\.location \|\| ''\)\.trim\(\)\.replace/);
+      assert.match(dataSource, /export async function addProjectTaskLocation/);
+      assert.match(dataSource, /locations: \[\.\.\.locations, location\]/);
+      assert.match(tasksSource, /addProjectTaskLocation\(dataRef\.current, projectId, location\)/);
+      assert.match(tasksSource, /field === 'projectId'[\s\S]*?location: ''/s);
+      assert.match(formSource, /<TaskLocationField/);
+      assert.match(rowSource, /className="task-location-chip"/);
+      assert.match(rowSource, /<TaskLocationField/);
+      assert.match(fieldSource, /aria-label="Add location"/);
+      assert.match(fieldSource, /onAddLocation\(projectId, next\)/);
+      assert.match(styleSource, /\.task-location-add\s*\{/);
+      const [homeSource, scheduleSource, dialogSource, sharingSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeHomeView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskInspectionDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/taskSharing.js', import.meta.url), 'utf8'),
+      ]);
+      assert.match(homeSource, /location: quickTask\.location/);
+      assert.match(homeSource, /onAddLocation=\{addQuickTaskLocation\}/);
+      assert.match(scheduleSource, /location: taskDraft\.location \|\| ''/);
+      assert.match(scheduleSource, /onAddLocation=\{handleAddTaskLocation\}/);
+      assert.match(dialogSource, /<TaskLocationField/);
+      assert.match(sharingSource, /Location: \$\{task\.location\}/);
     },
   },
   {
@@ -1742,8 +1793,9 @@ const tests = [
       for (const moduleName of ['ScheduleItemModal', 'DelayModal', 'DependencyModal', 'TaskModal', 'InspectionModal', 'PersonModal']) {
         assert.match(scheduleSource, new RegExp(`const ${moduleName} = lazy\\(`));
       }
-      assert.match(appSource, /import\('\.\/services\/trackerData\.js'\)/);
-      assert.doesNotMatch(appSource, /from ['"]\.\/services\/trackerData\.js['"]/);
+      assert.match(appSource, /import \* as trackerDataModule from ['"]\.\/services\/trackerData\.js['"]/);
+      assert.doesNotMatch(appSource, /import\('\.\/services\/trackerData\.js'\)/);
+      assert.match(appSource, /const trackerDataModulePromise = Promise\.resolve\(trackerDataModule\)/);
       assert.match(appSource, /<Suspense/);
       assert.match(appSource, /Loading workspace/);
     },
@@ -1844,8 +1896,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 6/);
-      assert.match(buildSource, /versionName "1\.5\.0"/);
+      assert.match(buildSource, /versionCode 7/);
+      assert.match(buildSource, /versionName "1\.6\.0"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
@@ -1855,6 +1907,19 @@ const tests = [
       assert.match(backgroundSource, /#444A80/);
       assert.match(generatorSource, /destiny-logo\.png/);
       assert.match(generatorSource, /ic_launcher_round\.png/);
+    },
+  },
+  {
+    name: 'Android release excludes app backups and user-installed trust anchors',
+    async run() {
+      const [manifestSource, networkSecuritySource] = await Promise.all([
+        readFile(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8'),
+        readFile(new URL('../android/app/src/main/res/xml/network_security_config.xml', import.meta.url), 'utf8'),
+      ]);
+      assert.match(manifestSource, /android:allowBackup="false"/);
+      assert.match(manifestSource, /android:fullBackupContent="false"/);
+      assert.match(networkSecuritySource, /<certificates src="system"\s*\/>/);
+      assert.doesNotMatch(networkSecuritySource, /<certificates src="user"\s*\/>/);
     },
   },
   {
@@ -1869,7 +1934,7 @@ const tests = [
       ]);
       const content = buildTaskShareContent(
         [
-          { id: 'task-1', label: 'Frame walls', projectId: 'project-1', due: '2026-08-05', assignees: ['Alex Smith'], done: false },
+          { id: 'task-1', label: 'Frame walls', projectId: 'project-1', location: 'Second floor', due: '2026-08-05', assignees: ['Alex Smith'], done: false },
           { id: 'task-2', label: 'Close permit', projectId: 'project-2', due: '', assignees: [], done: true },
         ],
         [{ id: 'project-1', name: 'Lake House' }, { id: 'project-2', name: 'Hill House' }],
@@ -1877,6 +1942,7 @@ const tests = [
       assert.equal(content.title, '2 Project Tracker tasks');
       assert.match(content.body, /1\. Frame walls/);
       assert.match(content.body, /Project: Lake House/);
+      assert.match(content.body, /Location: Second floor/);
       assert.match(content.body, /Due date: Aug 5, 2026/);
       assert.match(content.body, /2\. Close permit/);
       assert.match(content.body, /Status: Completed/);
@@ -2091,6 +2157,17 @@ const tests = [
       assert.equal(attempts, 3);
       assert.equal(isRetryableQueryError({ status: 401 }), false);
       assert.equal(isRetryableQueryError(new Error('offline')), true);
+
+      let resolveStaleQuery;
+      const staleQuery = client.query({
+        key: ['startup', 'user-a'],
+        queryFn: () => new Promise((resolve) => { resolveStaleQuery = resolve; }),
+      });
+      await Promise.resolve();
+      client.clear();
+      resolveStaleQuery({ workspace: 'user-a' });
+      assert.deepEqual(await staleQuery, { workspace: 'user-a' });
+      assert.equal(client.getQueryData(['startup', 'user-a']), undefined);
     },
   },
   {
@@ -2918,6 +2995,9 @@ const tests = [
       assert.match(migrationSource, /startupProjectId/);
       assert.match(migrationSource, /grant execute on function public\.get_app_startup_bootstrap/);
       assert.match(trackerSource, /export async function loadTrackerStartupData/);
+      assert.match(trackerSource, /key: \['startup', 'workspace', String\(authSession\?\.user\?\.id \|\| authSession\?\.user\?\.email \|\| 'anonymous'\)/);
+      assert.match(trackerSource, /previousIdentity !== nextIdentity\) trackerQueryClient\.clear\(\)/);
+      assert.match(appSource, /async function handleSignOut\(\) \{[\s\S]*refreshRequestIdRef\.current \+= 1;[\s\S]*await signOutAuthSession\(\)/);
       assert.match(trackerSource, /'get_app_startup_bootstrap'/);
       assert.match(trackerSource, /deferredDataStatus: 'loading'/);
       assert.match(appSource, /loadTrackerStartupData/);
@@ -3239,6 +3319,29 @@ const tests = [
       assert.match(formSource, /aria-modal=\{modal \? 'true' : undefined\}/);
       assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.task-create-desktop\s*\{\s*display:\s*none;/s);
       assert.match(styleSource, /\.mobile-task-create-trigger\s*\{\s*display:\s*inline-flex;/s);
+    },
+  },
+  {
+    name: 'task creation keeps attachment and person actions compact and contextual',
+    async run() {
+      const [formSource, pickerSource, rowSource, dialogSource, iconSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/TaskCreateForm.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/AssigneeMultiSelect.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskRow.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/TaskInspectionDialogs.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/FluentIcon.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(formSource, /className="button secondary task-add-attachment-button"/);
+      assert.match(formSource, /<FluentIcon name="attach"/);
+      assert.doesNotMatch(formSource, />\s*Add attachment\s*</);
+      assert.match(formSource, /onAddPerson=\{onAddPerson\}/);
+      assert.match(pickerSource, /aria-label="Add person"/);
+      assert.match(pickerSource, /<FluentIcon name="add"/);
+      assert.match(rowSource, /onAddPerson=\{onAddPerson\}/);
+      assert.match(dialogSource, /onAddPerson=\{onAddPerson\}/);
+      assert.match(iconSource, /attach:\s*Attach24Regular/);
+      assert.match(styleSource, /\.task-create-grid\s*\{[^}]*grid-template-columns:[^;]+auto auto;/s);
     },
   },
   {
@@ -4356,13 +4459,14 @@ const tests = [
   {
     name: 'Takeoff stays lazy loaded and uses project-scoped authenticated storage',
     async run() {
-      const [projectDetailSource, takeoffWorkspaceSource, takeoffStyleSource, takeoffServiceSource, takeoffEditorSource, takeoffMigrationSource] = await Promise.all([
+      const [projectDetailSource, takeoffWorkspaceSource, takeoffStyleSource, takeoffServiceSource, takeoffEditorSource, takeoffMigrationSource, takeoffColorMigrationSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/TakeoffWorkspace.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/takeoff.css', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/services/projectTakeoffData.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/features/takeoff/lib/takeoffApp.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260717060000_add_project_takeoffs.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260814150000_constrain_takeoff_colors.sql', import.meta.url), 'utf8'),
       ]);
 
       assert.match(projectDetailSource, /lazy\(\(\) => import\('\.\.\/features\/takeoff\/TakeoffWorkspace\.jsx'\)\)/);
@@ -4410,6 +4514,10 @@ const tests = [
       assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(project_id\)/);
       assert.match(takeoffMigrationSource, /values \('takeoff-files', 'takeoff-files', false\)/);
       assert.match(takeoffMigrationSource, /public\.app_user_can_edit_project\(\(storage\.foldername\(name\)\)\[2\]\)/);
+      assert.match(takeoffEditorSource, /function normalizeTakeoffColor/);
+      assert.doesNotMatch(takeoffEditorSource, /style="background: \$\{(?:markup|measurement)\.color\}/);
+      assert.match(takeoffColorMigrationSource, /project_takeoff_measurements_color_format_check/);
+      assert.match(takeoffColorMigrationSource, /project_takeoff_markups_color_format_check/);
     },
   },
   {
@@ -5049,6 +5157,60 @@ const tests = [
     },
   },
   {
+    name: 'third-party GitHub Actions are pinned to reviewed immutable commits',
+    async run() {
+      const workflowRoot = new URL('../.github/workflows/', import.meta.url);
+      const workflowNames = (await readdir(workflowRoot)).filter((name) => /\.ya?ml$/i.test(name));
+      const dependabotSource = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
+      const reviewedRefs = new Map([
+        ['actions/checkout', '3d3c42e5aac5ba805825da76410c181273ba90b1'],
+        ['actions/setup-node', '820762786026740c76f36085b0efc47a31fe5020'],
+        ['actions/setup-java', 'b6effb05e454b25005698d916606bdc6ffcbf961'],
+        ['android-actions/setup-android', '40fd30fb8d7440372e1316f5d1809ec01dcd3699'],
+        ['actions/upload-artifact', '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'],
+        ['supabase/setup-cli', '46f7f98c7f948ad727d22c1e67fab04c223a0520'],
+      ]);
+      let actionCount = 0;
+      for (const workflowName of workflowNames) {
+        const source = await readFile(new URL(workflowName, workflowRoot), 'utf8');
+        for (const match of source.matchAll(/^\s*uses:\s+([^@\s]+)@([^\s#]+)(?:\s+#\s*(\S+))?/gm)) {
+          const [, action, ref, versionComment] = match;
+          if (action.startsWith('./')) continue;
+          actionCount += 1;
+          assert.equal(ref, reviewedRefs.get(action), `${workflowName} must use the reviewed ${action} commit`);
+          assert.match(ref, /^[a-f0-9]{40}$/);
+          assert.match(versionComment || '', /^v\d+$/);
+        }
+      }
+      assert.ok(actionCount > 0);
+      assert.match(dependabotSource, /package-ecosystem: github-actions/);
+      assert.match(dependabotSource, /interval: weekly/);
+      assert.match(dependabotSource, /reviewed-actions:/);
+      assert.doesNotMatch(dependabotSource, /package-ecosystem: npm/);
+    },
+  },
+  {
+    name: 'production headers and Edge Function CI enforce the security baseline',
+    async run() {
+      const [headersSource, ciWorkflowSource, packageSource, checkerSource] = await Promise.all([
+        readFile(new URL('../public/_headers', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../package.json', import.meta.url), 'utf8'),
+        readFile(new URL('./check-edge-functions.mjs', import.meta.url), 'utf8'),
+      ]);
+      assert.match(headersSource, /Content-Security-Policy:/);
+      assert.match(headersSource, /frame-ancestors 'none'/);
+      assert.match(headersSource, /X-Content-Type-Options: nosniff/);
+      assert.match(headersSource, /Referrer-Policy: strict-origin-when-cross-origin/);
+      assert.match(headersSource, /Permissions-Policy:/);
+      assert.match(ciWorkflowSource, /npm run test:edge/);
+      assert.match(packageSource, /"test:edge": "node scripts\/check-edge-functions\.mjs"/);
+      assert.match(packageSource, /"esbuild": "0\.21\.5"/);
+      assert.match(checkerSource, /external: \['npm:\*', 'https:\*'\]/);
+      assert.match(checkerSource, /write: false/);
+    },
+  },
+  {
     name: 'staging application tests reject production and always clean disposable fixtures',
     async run() {
       const [stagingSource, workflowSource, ciWorkflowSource, packageSource] = await Promise.all([
@@ -5070,8 +5232,8 @@ const tests = [
       assert.match(workflowSource, /STAGING_SUPABASE_DB_URL/);
       assert.match(workflowSource, /Refusing to migrate the production Supabase project/);
       assert.match(workflowSource, /supabase db push --db-url "\$STAGING_SUPABASE_DB_URL" --include-all/);
-      assert.match(workflowSource, /supabase\/setup-cli@v3/);
-      assert.match(ciWorkflowSource, /supabase\/setup-cli@v3/);
+      assert.match(workflowSource, /supabase\/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3/);
+      assert.match(ciWorkflowSource, /supabase\/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3/);
       assert.match(workflowSource, /version: 2\.109\.1/);
       assert.match(ciWorkflowSource, /version: 2\.109\.1/);
       assert.doesNotMatch(`${workflowSource}\n${ciWorkflowSource}`, /supabase\/setup-cli@v1/);
@@ -5177,6 +5339,8 @@ const tests = [
       assert.match(componentSource, /Aggregate limit/);
       assert.match(componentSource, /Liability dates/);
       assert.match(componentSource, /Workers comp dates/);
+      assert.match(componentSource, /General Liability additional insured/);
+      assert.match(componentSource, /additional insured for General Liability/);
       assert.doesNotMatch(componentSource, /<span>Document<\/span>/);
       assert.match(componentSource, /formatDisplayDate/);
       assert.match(componentSource, /certificate-coverage-table/);
@@ -5214,9 +5378,58 @@ const tests = [
       assert.match(functionSource, /subcontractorName/);
       assert.match(functionSource, /omit other sublimits/);
       assert.match(functionSource, /General Aggregate and Products-Completed Operations Aggregate/);
+      assert.match(functionSource, /additionalInsured field applies only to General Liability/);
+      assert.match(functionSource, /never treat Workers Compensation coverage as requiring or establishing additional-insured status/);
       assert.match(functionSource, /getRequestId\(request\)/);
       assert.match(functionSource, /logEdgeFailure/);
       assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(sourcePath|providerPayload|bytes)/);
+    },
+  },
+  {
+    name: 'change orders create customer approval PDFs with project scope and decision fields',
+    async run() {
+      const project = {
+        name: '105 Destiny Way',
+        address: '105 Destiny Way, Lakewood, NJ 08701',
+        customerName: 'Test Customer',
+      };
+      const record = {
+        number: 'CO-007',
+        title: 'Kitchen layout revision',
+        status: 'proposed',
+        description: 'Revise the island and relocate electrical outlets.',
+        reason: 'Customer-requested layout update.',
+        costImpact: '1250.5',
+        scheduleDays: '3',
+        dueDate: '2026-08-20',
+        notes: 'Pricing includes labor and material.',
+        attachments: [{ name: 'Revised kitchen plan.pdf' }],
+      };
+      const pdf = buildChangeOrderApprovalPdf(project, record);
+      const source = new TextDecoder().decode(await pdf.arrayBuffer());
+      assert.equal(pdf.type, 'application/pdf');
+      assert.match(source, /^%PDF-1\.4/);
+      assert.match(source, /DESTINY HOMES LLC/);
+      assert.match(source, /105 Destiny Way/);
+      assert.match(source, /Test Customer/);
+      assert.match(source, /CO-007/);
+      assert.match(source, /Kitchen layout revision/);
+      assert.match(source, /\$1,250\.50/);
+      assert.match(source, /CUSTOMER APPROVAL/);
+      assert.match(source, /Customer signature/);
+      assert.match(source, /Revised kitchen plan\.pdf/);
+      assert.match(source, /xref[\s\S]*trailer[\s\S]*%%EOF$/);
+      assert.equal(getChangeOrderApprovalPdfFileName(project, record), '105-Destiny-Way-CO-007-Customer-Approval.pdf');
+
+      const longPdf = buildChangeOrderApprovalPdf(project, {
+        ...record,
+        description: Array.from({ length: 240 }, (_, index) => `Detailed scope item ${index + 1}`).join(' '),
+      });
+      const longSource = new TextDecoder().decode(await longPdf.arrayBuffer());
+      assert.ok((longSource.match(/\/Type \/Page\b/g) || []).length >= 3);
+      assert.match(longSource, /DESCRIPTION \/ SCOPE - CONTINUED/);
+      assert.match(longSource, /Detailed scope item 240/);
+      assert.match(longSource, /CUSTOMER APPROVAL/);
     },
   },
   {
@@ -5271,9 +5484,200 @@ const tests = [
       assert.match(functionSource, /senderEmail: String\(callerAppUser\.data\?\.email \|\| caller\.email/);
       assert.match(functionSource, /testMode: complianceEmailTestMode/);
       assert.match(functionSource, /Please include Workers Compensation coverage when it applies to your business/);
+      assert.match(functionSource, /For General Liability only/);
+      assert.match(functionSource, /additional-insured status is not required for Workers Compensation/);
       assert.doesNotMatch(functionSource, /missing\.push\('workers_compensation'\)/);
       assert.match(configSource, /static_files = \[ "\.\/functions\/send-project-notification\/attachments\/\*\.pdf" \]/);
       assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(recipientEmail|requesterEmail)/);
+    },
+  },
+  {
+    name: 'scheduled compliance reminders are switchable checkpointed and server-only',
+    async run() {
+      const [migrationSource, functionSource, reminderHelperSource, workflowSource, settingsSource, trackerSource, configSource] = await Promise.all([
+        readFile(new URL('../supabase/migrations/20260813160000_add_scheduled_compliance_reminder_deliveries.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-compliance-reminders/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/_shared/complianceReminders.js', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/compliance-reminders.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
+      ]);
+      assert.match(settingsSource, /Scheduled compliance reminders/);
+      assert.match(settingsSource, /follow-ups 7, 14, and 30 days after a compliance request/);
+      assert.match(settingsSource, /complianceScheduledRemindersEnabled/);
+      assert.match(trackerSource, /complianceScheduledRemindersEnabled: settings\?\.complianceScheduledRemindersEnabled === true/);
+      assert.match(migrationSource, /create table if not exists public\.compliance_scheduled_reminder_deliveries/);
+      assert.match(migrationSource, /unique \(source_coverage_id, expiration_date, reminder_days\)/);
+      assert.match(migrationSource, /reminder_days in \(60, 30, 14, 7\)/);
+      assert.match(migrationSource, /claim_scheduled_compliance_reminder/);
+      assert.match(migrationSource, /last_attempt_at < now\(\) - interval '15 minutes'/);
+      assert.match(migrationSource, /revoke all on public\.compliance_scheduled_reminder_deliveries from public, anon, authenticated/);
+      assert.match(migrationSource, /grant execute on function public\.claim_scheduled_compliance_reminder[\s\S]*to service_role/);
+      assert.match(migrationSource, /create table if not exists public\.compliance_scheduled_followup_deliveries/);
+      assert.match(migrationSource, /unique \(subcontractor_id, requested_at, reminder_days\)/);
+      assert.match(migrationSource, /claim_scheduled_compliance_followup/);
+      assert.match(migrationSource, /revoke all on public\.compliance_scheduled_followup_deliveries from public, anon, authenticated/);
+      assert.match(migrationSource, /grant execute on function public\.claim_scheduled_compliance_followup[\s\S]*to service_role/);
+      assert.match(migrationSource, /enforce_application_write_freeze/);
+      assert.match(functionSource, /COMPLIANCE_REMINDER_SCHEDULE_TOKEN/);
+      assert.match(functionSource, /safeTokenEquals/);
+      assert.match(functionSource, /complianceScheduledRemindersEnabled !== true/);
+      assert.match(functionSource, /status: 'paused_for_test_mode'/);
+      assert.match(reminderHelperSource, /COMPLIANCE_REMINDER_DAYS = Object\.freeze\(\[60, 30, 14, 7\]\)/);
+      assert.match(reminderHelperSource, /COMPLIANCE_FOLLOWUP_DAYS = Object\.freeze\(\[7, 14, 30\]\)/);
+      assert.match(reminderHelperSource, /normalizedCoverageType\(coverage\.coverage_type\) !== 'general_liability'/);
+      assert.match(reminderHelperSource, /subcontractor\.inactive === true/);
+      assert.match(functionSource, /claim_scheduled_compliance_reminder/);
+      assert.match(functionSource, /Idempotency-Key': `scheduled-compliance:\$\{deliveryId\}`/);
+      assert.match(functionSource, /Idempotency-Key': `scheduled-compliance-followup:\$\{deliveryId\}`/);
+      assert.match(functionSource, /claim_scheduled_compliance_followup/);
+      assert.doesNotMatch(functionSource, /slice\(0, 100\)|remainingCapacity/);
+      assert.match(reminderHelperSource, /filter\(\(checkpoint\) => days <= checkpoint\)\.at\(-1\)/);
+      assert.match(functionSource, /subcontractor_compliance_documents/);
+      assert.match(functionSource, /form-w9\.pdf/);
+      assert.match(functionSource, /destiny-homes-subcontractor-agreement\.pdf/);
+      assert.match(functionSource, /sample-certificate-of-insurance\.pdf/);
+      assert.match(functionSource, /For General Liability only/);
+      assert.match(functionSource, /additional-insured status is not required for Workers Compensation/);
+      assert.doesNotMatch(functionSource, /console\.(log|error)\([^)]*(recipientEmail|subcontractorName)/);
+      assert.match(workflowSource, /cron: '23 13 \* \* \*'/);
+      assert.match(workflowSource, /if: github\.ref == 'refs\/heads\/main'/);
+      assert.match(workflowSource, /environment: production/);
+      assert.match(workflowSource, /secrets\.COMPLIANCE_REMINDER_SCHEDULE_TOKEN/);
+      assert.match(workflowSource, /https:\/\/oxojlwhmarafxuqvqgqg\.supabase\.co/);
+      assert.match(workflowSource, /x-compliance-reminder-token/);
+      assert.match(configSource, /\[functions\.send-compliance-reminders\][\s\S]*verify_jwt = false/);
+      assert.match(configSource, /static_files = \[ "\.\/functions\/send-compliance-reminders\/attachments\/\*\.pdf" \]/);
+
+      const candidates = buildScheduledComplianceReminderCandidates({
+        today: '2026-08-13',
+        subcontractors: [
+          { id: 'sub-60', data: { company: 'Sixty Day LLC', email: 'SIXTY@example.com' } },
+          { id: 'sub-renewed', data: { company: 'Renewed LLC', email: 'renewed@example.com' } },
+          { id: 'sub-inactive', data: { company: 'Inactive LLC', email: 'inactive@example.com', inactive: true } },
+          { id: 'sub-no-email', data: { company: 'No Email LLC' } },
+        ],
+        certificates: [
+          { id: 'cert-60', subcontractor_id: 'sub-60' },
+          { id: 'cert-old', subcontractor_id: 'sub-renewed' },
+          { id: 'cert-new', subcontractor_id: 'sub-renewed' },
+          { id: 'cert-inactive', subcontractor_id: 'sub-inactive' },
+          { id: 'cert-no-email', subcontractor_id: 'sub-no-email' },
+        ],
+        coverages: [
+          { id: 'coverage-60', certificate_id: 'cert-60', coverage_type: 'Commercial General Liability', expiration_date: '2026-10-12' },
+          { id: 'coverage-workers', certificate_id: 'cert-60', coverage_type: 'Workers Compensation', expiration_date: '2026-10-12' },
+          { id: 'coverage-old', certificate_id: 'cert-old', coverage_type: 'General Liability', expiration_date: '2026-10-12' },
+          { id: 'coverage-new', certificate_id: 'cert-new', coverage_type: 'General Liability', effective_date: '2026-10-01', expiration_date: '2027-10-01' },
+          { id: 'coverage-inactive', certificate_id: 'cert-inactive', coverage_type: 'General Liability', expiration_date: '2026-10-12' },
+          { id: 'coverage-no-email', certificate_id: 'cert-no-email', coverage_type: 'General Liability', expiration_date: '2026-10-12' },
+        ],
+      });
+      assert.deepEqual(candidates, [{
+        subcontractorId: 'sub-60',
+        subcontractorName: 'Sixty Day LLC',
+        recipientEmail: 'sixty@example.com',
+        certificateId: 'cert-60',
+        coverageId: 'coverage-60',
+        expirationDate: '2026-10-12',
+        reminderDays: 60,
+      }]);
+
+      const catchupCandidates = buildScheduledComplianceReminderCandidates({
+        today: '2026-08-14',
+        subcontractors: [{ id: 'sub-late', data: { company: 'Late LLC', email: 'late@example.com' } }],
+        certificates: [{ id: 'cert-late', subcontractor_id: 'sub-late' }],
+        coverages: [{ id: 'coverage-late', certificate_id: 'cert-late', coverage_type: 'General Liability', expiration_date: '2026-10-12' }],
+      });
+      assert.equal(catchupCandidates.length, 1);
+      assert.equal(catchupCandidates[0].reminderDays, 60);
+
+      const followups = buildScheduledComplianceFollowupCandidates({
+        today: '2026-08-13',
+        subcontractors: [
+          { id: 'sub-open', data: { company: 'Open LLC', email: 'OPEN@example.com', complianceRequestedAt: '2026-08-05T15:30:00Z', complianceRequestedRequirements: ['general_liability', 'subcontractor_agreement', 'w9'], companyType: 'Limited Liability Company' } },
+          { id: 'sub-partial', data: { company: 'Partial LLC', email: 'partial@example.com', complianceRequestedAt: '2026-07-30T15:30:00Z', complianceRequestedRequirements: ['subcontractor_agreement', 'w9'], companyType: 'Limited Liability Company' } },
+          { id: 'sub-exempt', data: { company: 'Corporation', email: 'corp@example.com', complianceRequestedAt: '2026-07-14T15:30:00Z', complianceRequestedRequirements: ['w9'], companyType: 'S Corporation' } },
+          { id: 'sub-never-requested', data: { company: 'Never Contacted', email: 'never@example.com' } },
+        ],
+        certificates: [{ id: 'cert-partial', subcontractor_id: 'sub-partial' }],
+        coverages: [{ id: 'coverage-partial', certificate_id: 'cert-partial', coverage_type: 'General Liability', expiration_date: '2027-01-01' }],
+        documents: [{ subcontractor_id: 'sub-partial', document_type: 'subcontractor_agreement', source_path: 'certificates/sub-partial/agreement.pdf' }],
+      });
+      assert.deepEqual(followups, [
+        {
+          subcontractorId: 'sub-partial',
+          subcontractorName: 'Partial LLC',
+          recipientEmail: 'partial@example.com',
+          requestedAt: '2026-07-30T15:30:00Z',
+          requestedDate: '2026-07-30',
+          reminderDays: 14,
+          missing: ['w9'],
+          latestExpirationDate: '2027-01-01',
+        },
+        {
+          subcontractorId: 'sub-open',
+          subcontractorName: 'Open LLC',
+          recipientEmail: 'open@example.com',
+          requestedAt: '2026-08-05T15:30:00Z',
+          requestedDate: '2026-08-05',
+          reminderDays: 7,
+          missing: ['general_liability', 'subcontractor_agreement', 'w9'],
+          latestExpirationDate: '',
+        },
+      ]);
+    },
+  },
+  {
+    name: 'assignment controls warn about noncompliant subcontractors without blocking selection',
+    async run() {
+      const [pickerSource, hookSource, taskSource, scheduleSource, homeSource, serviceSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/AssigneeMultiSelect.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/hooks/useSubcontractorComplianceWarnings.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeTasksView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeHomeView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/insuranceCertificates.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(pickerSource, /warnings = new Map\(\)/);
+      assert.match(pickerSource, /Assignment is still allowed/);
+      assert.match(pickerSource, /Compliance status is temporarily unavailable/);
+      assert.match(pickerSource, /has-compliance-warning/);
+      assert.match(hookSource, /loadComplianceAssignmentSnapshot/);
+      assert.match(hookSource, /status: 'loading'/);
+      assert.match(hookSource, /snapshot\.status === 'ready'/);
+      assert.match(hookSource, /warnings\.loadStatus = snapshot\.status/);
+      assert.doesNotMatch(hookSource, /\[enabled, subcontractors\.length\]/);
+      assert.match(taskSource, /complianceWarnings=\{complianceWarnings\}/);
+      assert.match(scheduleSource, /complianceWarnings=\{complianceWarnings\}/);
+      assert.match(homeSource, /Needs compliance/);
+      assert.match(serviceSource, /key: \['compliance', 'assignment-warnings', userScope\]/);
+      assert.match(serviceSource, /staleTime: 60_000/);
+      assert.match(serviceSource, /invalidateComplianceAssignmentSnapshot\(\)/);
+      assert.match(styleSource, /\.assignee-compliance-warning/);
+
+      const warnings = buildSubcontractorComplianceWarnings(
+        [
+          { id: 'sub-missing', company: 'Missing LLC', companyType: 'Limited Liability Company' },
+          { id: 'sub-compliant', company: 'Compliant LLC', companyType: 'S Corporation' },
+          { id: 'sub-inactive', company: 'Inactive LLC', inactive: true },
+        ],
+        [{
+          id: 'cert-compliant',
+          subcontractorId: 'sub-compliant',
+          coverages: [{ type: 'General Liability', effectiveDate: '2026-01-01', expirationDate: '2027-01-01' }],
+        }],
+        [{ subcontractorId: 'sub-compliant', documentType: 'subcontractor_agreement', sourcePath: 'certificates/sub-compliant/agreement.pdf' }],
+        '2026-08-13',
+      );
+      assert.deepEqual([...warnings.keys()], ['Missing LLC']);
+      assert.deepEqual(warnings.get('Missing LLC').missing, [
+        'Current General Liability',
+        'Signed subcontractor agreement',
+        'Signed Form W-9',
+      ]);
     },
   },
   {

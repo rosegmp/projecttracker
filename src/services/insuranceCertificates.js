@@ -4,6 +4,7 @@ import {
   getStoredAuthSession,
   getSupabaseDiagnosticsInfo,
 } from './trackerData.js';
+import { trackerQueryClient } from './queryClient.js';
 
 export const CERTIFICATE_FILES_BUCKET = 'certificate-files';
 export const CERTIFICATE_FILE_TYPES = [
@@ -224,6 +225,26 @@ export async function loadSubcontractorComplianceDocuments() {
   return (Array.isArray(rows) ? rows : []).map(normalizeSubcontractorComplianceDocument);
 }
 
+export function loadComplianceAssignmentSnapshot() {
+  const session = getStoredAuthSession();
+  const userScope = String(session?.user?.id || session?.user?.email || 'anonymous');
+  return trackerQueryClient.query({
+    key: ['compliance', 'assignment-warnings', userScope],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const [certificates, documents] = await Promise.all([
+        loadInsuranceCertificates(),
+        loadSubcontractorComplianceDocuments(),
+      ]);
+      return { certificates, documents };
+    },
+  });
+}
+
+export function invalidateComplianceAssignmentSnapshot() {
+  trackerQueryClient.invalidateQueries(['compliance', 'assignment-warnings']);
+}
+
 export async function loadSubcontractorTaxIdStatuses() {
   const response = await fetchAuthorizedSupabase(
     '/rest/v1/rpc/get_subcontractor_tax_id_statuses',
@@ -345,7 +366,9 @@ export async function saveInsuranceCertificate(certificate) {
     'Insurance certificate save',
   );
   if (!response.ok) await readApiError(response, 'Unable to save the insurance certificate.');
-  return normalizeInsuranceCertificate(await response.json());
+  const saved = normalizeInsuranceCertificate(await response.json());
+  invalidateComplianceAssignmentSnapshot();
+  return saved;
 }
 
 export async function deleteInsuranceCertificate(certificate) {
@@ -369,6 +392,7 @@ export async function deleteInsuranceCertificate(certificate) {
       storagePath: deleted.sourcePath,
     }).catch(() => {});
   }
+  invalidateComplianceAssignmentSnapshot();
   return deleted;
 }
 
@@ -447,7 +471,9 @@ export async function saveSubcontractorComplianceDocument(document) {
     'Compliance document save',
   );
   if (!response.ok) await readApiError(response, 'Unable to save the compliance document.');
-  return normalizeSubcontractorComplianceDocument(await response.json());
+  const saved = normalizeSubcontractorComplianceDocument(await response.json());
+  invalidateComplianceAssignmentSnapshot();
+  return saved;
 }
 
 export async function uploadSubcontractorComplianceDocument(file, document) {
@@ -526,6 +552,7 @@ export async function deleteSubcontractorComplianceDocument(document) {
   if (!response.ok) await readApiError(response, 'Unable to delete the compliance document.');
   const deleted = normalizeSubcontractorComplianceDocument(await response.json());
   await deleteCertificateFile(deleted).catch(() => {});
+  invalidateComplianceAssignmentSnapshot();
   return deleted;
 }
 

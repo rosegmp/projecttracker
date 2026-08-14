@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeAssignees } from '../utils/assignees.js';
 import { renderModalPortal } from './AppDialogs.jsx';
+import FluentIcon from './FluentIcon.jsx';
 
-export default function AssigneeMultiSelect({ value, options = [], onChange, disabled = false, className = '' }) {
+export default function AssigneeMultiSelect({ value, options = [], warnings = new Map(), onChange, onAddPerson = null, disabled = false, className = '' }) {
   const buttonRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -18,9 +19,16 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
       ? resolvedOptions.filter((option) => option.toLocaleLowerCase().includes(query))
       : resolvedOptions;
   }, [resolvedOptions, searchQuery]);
+  const warningFor = (option) => warnings?.get?.(option) || warnings?.[option] || null;
+  const selectedWarnings = selected.map((option) => ({ option, warning: warningFor(option) })).filter((item) => item.warning);
 
   function toggle(option, checked) {
     onChange(checked ? [...selected, option] : selected.filter((item) => item !== option));
+  }
+
+  function addPerson() {
+    setOpen(false);
+    onAddPerson?.();
   }
 
   const updatePosition = useCallback(() => {
@@ -55,14 +63,19 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
     <div className={`assignee-multi-select${className ? ` ${className}` : ''}`}>
       <button
         ref={buttonRef}
-        className="assignee-multi-trigger"
+        className={`assignee-multi-trigger${selectedWarnings.length ? ' has-compliance-warning' : ''}`}
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        {selected.length ? `${selected.length} selected` : 'Unassigned'}
+        <span>{selected.length ? `${selected.length} selected` : 'Unassigned'}</span>
+        {selectedWarnings.length ? (
+          <span className="assignee-trigger-warning" title={`${selectedWarnings.length} selected subcontractor${selectedWarnings.length === 1 ? '' : 's'} need compliance attention`} aria-label={`${selectedWarnings.length} compliance warning${selectedWarnings.length === 1 ? '' : 's'}`}>
+            <FluentIcon name="warning" size={16} />
+          </span>
+        ) : null}
       </button>
       {open ? renderModalPortal(
         <div className="assignee-picker-layer" onClick={() => setOpen(false)}>
@@ -76,7 +89,21 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
           >
             <div className="assignee-picker-header">
               <strong>Assignees</strong>
-              <span>{selected.length ? `${selected.length} selected` : 'None selected'}</span>
+              <div className="assignee-picker-header-actions">
+                <span>{selected.length ? `${selected.length} selected` : 'None selected'}</span>
+                {onAddPerson ? (
+                  <button
+                    className="button secondary assignee-add-person-button"
+                    type="button"
+                    onClick={addPerson}
+                    disabled={disabled}
+                    title="Add person"
+                    aria-label="Add person"
+                  >
+                    <FluentIcon name="add" />
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="assignee-picker-search">
               <input
@@ -89,22 +116,44 @@ export default function AssigneeMultiSelect({ value, options = [], onChange, dis
               />
             </div>
             <div className="assignee-multi-options" role="group" aria-label="Assignees">
-              {filteredOptions.length ? filteredOptions.map((option) => (
-                <label key={option} className="assignee-multi-option">
+              {filteredOptions.length ? filteredOptions.map((option) => {
+                const warning = warningFor(option);
+                return (
+                <label key={option} className={`assignee-multi-option${warning ? ' has-compliance-warning' : ''}`}>
                   <input
                     type="checkbox"
                     checked={selected.includes(option)}
                     onChange={(event) => toggle(option, event.target.checked)}
                     disabled={disabled}
                   />
-                  <span>{option}</span>
+                  <span className="assignee-option-label">{option}</span>
+                  {warning ? (
+                    <span className="assignee-option-warning" title={warning.message} aria-label={warning.message}>
+                      <FluentIcon name="warning" size={17} />
+                    </span>
+                  ) : null}
                 </label>
-              )) : (
+                );
+              }) : (
                 <span className="assignee-multi-empty">
                   {resolvedOptions.length ? 'No assignees match your search.' : 'Add a person to assign this item.'}
                 </span>
               )}
             </div>
+            {warnings?.loadStatus === 'error' ? (
+              <div className="assignee-compliance-warning is-unavailable" role="status">
+                <FluentIcon name="warning" size={18} />
+                <span>Compliance status is temporarily unavailable. Assignment is still allowed.</span>
+              </div>
+            ) : null}
+            {selectedWarnings.length ? (
+              <div className="assignee-compliance-warning" role="status">
+                <FluentIcon name="warning" size={18} />
+                <span>
+                  {selectedWarnings.map(({ option, warning }) => `${option}: ${warning.missing.join(', ')}`).join(' · ')}. Assignment is still allowed.
+                </span>
+              </div>
+            ) : null}
             <div className="assignee-picker-actions">
               {selected.length ? (
                 <button className="button secondary" type="button" onClick={() => onChange([])} disabled={disabled}>Clear</button>

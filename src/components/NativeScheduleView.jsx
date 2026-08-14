@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
-  createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
+  addProjectTaskLocation, createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
   saveProjectInspection, updateProject, updateProjectAndTasks, updateProjects, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import {
@@ -29,6 +29,7 @@ import {
   useVirtualRange,
 } from '../utils/virtualization.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { formatAssignees, getScheduleAssignees, getTaskAssignees, scheduleAssigneeFields, taskAssigneeFields } from '../utils/assignees.js';
 import { normalizeStepStatus } from '../utils/stepStatus.js';
 
@@ -287,6 +288,7 @@ export default function NativeScheduleView({
     () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
+  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || []);
 
   const tasksByProject = useMemo(() => {
     const map = new Map();
@@ -1393,6 +1395,7 @@ export default function NativeScheduleView({
       id: taskLike.taskId || taskLike.entityId,
       label: taskLike.label || '',
       projectId: taskLike.projectId || taskLike.parentProjectId || '',
+      location: taskLike.location || '',
       due: taskLike.due || taskLike.start || '',
       assignees: getTaskAssignees(taskLike),
       done: !!taskLike.done,
@@ -1400,7 +1403,24 @@ export default function NativeScheduleView({
   }
 
   function updateTaskDraft(field, value) {
-    setTaskDraft((current) => (current ? { ...current, [field]: value } : current));
+    setTaskDraft((current) => {
+      if (!current) return current;
+      if (field === 'projectId' && value !== current.projectId) return { ...current, projectId: value, location: '' };
+      return { ...current, [field]: value };
+    });
+  }
+
+  async function handleAddTaskLocation(projectId, location) {
+    if (!visibleProjects.some((project) => project.id === projectId)) throw new Error('This project is not available.');
+    const mutationKey = ['project', projectId, 'locations'];
+    beginMutation(mutationKey);
+    try {
+      const result = await addProjectTaskLocation(dataRef.current, projectId, location);
+      if (result.nextState !== dataRef.current) commitScheduleState(result.nextState);
+      return result.location;
+    } finally {
+      endMutation(mutationKey);
+    }
   }
 
   function startCreateTaskAssignee(target = 'task') {
@@ -1428,6 +1448,7 @@ export default function NativeScheduleView({
       const nextState = await updateTask(data, taskDraft.id, {
         label: taskDraft.label.trim(),
         projectId: taskDraft.projectId || '',
+        location: taskDraft.location || '',
         due: taskDraft.due || '',
         ...taskAssigneeFields(taskDraft.assignees),
         done: !!taskDraft.done,
@@ -2980,6 +3001,7 @@ export default function NativeScheduleView({
         type={editorDraft?.type}
         projects={visibleProjects}
         assigneeOptions={taskAssigneeOptions}
+        complianceWarnings={complianceWarnings}
         saving={editorSaving}
         onChange={updateEditorDraft}
         onOpenPreds={openEditorPredecessors}
@@ -3027,10 +3049,13 @@ export default function NativeScheduleView({
       {taskDraft ? <TaskModal
         draft={taskDraft}
         projects={visibleProjects}
+        locationOptions={visibleProjects.find((project) => project.id === taskDraft.projectId)?.locations || []}
         assigneeOptions={taskAssigneeOptions}
+        complianceWarnings={complianceWarnings}
         saving={taskSaving}
         onChange={updateTaskDraft}
         onAddPerson={startCreateTaskAssignee}
+        onAddLocation={handleAddTaskLocation}
         onClose={() => setTaskDraft(null)}
         onSave={handleSaveTaskDraft}
         onDelete={handleDeleteTaskDraft}

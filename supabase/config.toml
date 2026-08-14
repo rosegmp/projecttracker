@@ -7,5 +7,9 @@ verify_jwt = true
 verify_jwt = true
 static_files = [ "./functions/send-project-notification/attachments/*.pdf" ]
 
+[functions.send-compliance-reminders]
+verify_jwt = false
+static_files = [ "./functions/send-compliance-reminders/attachments/*.pdf" ]
+
 [functions.manage-subcontractor-tax-id]
 verify_jwt = true

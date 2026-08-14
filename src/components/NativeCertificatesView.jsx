@@ -246,7 +246,7 @@ function CertificateModal({
           </label>
           <label className="certificate-checkbox-field">
             <input type="checkbox" checked={draft.additionalInsured} onChange={(event) => onChange('additionalInsured', event.target.checked)} />
-            <span>Certificate holder is additional insured</span>
+            <span>Certificate holder is an additional insured for General Liability</span>
           </label>
           <label>
             <span>Extraction confidence</span>
@@ -1794,7 +1794,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                                   'workmens compensation',
                                 ])}</strong>
                               </div>
-                              <div><span>Additional insured</span><strong>{certificate.additionalInsured ? 'Yes' : 'No'}</strong></div>
+                              <div><span>General Liability additional insured</span><strong>{certificate.additionalInsured ? 'Yes' : 'No'}</strong></div>
                             </div>
                             <button
                               className="certificate-coverage-toggle"
