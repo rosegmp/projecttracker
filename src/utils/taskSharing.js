@@ -70,6 +70,7 @@ export function buildTaskShareContent(tasks = [], projects = []) {
           taskNumber += 1;
           const prefix = selectedTasks.length > 1 ? `${taskNumber}. ` : '';
           lines.push(`${prefix}${task.label}`);
+          if (task.location) lines.push(`Location: ${task.location}`);
           if (task.due) lines.push(`Due date: ${formatShortDate(task.due)}`);
         });
       });

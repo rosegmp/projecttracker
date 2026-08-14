@@ -61,6 +61,7 @@ export function ScheduleItemModal({
   type,
   projects,
   assigneeOptions = [],
+  complianceWarnings,
   saving,
   onChange,
   onOpenPreds,
@@ -146,6 +147,7 @@ export function ScheduleItemModal({
               <AssigneeMultiSelect
                 value={draft.assignees}
                 options={assigneeOptions}
+                warnings={complianceWarnings}
                 onChange={(value) => onChange('assignees', value)}
                 disabled={saving}
               />

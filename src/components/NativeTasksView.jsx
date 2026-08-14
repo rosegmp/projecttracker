@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskAssigneeDirectory, buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
-  createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
+  addProjectTaskLocation, createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
   getStoredAuthSession, queueTaskUpdateOffline, updatePerson, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
@@ -20,6 +20,7 @@ import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useVirtualRange } from '../utils/virtualization.js';
 import { isNativeAndroidApp, isShareDismissed, openMailComposer, shareText } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { formatAssignees, getTaskAssignees, taskAssigneeFields } from '../utils/assignees.js';
 import { buildTaskShareContent } from '../utils/taskSharing.js';
 
@@ -97,13 +98,13 @@ export default function NativeTasksView({
 }) {
   const defaultTaskProjectId = lockedProjectId || (projectFilter !== 'all' ? projectFilter : '');
   const nativeAndroid = isNativeAndroidApp();
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('open');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
-  const [newTask, setNewTask] = useState({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
+  const [newTask, setNewTask] = useState({ label: '', projectId: defaultTaskProjectId, location: '', due: '', assignees: [] });
   const [mobileCreateTaskOpen, setMobileCreateTaskOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState('');
-  const [editDraft, setEditDraft] = useState({ label: '', projectId: '', due: '', assignees: [], attachments: [] });
+  const [editDraft, setEditDraft] = useState({ label: '', projectId: '', location: '', due: '', assignees: [], attachments: [] });
   const [newTaskFiles, setNewTaskFiles] = useState([]);
   const [editPendingFiles, setEditPendingFiles] = useState([]);
   const [createAttachmentInputKey, setCreateAttachmentInputKey] = useState(0);
@@ -143,7 +144,7 @@ export default function NativeTasksView({
     const token = String(createRequest?.token || '');
     if (!token || token === lastCreateRequestTokenRef.current) return;
     lastCreateRequestTokenRef.current = token;
-    setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
+    setNewTask({ label: '', projectId: defaultTaskProjectId, location: '', due: '', assignees: [] });
     setNewTaskFiles([]);
     setMobileCreateTaskOpen(true);
     onCreateRequestHandled();
@@ -181,7 +182,7 @@ export default function NativeTasksView({
     setNewTask((current) => {
       if (current.projectId === defaultTaskProjectId) return current;
       if (current.projectId && current.projectId !== lockedProjectId && current.projectId !== projectFilter) return current;
-      return { ...current, projectId: defaultTaskProjectId };
+      return { ...current, projectId: defaultTaskProjectId, location: '' };
     });
   }, [defaultTaskProjectId, lockedProjectId, projectFilter]);
 
@@ -189,6 +190,10 @@ export default function NativeTasksView({
     () => new Map(visibleProjects.map((project) => [project.id, project])),
     [visibleProjects],
   );
+  const getProjectLocations = useCallback((projectId) => {
+    const locations = projectMap.get(projectId)?.locations;
+    return Array.isArray(locations) ? locations : [];
+  }, [projectMap]);
   const assigneeOptions = useMemo(
     () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
     [data.employees, data.subs],
@@ -197,6 +202,7 @@ export default function NativeTasksView({
     () => buildTaskAssigneeDirectory(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
+  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || []);
   const selectionLinksByTaskId = useMemo(() => {
     const links = new Map();
     visibleProjects.forEach((project) => {
@@ -296,14 +302,18 @@ export default function NativeTasksView({
     filteredTasks.forEach((task) => {
       const keys = groupBy === 'project'
         ? [task.projectId || '__no_project__']
-        : getTaskAssignees(task);
+        : groupBy === 'location'
+          ? [task.location || '__no_location__']
+          : getTaskAssignees(task);
       (keys.length ? keys : ['Unassigned']).forEach((key) => {
         if (!groups.has(key)) {
           groups.set(key, {
             key,
             label: groupBy === 'project'
               ? projectMap.get(key)?.name || 'No project assigned'
-              : key,
+              : groupBy === 'location'
+                ? (key === '__no_location__' ? 'No location' : key)
+                : key,
             tasks: [],
           });
         }
@@ -312,8 +322,8 @@ export default function NativeTasksView({
     });
     return [...groups.values()]
       .sort((a, b) => {
-        if (a.label === 'Unassigned' || a.label === 'No project assigned') return 1;
-        if (b.label === 'Unassigned' || b.label === 'No project assigned') return -1;
+        if (['Unassigned', 'No project assigned', 'No location'].includes(a.label)) return 1;
+        if (['Unassigned', 'No project assigned', 'No location'].includes(b.label)) return -1;
         return a.label.localeCompare(b.label);
       });
   }, [filteredTasks, groupBy, projectMap]);
@@ -346,6 +356,33 @@ export default function NativeTasksView({
   function commitTaskState(nextState) {
     dataRef.current = nextState;
     onStateChange(nextState);
+  }
+
+  function handleNewTaskChange(field, value) {
+    setNewTask((current) => (
+      field === 'projectId' && value !== current.projectId
+        ? { ...current, projectId: value, location: '' }
+        : { ...current, [field]: value }
+    ));
+  }
+
+  function handleEditDraftChange(field, value) {
+    setEditDraft((current) => (
+      field === 'projectId' && value !== current.projectId
+        ? { ...current, projectId: value, location: '' }
+        : { ...current, [field]: value }
+    ));
+  }
+
+  async function handleAddTaskLocation(projectId, requestedLocation) {
+    const location = String(requestedLocation || '').trim().replace(/\s+/g, ' ');
+    if (!projectId || !location) throw new Error('Choose a project and enter a location.');
+    return runMutation(['project', projectId, 'locations'], async () => {
+      if (!projectMap.has(projectId)) throw new Error('This project is not available.');
+      const result = await addProjectTaskLocation(dataRef.current, projectId, location);
+      if (result.nextState !== dataRef.current) commitTaskState(result.nextState);
+      return result.location;
+    });
   }
 
   function showTaskSaveMessage(message) {
@@ -533,7 +570,7 @@ export default function NativeTasksView({
         createdAt: new Date().toISOString(),
       });
       commitTaskState(nextState);
-      setNewTask({ label: '', projectId: defaultTaskProjectId, due: '', assignees: [] });
+      setNewTask({ label: '', projectId: defaultTaskProjectId, location: '', due: '', assignees: [] });
       setNewTaskFiles([]);
       setCreateAttachmentInputKey((current) => current + 1);
       setMobileCreateTaskOpen(false);
@@ -592,6 +629,7 @@ export default function NativeTasksView({
     setEditDraft({
       label: task.label,
       projectId: task.projectId || '',
+      location: task.location || '',
       due: task.due || '',
       assignees: getTaskAssignees(task),
       attachments: Array.isArray(task.attachments) ? task.attachments : [],
@@ -637,7 +675,7 @@ export default function NativeTasksView({
 
   function handleEditCancel() {
     setEditingTaskId('');
-    setEditDraft({ label: '', projectId: '', due: '', assignees: [], attachments: [] });
+    setEditDraft({ label: '', projectId: '', location: '', due: '', assignees: [], attachments: [] });
     setEditPendingFiles([]);
     setEditAttachmentInputKey((current) => current + 1);
   }
@@ -661,6 +699,7 @@ export default function NativeTasksView({
       const nextState = await updateTaskWithOfflineFallback(dataRef.current, task, {
         label: editDraft.label.trim(),
         projectId: editDraft.projectId || '',
+        location: editDraft.location || '',
         due: editDraft.due,
         ...taskAssigneeFields(editDraft.assignees),
         attachments: nextAttachments,
@@ -825,6 +864,7 @@ export default function NativeTasksView({
             <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
               <option value="none">None</option>
               {!embedded && !lockedProjectId ? <option value="project">Project</option> : null}
+              <option value="location">Location</option>
               <option value="assignee">Assignee</option>
             </select>
           </label>
@@ -838,13 +878,13 @@ export default function NativeTasksView({
                     ? filter.projectId
                     : 'all',
                 );
-                setStatusFilter(['open', 'completed'].includes(filter.status) ? filter.status : 'all');
+                setStatusFilter(['all', 'open', 'completed'].includes(filter.status) ? filter.status : 'open');
                 setAssigneeFilter(
                   filter.assignee === '__unassigned__' || taskAssigneeFilterOptions.includes(filter.assignee)
                     ? filter.assignee
                     : 'all',
                 );
-                setGroupBy(['project', 'assignee'].includes(filter.groupBy) ? filter.groupBy : 'none');
+                setGroupBy(['project', 'location', 'assignee'].includes(filter.groupBy) ? filter.groupBy : 'none');
               }}
               disabled={false}
             />
@@ -861,10 +901,13 @@ export default function NativeTasksView({
           </button>
           <TaskCreateForm
             task={newTask}
-            onTaskChange={(field, value) => setNewTask((current) => ({ ...current, [field]: value }))}
+            onTaskChange={handleNewTaskChange}
             lockedProjectName={lockedProjectId ? projectMap.get(lockedProjectId)?.name || 'Project' : ''}
             projects={visibleProjects}
+            locationOptions={getProjectLocations(newTask.projectId || defaultTaskProjectId)}
+            onAddLocation={handleAddTaskLocation}
             assigneeOptions={assigneeOptions}
+            complianceWarnings={complianceWarnings}
             onAddPerson={startCreateAssignee}
             saving={createSaving}
             attachmentInputKey={createAttachmentInputKey}
@@ -950,7 +993,11 @@ export default function NativeTasksView({
                       assigneeLabel={formatAssignees(getTaskAssignees(task), '')}
                       assigneeEmails={getTaskAssignees(task).map((name) => assigneeDirectory.get(name)?.email).filter(Boolean)}
                       assigneeOptions={assigneeOptions}
+                      complianceWarnings={complianceWarnings}
+                      onAddPerson={startCreateAssignee}
                       projectOptions={visibleProjects}
+                      locationOptions={getProjectLocations(editDraft.projectId)}
+                      onAddLocation={handleAddTaskLocation}
                       projectName={projectMap.get(task.projectId)?.name}
                       selectionLink={getTaskSelectionLink(task)}
                       editingTaskId={editingTaskId}
@@ -958,9 +1005,7 @@ export default function NativeTasksView({
                       editPendingFiles={editPendingFiles}
                       onEditStart={handleEditStart}
                       onEditCancel={handleEditCancel}
-                      onEditDraftChange={(field, value) =>
-                        setEditDraft((current) => ({ ...current, [field]: value }))
-                      }
+                      onEditDraftChange={handleEditDraftChange}
                       editAttachmentInputRef={editAttachmentInputRef}
                       editAttachmentInputKey={editAttachmentInputKey}
                       onOpenEditAttachmentPicker={() => openAttachmentPicker(editAttachmentInputRef)}
@@ -1011,7 +1056,11 @@ export default function NativeTasksView({
                   assigneeLabel={formatAssignees(getTaskAssignees(task), '')}
                   assigneeEmails={getTaskAssignees(task).map((name) => assigneeDirectory.get(name)?.email).filter(Boolean)}
                   assigneeOptions={assigneeOptions}
+                  complianceWarnings={complianceWarnings}
+                  onAddPerson={startCreateAssignee}
                   projectOptions={visibleProjects}
+                  locationOptions={getProjectLocations(editDraft.projectId)}
+                  onAddLocation={handleAddTaskLocation}
                   projectName={projectMap.get(task.projectId)?.name}
                   selectionLink={getTaskSelectionLink(task)}
                   editingTaskId={editingTaskId}
@@ -1019,9 +1068,7 @@ export default function NativeTasksView({
                   editPendingFiles={editPendingFiles}
                   onEditStart={handleEditStart}
                   onEditCancel={handleEditCancel}
-                  onEditDraftChange={(field, value) =>
-                    setEditDraft((current) => ({ ...current, [field]: value }))
-                  }
+                  onEditDraftChange={handleEditDraftChange}
                   editAttachmentInputRef={editAttachmentInputRef}
                   editAttachmentInputKey={editAttachmentInputKey}
                   onOpenEditAttachmentPicker={() => openAttachmentPicker(editAttachmentInputRef)}
@@ -1106,10 +1153,13 @@ export default function NativeTasksView({
         <div className="modal-backdrop task-create-modal-backdrop" onClick={() => { if (!createSaving) setMobileCreateTaskOpen(false); }}>
           <TaskCreateForm
             task={newTask}
-            onTaskChange={(field, value) => setNewTask((current) => ({ ...current, [field]: value }))}
+            onTaskChange={handleNewTaskChange}
             lockedProjectName={lockedProjectId ? projectMap.get(lockedProjectId)?.name || 'Project' : ''}
             projects={visibleProjects}
+            locationOptions={getProjectLocations(newTask.projectId || defaultTaskProjectId)}
+            onAddLocation={handleAddTaskLocation}
             assigneeOptions={assigneeOptions}
+            complianceWarnings={complianceWarnings}
             onAddPerson={startCreateAssignee}
             saving={createSaving}
             attachmentInputKey={createAttachmentInputKey}

@@ -277,6 +277,37 @@ test('projectless task deep link opens the top-level task and highlights it', as
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
 
+test('tasks show only open items by default while retaining all and completed filters', async ({ page }) => {
+  const appUserId = 'task-default-filter-admin';
+  const openTask = taskRow('task-default-open', '');
+  openTask.data.label = 'Open default task';
+  const completedTask = taskRow('task-default-completed', '');
+  completedTask.data.label = 'Completed filtered task';
+  completedTask.data.done = true;
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'task-default-filter-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000030',
+    tasks: [openTask, completedTask],
+  });
+
+  await page.goto('/?tab=tasks');
+
+  const openFilter = page.getByRole('button', { name: 'Open (1)' });
+  await expect(openFilter).toHaveClass(/active/);
+  await expect(page.getByText('Open default task')).toBeVisible();
+  await expect(page.getByText('Completed filtered task')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Completed (1)' }).click();
+  await expect(page.getByText('Completed filtered task')).toBeVisible();
+  await expect(page.getByText('Open default task')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'All (2)' }).click();
+  await expect(page.getByText('Open default task')).toBeVisible();
+  await expect(page.getByText('Completed filtered task')).toBeVisible();
+});
+
 test('global search opens from the keyboard and navigates to an exact task', async ({ page }) => {
   const appUserId = 'global-search-admin';
   const projectId = 'global-search-project';
@@ -604,8 +635,9 @@ test('staff task updates save on device offline and synchronize after reconnect'
   const taskCard = page.locator('article.task-row-card').filter({ hasText: 'Existing staff task' });
   await expect(taskCard).toBeVisible();
   await context.setOffline(true);
-  await taskCard.locator('input[type="checkbox"]').check();
-  await expect(taskCard.getByText('Saved on device')).toBeVisible();
+  await taskCard.locator('input[type="checkbox"]').evaluate((checkbox) => checkbox.click());
+  await expect(page.getByText('Changes saved on this device')).toBeVisible();
+  await expect(page.getByText('Open (0)')).toBeVisible();
 
   const queued = await page.evaluate((userId) => JSON.parse(
     window.localStorage.getItem(`project-tracker:offline-operations:v1:${userId}`) || '[]',
@@ -771,6 +803,8 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
   const existingTaskId = 'staff-task-1';
   const projects = [projectRow(projectId, appUserId)];
   const tasks = [taskRow(existingTaskId, projectId)];
+  projects[0].data.locations = ['Kitchen'];
+  tasks[0].data.location = 'Kitchen';
   let createdTaskPayload = null;
   let existingTaskSaveAttempts = 0;
 
@@ -799,6 +833,12 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
       }
       if (url.pathname.endsWith('/rpc/apply_tracker_batch')) {
         const operation = request.postDataJSON()?.p_operations?.[0];
+        if (operation?.table === 'projects' && operation?.id === projectId) {
+          return {
+            status: 200,
+            body: [{ table: 'projects', id: projectId, version: 2, deleted: false }],
+          };
+        }
         if (operation?.id === existingTaskId) {
           existingTaskSaveAttempts += 1;
           return {
@@ -815,6 +855,10 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
   const createForm = page.locator('form.task-create-desktop');
   await createForm.getByPlaceholder('Task name').fill('Playwright created task');
   await createForm.locator('select').first().selectOption(projectId);
+  await createForm.getByRole('button', { name: 'Add location' }).click();
+  await createForm.getByLabel('New task location').fill('Garage');
+  await createForm.getByRole('button', { name: 'Save location' }).click();
+  await expect(createForm.getByLabel('Task location')).toHaveValue('Garage');
   await createForm.getByRole('button', { name: 'Add task', exact: true }).click();
 
   await expect(page.getByText('Task saved')).toBeVisible();
@@ -823,10 +867,14 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
     p_task_data: {
       label: 'Playwright created task',
       projectId,
+      location: 'Garage',
       done: false,
     },
     p_expected_version: 0,
   });
+  await page.getByLabel('Group by').selectOption('location');
+  await expect(page.getByRole('heading', { name: 'Garage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Kitchen' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Select all visible' }).click();
   await expect(page.getByText('2 selected', { exact: true })).toBeVisible();

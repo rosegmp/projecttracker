@@ -2,10 +2,11 @@ import React from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 import { isNativeAndroidApp } from '../platform/platformAdapter.js';
+import TaskLocationField from './TaskLocationField.jsx';
 
 const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
 
-export function TaskModal({ draft, projects, assigneeOptions, saving, onChange, onAddPerson, onClose, onSave, onDelete }) {
+export function TaskModal({ draft, projects, locationOptions, assigneeOptions, complianceWarnings, saving, onChange, onAddPerson, onAddLocation, onClose, onSave, onDelete }) {
   if (!draft) return null;
 
   return renderModalPortal(
@@ -23,6 +24,17 @@ export function TaskModal({ draft, projects, assigneeOptions, saving, onChange, 
             <span>Task name</span>
             <input value={draft.label} onChange={(event) => onChange('label', event.target.value)} />
           </label>
+          <div className="project-form-field">
+            <span>Location</span>
+            <TaskLocationField
+              projectId={draft.projectId}
+              locations={locationOptions}
+              value={draft.location || ''}
+              onChange={(value) => onChange('location', value)}
+              onAddLocation={onAddLocation}
+              disabled={saving}
+            />
+          </div>
           <label>
             <span>Project</span>
             <select value={draft.projectId} onChange={(event) => onChange('projectId', event.target.value)}>
@@ -40,19 +52,14 @@ export function TaskModal({ draft, projects, assigneeOptions, saving, onChange, 
           </label>
           <label>
             <span>Assignees</span>
-            <div className="inline-action-field">
-              <AssigneeMultiSelect
-                value={draft.assignees}
-                options={assigneeOptions}
-                onChange={(value) => onChange('assignees', value)}
-                disabled={saving}
-              />
-              {onAddPerson ? (
-                <button className="button secondary" type="button" onClick={onAddPerson} disabled={saving}>
-                  Add person
-                </button>
-              ) : null}
-            </div>
+            <AssigneeMultiSelect
+              value={draft.assignees}
+              options={assigneeOptions}
+              warnings={complianceWarnings}
+              onChange={(value) => onChange('assignees', value)}
+              onAddPerson={onAddPerson}
+              disabled={saving}
+            />
           </label>
           <label className="settings-toggle">
             <input

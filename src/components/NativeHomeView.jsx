@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createTask, loadAuditEvents, updateTask } from '../services/trackerData.js';
+import { addProjectTaskLocation, createTask, loadAuditEvents, updateTask } from '../services/trackerData.js';
 import { loadInsuranceCertificates, loadSubcontractorComplianceDocuments } from '../services/insuranceCertificates.js';
 import { loadPortalItemsForProjects, loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
 import { reportError } from '../services/observability.js';
@@ -24,8 +24,10 @@ import {
 } from '../utils/homeView.js';
 import { loadFourDayForecast } from '../utils/weather.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
 import FluentIcon from './FluentIcon.jsx';
+import TaskLocationField from './TaskLocationField.jsx';
 
 const HOME_LIST_LIMIT = 5;
 const ACTION_CENTER_LIMIT = 8;
@@ -234,7 +236,8 @@ function WeatherWidget({ forecast, loading, error, onRefresh }) {
   );
 }
 
-function QuickTaskForm({ draft, projects, assigneeOptions, saving, message, onChange, onSubmit }) {
+function QuickTaskForm({ draft, projects, locationOptions, assigneeOptions, complianceWarnings, saving, message, onChange, onAddLocation, onSubmit }) {
+  const complianceWarning = complianceWarnings?.get?.(draft.assignee) || null;
   return (
     <form className="home-quick-task" onSubmit={onSubmit}>
       <div><p className="eyebrow">Quick action</p><h2>Add a task</h2></div>
@@ -247,10 +250,19 @@ function QuickTaskForm({ draft, projects, assigneeOptions, saving, message, onCh
         <input type="date" value={draft.due} onChange={(event) => onChange('due', event.target.value)} aria-label="Task due date" />
         <select value={draft.assignee} onChange={(event) => onChange('assignee', event.target.value)} aria-label="Task assignee">
           <option value="">Unassigned</option>
-          {assigneeOptions.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
+          {assigneeOptions.map((assignee) => <option key={assignee} value={assignee}>{complianceWarnings?.has?.(assignee) ? `${assignee} (Needs compliance)` : assignee}</option>)}
         </select>
+        <TaskLocationField
+          projectId={draft.projectId}
+          locations={locationOptions}
+          value={draft.location || ''}
+          onChange={(value) => onChange('location', value)}
+          onAddLocation={onAddLocation}
+          disabled={saving}
+        />
         <button className={`button primary${saving ? ' is-loading' : ''}`} type="submit" disabled={saving || !draft.label.trim()}><FluentIcon name="add" />{saving ? 'Adding…' : 'Add task'}</button>
       </div>
+      {complianceWarning ? <p className="home-quick-task-compliance-warning"><FluentIcon name="warning" size={17} />{complianceWarning.message} Assignment is still allowed.</p> : null}
       <p className={`home-quick-task-message${message?.tone ? ` ${message.tone}` : ''}`} aria-live="polite">{message?.text || ''}</p>
     </form>
   );
@@ -275,9 +287,10 @@ export default function NativeHomeView({
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState('');
   const [weatherVisible, setWeatherVisible] = useState(() => readWeatherPreference(activeUser));
-  const [quickTask, setQuickTask] = useState({ label: '', projectId: '', due: '', assignee: '' });
+  const [quickTask, setQuickTask] = useState({ label: '', projectId: '', location: '', due: '', assignee: '' });
   const [quickTaskMessage, setQuickTaskMessage] = useState(null);
   const [certificates, setCertificates] = useState([]);
+  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || [], canEdit);
   const [complianceDocuments, setComplianceDocuments] = useState([]);
   const [certificateLoadError, setCertificateLoadError] = useState('');
   const [portalItems, setPortalItems] = useState([]);
@@ -589,6 +602,7 @@ export default function NativeHomeView({
           id: `t${Date.now()}`,
           label: quickTask.label,
           projectId: quickTask.projectId,
+          location: quickTask.location,
           due: quickTask.due,
           ...taskAssigneeFields(quickTask.assignee ? [quickTask.assignee] : []),
           createdAt: new Date().toISOString(),
@@ -601,6 +615,26 @@ export default function NativeHomeView({
     } catch (error) {
       setQuickTaskMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Unable to add the task.' });
     }
+  }
+
+  function updateQuickTask(field, value) {
+    setQuickTask((current) => (
+      field === 'projectId' && value !== current.projectId
+        ? { ...current, projectId: value, location: '' }
+        : { ...current, [field]: value }
+    ));
+  }
+
+  async function addQuickTaskLocation(projectId, location) {
+    if (!visibleProjects.some((project) => project.id === projectId)) throw new Error('This project is not available.');
+    return runMutation(['project', projectId, 'locations'], async () => {
+      const result = await addProjectTaskLocation(dataRef.current, projectId, location);
+      if (result.nextState !== dataRef.current) {
+        dataRef.current = result.nextState;
+        onStateChange(result.nextState);
+      }
+      return result.location;
+    });
   }
 
   const taskComplete = canEdit ? (task) => void completeTask(task) : null;
@@ -640,7 +674,7 @@ export default function NativeHomeView({
         ].filter(Boolean).join(' ')}
       />
 
-      {canEdit ? <QuickTaskForm draft={quickTask} projects={visibleProjects} assigneeOptions={assigneeOptions} saving={isMutating('home:task:create')} message={quickTaskMessage} onChange={(field, value) => setQuickTask((current) => ({ ...current, [field]: value }))} onSubmit={(event) => void submitQuickTask(event)} /> : null}
+      {canEdit ? <QuickTaskForm draft={quickTask} projects={visibleProjects} locationOptions={visibleProjects.find((project) => project.id === quickTask.projectId)?.locations || []} assigneeOptions={assigneeOptions} complianceWarnings={complianceWarnings} saving={isMutating('home:task:create')} message={quickTaskMessage} onChange={updateQuickTask} onAddLocation={addQuickTaskLocation} onSubmit={(event) => void submitQuickTask(event)} /> : null}
 
       <div className="home-day-grid">
         {[

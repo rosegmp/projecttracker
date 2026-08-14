@@ -14,6 +14,7 @@ import FluentIcon from './FluentIcon.jsx';
 import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { getSearchParam, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { getScheduleAssignees, scheduleAssigneeFields } from '../utils/assignees.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
 import {
@@ -152,6 +153,7 @@ export default function NativeProjectsView({
     () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
+  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || [], !readOnly);
 
   const overviewProjects = useMemo(() => {
     const query = projectSearchQuery.trim().toLowerCase();
@@ -1166,6 +1168,7 @@ export default function NativeProjectsView({
           type="step"
           projects={visibleProjects}
           assigneeOptions={scheduleAssigneeOptions}
+          complianceWarnings={complianceWarnings}
           saving={stepSaving}
           onChange={updateProjectStepDraft}
           onOpenPreds={openProjectStepPredecessors}

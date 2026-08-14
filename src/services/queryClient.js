@@ -31,6 +31,7 @@ export class QueryClient {
     this.cache = new Map();
     this.mutations = new Map();
     this.listeners = new Set();
+    this.generation = 0;
   }
 
   subscribe(listener) {
@@ -65,6 +66,7 @@ export class QueryClient {
   }
 
   clear() {
+    this.generation += 1;
     this.cache.clear();
     this.mutations.clear();
     this.notify();
@@ -76,19 +78,24 @@ export class QueryClient {
     const cached = this.cache.get(serialized);
     if (cached?.promise) return cached.promise;
     if (!force && cached && Date.now() - cached.updatedAt < staleTime) return cached.data;
+    const generation = this.generation;
 
     const promise = (async () => {
       let attempt = 0;
       while (true) {
         try {
           const data = await queryFn({ attempt });
-          this.cache.set(serialized, { key: parts, data, updatedAt: Date.now(), promise: null, error: null });
-          this.notify();
+          if (generation === this.generation) {
+            this.cache.set(serialized, { key: parts, data, updatedAt: Date.now(), promise: null, error: null });
+            this.notify();
+          }
           return data;
         } catch (error) {
           if (attempt >= retry || !isRetryableQueryError(error)) {
-            this.cache.set(serialized, { key: parts, data: cached?.data, updatedAt: 0, promise: null, error });
-            this.notify();
+            if (generation === this.generation) {
+              this.cache.set(serialized, { key: parts, data: cached?.data, updatedAt: 0, promise: null, error });
+              this.notify();
+            }
             reportError(error, { operation: ['query', ...parts] });
             throw error;
           }

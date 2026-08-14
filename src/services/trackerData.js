@@ -43,6 +43,9 @@ function readAuthSessionFromStorage() {
 }
 
 function writeAuthSession(session) {
+  const previousIdentity = String(authSession?.user?.id || authSession?.user?.email || '').trim().toLowerCase();
+  const nextIdentity = String(session?.user?.id || session?.user?.email || '').trim().toLowerCase();
+  if (previousIdentity !== nextIdentity) trackerQueryClient.clear();
   authSession = session || null;
   if (typeof window === 'undefined') return;
   if (authSession) {
@@ -102,6 +105,7 @@ const EMPTY_SETTINGS = {
   emailNewTasksToInternalAssignees: false,
   emailNewTasksToExternalAssignees: false,
   complianceEmailTestMode: false,
+  complianceScheduledRemindersEnabled: false,
   users: [
     {
       id: 'user-admin',
@@ -478,6 +482,7 @@ function normalizeSettings(settings) {
     emailNewTasksToInternalAssignees: settings?.emailNewTasksToInternalAssignees === true,
     emailNewTasksToExternalAssignees: settings?.emailNewTasksToExternalAssignees === true,
     complianceEmailTestMode: settings?.complianceEmailTestMode === true,
+    complianceScheduledRemindersEnabled: settings?.complianceScheduledRemindersEnabled === true,
     visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     visibleProjectTabs: normalizeVisibleProjectTabs(settings?.visibleProjectTabs),
     users,
@@ -626,6 +631,12 @@ function normalizeProjectFolders(filesState) {
 function normalizeProject(project) {
   return {
     ...project,
+    locations: Array.from(new Map(
+      (Array.isArray(project?.locations) ? project.locations : [])
+        .map((value) => String(value || '').trim().replace(/\s+/g, ' '))
+        .filter(Boolean)
+        .map((value) => [value.toLocaleLowerCase(), value]),
+    ).values()),
     accessUserIds: Array.isArray(project?.accessUserIds)
       ? Array.from(new Set(project.accessUserIds.map((value) => String(value || '').trim()).filter(Boolean)))
       : [],
@@ -986,6 +997,7 @@ function normalizeTask(task = {}) {
     ...task,
     label: String(task?.label || '').trim(),
     projectId: String(task?.projectId || '').trim(),
+    location: String(task?.location || '').trim().replace(/\s+/g, ' '),
     due: String(task?.due || '').trim(),
     assignees,
     assignee: assignees[0] || '',
@@ -2686,7 +2698,7 @@ export async function loadWorkspaceCacheManifest() {
 export async function loadTrackerStartupData({ projectId = '', force = false } = {}) {
   if (force) trackerQueryClient.invalidateQueries(['startup']);
   return trackerQueryClient.query({
-    key: ['startup', 'workspace', projectId || 'portfolio'],
+    key: ['startup', 'workspace', String(authSession?.user?.id || authSession?.user?.email || 'anonymous'), projectId || 'portfolio'],
     staleTime: 15000,
     retry: 1,
     force,
@@ -2711,7 +2723,7 @@ export async function loadCurrentAppUserProfile() {
   if (!isSupabaseConfigured()) return null;
   try {
     return await trackerQueryClient.query({
-      key: ['portal', 'current-user'],
+      key: ['portal', 'current-user', String(authSession?.user?.id || authSession?.user?.email || 'anonymous')],
       staleTime: 15000,
       retry: 0,
       queryFn: () => callPortalBootstrapRpc('get_current_app_user_profile', 'Account profile'),
@@ -2831,6 +2843,7 @@ export async function createTask(currentState, payload, options = {}) {
     id: payload.id || `t${Date.now()}`,
     label: payload.label.trim(),
     projectId: payload.projectId || '',
+    location: payload.location || '',
     done: !!payload.done,
     due: payload.due || '',
     assignees: payload.assignees,
@@ -3062,6 +3075,21 @@ export async function updateProject(currentState, projectId, updates) {
   });
   notifyInspectionChange();
   return { ...currentState, projects: persisted.items, storageMode: persisted.storageMode };
+}
+
+export async function addProjectTaskLocation(currentState, projectId, requestedLocation) {
+  const location = String(requestedLocation || '').trim().replace(/\s+/g, ' ');
+  if (!projectId || !location) throw new Error('Choose a project and enter a location.');
+  const project = currentState.projects.find((item) => item.id === projectId);
+  if (!project) throw new Error('This project is not available.');
+  const locations = Array.isArray(project.locations) ? project.locations : [];
+  const existing = locations.find((item) => String(item).toLocaleLowerCase() === location.toLocaleLowerCase());
+  if (existing) return { nextState: currentState, location: existing };
+  const nextState = await updateProject(currentState, projectId, {
+    ...project,
+    locations: [...locations, location],
+  });
+  return { nextState, location };
 }
 
 async function callPortalVisibilityRpc(functionName, body, label) {

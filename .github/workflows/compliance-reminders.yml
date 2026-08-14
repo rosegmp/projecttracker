@@ -1,0 +1,53 @@
+name: Scheduled compliance reminders
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 13 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-compliance-reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    name: Send due compliance reminders
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      PRODUCTION_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      COMPLIANCE_REMINDER_SCHEDULE_TOKEN: ${{ secrets.COMPLIANCE_REMINDER_SCHEDULE_TOKEN }}
+
+    steps:
+      - name: Invoke protected reminder function
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PRODUCTION_SUPABASE_URL" || { echo "VITE_SUPABASE_URL is not configured." >&2; exit 1; }
+          test -n "$COMPLIANCE_REMINDER_SCHEDULE_TOKEN" || { echo "COMPLIANCE_REMINDER_SCHEDULE_TOKEN is not configured." >&2; exit 1; }
+          case "$PRODUCTION_SUPABASE_URL" in
+            https://oxojlwhmarafxuqvqgqg.supabase.co) ;;
+            *) echo "VITE_SUPABASE_URL does not identify the approved production project." >&2; exit 1 ;;
+          esac
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header "x-compliance-reminder-token: $COMPLIANCE_REMINDER_SCHEDULE_TOKEN" \
+            --data '{}' \
+            "$PRODUCTION_SUPABASE_URL/functions/v1/send-compliance-reminders")"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Scheduled reminder function returned HTTP $status." >&2
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            console.log(`Reminder run: ${result.status}; expiration=${result.expirationCandidates || 0}; follow-ups=${result.followupCandidates || 0}; sent=${result.sent || 0}; skipped=${result.skipped || 0}; failed=${result.failed || 0}`);
+            if ((result.failed || 0) > 0 || result.limited === true) process.exit(1);
+          ' "$response_file"

@@ -243,7 +243,7 @@ async function sendSubcontractorComplianceEmail({
   const attachments = await Promise.all([...attachmentKeys].map(loadComplianceAttachment));
   const replyTo = cleanEmail(Deno.env.get('COMPLIANCE_EMAIL_REPLY_TO') || 'rose@destinyhomesnj.com');
   const destination = replyTo || 'rose@destinyhomesnj.com';
-  const insuranceRequirements = 'The certificate must show current General Liability coverage and name Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business.';
+  const insuranceRequirements = 'The certificate must show current General Liability coverage. For General Liability only, it must name Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business; additional-insured status is not required for Workers Compensation.';
   const expirationLine = latestExpirationDate
     ? `Our records show that your insurance certificate expired on ${formatEmailDate(latestExpirationDate)}.`
     : 'Our records do not show a current insurance certificate.';
@@ -377,7 +377,7 @@ async function sendCertificateRenewalEmail({
   const contactName = requesterName || 'Roisie Engelman';
   const replyTo = cleanEmail(Deno.env.get('COMPLIANCE_EMAIL_REPLY_TO') || requesterEmail || 'rose@destinyhomesnj.com');
   const destination = replyTo || 'rose@destinyhomesnj.com';
-  const requirement = 'Please ask your insurance agent to issue an updated certificate showing current General Liability coverage and naming Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business.';
+  const requirement = 'Please ask your insurance agent to issue an updated certificate showing current General Liability coverage. For General Liability only, the certificate must name Destiny Homes LLC, 102 Destiny Way, Lakewood, NJ 08701 as an additional insured. Please include Workers Compensation coverage when it applies to your business; additional-insured status is not required for Workers Compensation.';
   const subject = `${testMode ? '[TEST] ' : ''}${expired ? 'Expired insurance certificate - updated COI required' : 'Insurance certificate renewal requested'} - ${subcontractorName}`.slice(0, 240);
   const testHeader = testMode ? `TEST MODE - Intended subcontractor email: ${recipientEmail}\n\n` : '';
   const text = `${testHeader}Hello ${subcontractorName},\n\n${expirationLine}\n\n${requirement}\n\nA redacted sample certificate showing the requested format is attached. Please reply to this email with the renewed certificate, or send it to ${destination}.\n\nSincerely,\n\n${contactName}\nDestiny Homes LLC`;

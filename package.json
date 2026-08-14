@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-regression-tests.mjs",
+    "test:edge": "node scripts/check-edge-functions.mjs",
     "test:e2e": "playwright test",
     "test:e2e:server": "vite build && vite preview --host 127.0.0.1 --port 4173",
     "test:staging": "node scripts/run-staging-application-tests.mjs",
@@ -39,6 +40,7 @@
     "@playwright/test": "^1.61.1",
     "@sentry/vite-plugin": "5.4.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "esbuild": "0.21.5",
     "vite": "^5.4.10"
   }
 }
