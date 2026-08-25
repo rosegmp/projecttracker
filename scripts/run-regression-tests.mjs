@@ -1954,8 +1954,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 7/);
-      assert.match(buildSource, /versionName "1\.6\.0"/);
+      assert.match(buildSource, /versionCode 8/);
+      assert.match(buildSource, /versionName "1\.7\.0"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
