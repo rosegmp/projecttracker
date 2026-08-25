@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
   deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
-  getStoredAuthSession, queueProjectInspectionDeleteOffline, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjects, updateSettings, uploadProjectFileToStorage,
+  getStoredAuthSession, queueProjectInspectionDeleteOffline, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjectsAndTasks, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
@@ -14,6 +14,7 @@ import FluentIcon from './FluentIcon.jsx';
 import { deliverBlob, openPreview } from '../platform/platformAdapter.js';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
+import { cascadeProjectStepDates, projectUsesInspectionPredecessor, syncProjectTasks } from '../utils/schedule.js';
 
 const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
 const InspectionImageEditorModal = lazy(() => import('./InspectionImageEditorModal.jsx'));
@@ -29,6 +30,7 @@ export default function NativeInspectionsView({
   projectFilter = 'all',
   onProjectFilterChange = () => {},
   createRequest = null,
+  editRequest = null,
   highlightInspectionId = '',
   highlightToken = '',
   embedded = false,
@@ -40,6 +42,7 @@ export default function NativeInspectionsView({
   const [, setOfflineRevision] = useState(0);
   const previewUrlsRef = useRef({});
   const lastCreateRequestTokenRef = useRef('');
+  const lastEditRequestTokenRef = useRef('');
   const inspectionCardRefs = useRef({});
   const [activeHighlightInspectionId, setActiveHighlightInspectionId] = useState('');
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
@@ -266,6 +269,17 @@ export default function NativeInspectionsView({
       reportPendingFile: null,
     });
   }
+
+  useEffect(() => {
+    if (readOnly) return;
+    const token = String(editRequest?.token || '');
+    if (!token || token === lastEditRequestTokenRef.current) return;
+    const project = visibleProjects.find((item) => item.id === editRequest.projectId);
+    const inspection = project?.inspections?.find((item) => item.id === editRequest.inspectionId);
+    if (!inspection) return;
+    lastEditRequestTokenRef.current = token;
+    startEdit({ ...inspection, projectId: project.id });
+  }, [editRequest, readOnly, visibleProjects]);
 
   function updateDraft(field, value) {
     setInspectionDraft((current) => (current ? { ...current, [field]: value } : current));
@@ -513,15 +527,17 @@ export default function NativeInspectionsView({
       const nextInspection = buildInspection(stickerFile, reportFile);
       let nextState = data;
       if (inspectionDraft.mode === 'edit' && sourceProject && sourceProject.id !== project.id) {
-        const nextSourceProject = {
+        const nextSourceProject = cascadeProjectStepDates({
           ...sourceProject,
           inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-        };
-        const nextTargetProject = {
+        }, data.settings);
+        const nextTargetProject = cascadeProjectStepDates({
           ...project,
           inspections: [...(project.inspections || []), nextInspection],
-        };
-        nextState = await updateProjects(nextState, [nextSourceProject, nextTargetProject]);
+        }, data.settings);
+        let nextTasks = syncProjectTasks(sourceProject.id, nextSourceProject, data.tasks);
+        nextTasks = syncProjectTasks(project.id, nextTargetProject, nextTasks);
+        nextState = await updateProjectsAndTasks(nextState, [nextSourceProject, nextTargetProject], nextTasks);
       } else {
         const nextProject = {
           ...project,
@@ -535,6 +551,12 @@ export default function NativeInspectionsView({
         nextState = await saveProjectInspection(nextState, project.id, nextInspection, {
           cleanupFiles: filesToDeleteAfterSave,
         });
+        const savedProject = nextState.projects.find((item) => item.id === project.id);
+        if (savedProject && projectUsesInspectionPredecessor(savedProject, nextInspection.id)) {
+          const rescheduledProject = cascadeProjectStepDates(savedProject, nextState.settings);
+          const nextTasks = syncProjectTasks(project.id, rescheduledProject, nextState.tasks);
+          nextState = await updateProjectsAndTasks(nextState, [rescheduledProject], nextTasks);
+        }
       }
       onStateChange(nextState);
       const queuedSave = nextState.projects
@@ -596,11 +618,12 @@ export default function NativeInspectionsView({
         setInspectionDraft(null);
         return;
       }
-      const nextProject = {
+      const nextProject = cascadeProjectStepDates({
         ...project,
         inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-      };
-      const nextState = await updateProject(data, project.id, nextProject);
+      }, data.settings);
+      const nextTasks = syncProjectTasks(project.id, nextProject, data.tasks);
+      const nextState = await updateProjectsAndTasks(data, [nextProject], nextTasks);
       onStateChange(nextState);
       await Promise.allSettled(
         [existing?.stickerFile, existing?.reportFile]

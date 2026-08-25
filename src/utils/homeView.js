@@ -45,9 +45,13 @@ function isStepComplete(step) {
   return !!step?.done || isCompleteStatus(step?.status);
 }
 
-function predecessorIds(value) {
+function predecessorRefs(value) {
   const source = Array.isArray(value) ? value : value ? [value] : [];
-  return source.map((item) => String(typeof item === 'string' ? item : item?.id || '').trim()).filter(Boolean);
+  return source
+    .map((item) => typeof item === 'string'
+      ? { id: String(item).trim(), type: 'step' }
+      : { id: String(item?.id || '').trim(), type: item?.type === 'inspection' ? 'inspection' : 'step' })
+    .filter((item) => item.id);
 }
 
 function buildProjectBlockedSteps(project, todayIso) {
@@ -55,12 +59,13 @@ function buildProjectBlockedSteps(project, todayIso) {
   (project?.phases || []).forEach((phase) => {
     if (isCompleteStatus(phase?.status)) return;
     const stepMap = new Map((phase.steps || []).filter((step) => step?.id).map((step) => [String(step.id), step]));
+    const inspectionMap = new Map((project.inspections || []).filter((inspection) => inspection?.id).map((inspection) => [String(inspection.id), inspection]));
     (phase.steps || []).forEach((step) => {
       if (isStepComplete(step)) return;
       const delayed = String(step.status || '').toLowerCase() === 'delayed';
-      const waitingOnPredecessor = predecessorIds(step.predecessors).some((id) => {
-        const predecessor = stepMap.get(id);
-        return predecessor && !isStepComplete(predecessor);
+      const waitingOnPredecessor = predecessorRefs(step.predecessors).some(({ id, type }) => {
+        const predecessor = type === 'inspection' ? inspectionMap.get(id) : stepMap.get(id);
+        return predecessor && (type === 'inspection' ? !isCompleteStatus(predecessor.status) : !isStepComplete(predecessor));
       });
       const shouldHaveStarted = !!step.start && step.start <= todayIso;
       if (!delayed && !(waitingOnPredecessor && shouldHaveStarted)) return;
@@ -210,31 +215,35 @@ function normalizeIdentity(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-export function buildHomeOpenTasks(tasks = [], projects = [], activeUser = null, people = []) {
-  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
-  const isAdmin = activeUser?.role === 'Admin';
+function activeUserAssignmentLabels(activeUser = null, people = []) {
   const userName = normalizeIdentity(activeUser?.name);
   const userEmail = normalizeIdentity(activeUser?.email);
-  const assignmentLabels = new Set(
+  const labels = new Set(
     (people || [])
       .filter((person) => userEmail && normalizeIdentity(person?.email) === userEmail)
       .map((person) => normalizeIdentity(personAssignmentLabel(person)))
       .filter(Boolean),
   );
-  if (userName) assignmentLabels.add(userName);
-  if (userEmail) assignmentLabels.add(userEmail);
+  if (userName) labels.add(userName);
+  if (userEmail) labels.add(userEmail);
+  return { labels, userName };
+}
 
-  function belongsToActiveUser(task) {
-    if (isAdmin) return true;
-    return getTaskAssignees(task).some((assignee) => {
-      const normalized = normalizeIdentity(assignee);
-      if (assignmentLabels.has(normalized)) return true;
-      return userName && (normalized === userName || normalized.startsWith(`${userName} (`));
-    });
-  }
+function belongsToActiveUser(assignees = [], activeUser = null, people = []) {
+  if (activeUser?.role === 'Admin') return true;
+  const { labels, userName } = activeUserAssignmentLabels(activeUser, people);
+  return (assignees || []).some((assignee) => {
+    const normalized = normalizeIdentity(assignee);
+    if (labels.has(normalized)) return true;
+    return userName && (normalized === userName || normalized.startsWith(`${userName} (`));
+  });
+}
+
+export function buildHomeOpenTasks(tasks = [], projects = [], activeUser = null, people = []) {
+  const projectNames = new Map((projects || []).map((project) => [project.id, project.name || 'Project']));
 
   return (tasks || [])
-    .filter((task) => !task.done && belongsToActiveUser(task))
+    .filter((task) => !task.done && belongsToActiveUser(getTaskAssignees(task), activeUser, people))
     .map((task) => ({
       ...task,
       type: 'task',
@@ -247,6 +256,36 @@ export function buildHomeOpenTasks(tasks = [], projects = [], activeUser = null,
       if (leftDue !== rightDue) return leftDue.localeCompare(rightDue);
       return compareItems(left, right);
     });
+}
+
+export function buildMyDaySummary(
+  projects = [],
+  scopedTasks = [],
+  activeUser = null,
+  people = [],
+  todayIso = getLocalIsoDate(),
+) {
+  const today = buildHomeRangeSummary(projects, scopedTasks, todayIso, todayIso);
+  const attention = buildHomeAttentionSummary(projects, scopedTasks, todayIso, []);
+  const scheduleForUser = (item) => belongsToActiveUser(getScheduleAssignees(item), activeUser, people);
+  const byDateThenName = (left, right) => {
+    const leftDate = left.due || left.date || left.start || '';
+    const rightDate = right.due || right.date || right.start || '';
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    return compareItems(left, right);
+  };
+  const overdueItems = [
+    ...attention.overdueTasks,
+    ...attention.overdueInspections,
+    ...attention.blockedSteps.filter(scheduleForUser),
+  ].sort(byDateThenName);
+
+  return {
+    tasks: today.openTasks,
+    inspections: today.inspections,
+    scheduleItems: today.scheduleItems.filter(scheduleForUser),
+    overdueItems,
+  };
 }
 
 export function buildHomeAttentionSummary(projects = [], scopedTasks = [], todayIso = '', allVisibleTasks = scopedTasks) {

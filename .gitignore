@@ -9,6 +9,7 @@ android/app/google-services.json
 .tmp-edge-qa-profile/
 qa-output/
 supabase/.temp/
+supabase/.branches/
 dev-server.log
 dev-server-error.log
 playwright-report/

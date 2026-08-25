@@ -18,6 +18,8 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { normalizeVisibleTopLevelTabs, TOP_LEVEL_TAB_DEFS } from '../utils/navigationTabs.js';
 import { normalizeVisibleProjectTabs, PROJECT_TAB_DEFS } from '../utils/projectTabs.js';
 import { reorderSettingIds } from '../utils/settingsOrder.js';
+import { buildProjectTemplate, normalizeProjectTemplates } from '../utils/projectTemplates.js';
+import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
@@ -25,6 +27,7 @@ const SETTINGS_SECTIONS = [
   { id: 'scheduling', label: 'Scheduling', description: 'Work calendar and schedule display defaults.' },
   { id: 'calendar', label: 'Calendar & holidays', description: 'Calendar visibility, holidays, and closure periods.' },
   { id: 'inspections', label: 'Inspections', description: 'Inspection codes and editor defaults.' },
+  { id: 'templates', label: 'Project templates', description: 'Reusable schedules, locations, folders, inspections, and assignments.' },
   { id: 'notifications', label: 'Notifications', description: 'Task assignment emails and Android reminder preferences.' },
   { id: 'users', label: 'Users & access', description: 'App roles and project assignments.' },
   { id: 'audit', label: 'Audit history', description: 'Recent project changes and responsible users.' },
@@ -341,6 +344,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [auditProjectFilter, setAuditProjectFilter] = useState('');
   const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
   const [settingsDrag, setSettingsDrag] = useState(null);
+  const [projectTemplateDraft, setProjectTemplateDraft] = useState({ name: '', description: '', sourceProjectId: '' });
+  const [projectTemplateStatus, setProjectTemplateStatus] = useState({ tone: '', message: '' });
   const [schedulingDraft, setSchedulingDraft] = useState(() => ({
     weekdaysOnly: !!data.settings?.weekdaysOnly,
     showGanttTaskDueDates: data.settings?.showGanttTaskDueDates ?? (data.settings?.showTaskDueDates !== false),
@@ -403,6 +408,10 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       };
     },
     [data.settings],
+  );
+  const projectTemplates = useMemo(
+    () => normalizeProjectTemplates(data.settings?.projectTemplates),
+    [data.settings?.projectTemplates],
   );
   const [holidayDrafts, setHolidayDrafts] = useState(() =>
     (Array.isArray(data.settings?.holidays) ? data.settings.holidays : []).map(normalizeHolidayEntry),
@@ -623,6 +632,66 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
   function handleToggle(field, value) {
     runSettingsMutation({ [field]: value });
+  }
+
+  async function handleCreateProjectTemplate() {
+    const name = projectTemplateDraft.name.trim();
+    const sourceProject = data.projects.find((project) => project.id === projectTemplateDraft.sourceProjectId);
+    if (!name || !sourceProject) {
+      setProjectTemplateStatus({ tone: 'error', message: 'Enter a template name and choose a source project.' });
+      return;
+    }
+    const currentTemplates = normalizeProjectTemplates(settingsStateRef.current.settings?.projectTemplates);
+    if (currentTemplates.some((template) => template.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      setProjectTemplateStatus({ tone: 'error', message: 'A project template with that name already exists.' });
+      return;
+    }
+    setProjectTemplateStatus({ tone: '', message: 'Loading reusable tasks and closeout items…' });
+    try {
+      const closeoutResult = await createConstructionWorkflowService({ projectId: sourceProject.id, canEdit: false })
+        .list('closeoutItems');
+      const template = buildProjectTemplate(sourceProject, {
+        name,
+        description: projectTemplateDraft.description,
+        tasks: data.tasks.filter((task) => task.projectId === sourceProject.id),
+        closeoutItems: closeoutResult.records || [],
+      });
+      setProjectTemplateStatus({ tone: '', message: 'Saving project template…' });
+      await runSettingsMutation(
+        { projectTemplates: [...currentTemplates, template] },
+        ['settings', 'projectTemplates'],
+      );
+      setProjectTemplateDraft({ name: '', description: '', sourceProjectId: '' });
+      setProjectTemplateStatus({ tone: 'success', message: `Template “${template.name}” saved with ${template.tasks.length} tasks and ${template.closeoutItems.length} closeout items.` });
+    } catch (error) {
+      setProjectTemplateStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to save the project template.',
+      });
+    }
+  }
+
+  async function handleDeleteProjectTemplate(template) {
+    const confirmed = await showAppConfirm(`Delete the “${template.name}” project template? Existing projects will not be changed.`, {
+      title: 'Delete project template',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    const currentTemplates = normalizeProjectTemplates(settingsStateRef.current.settings?.projectTemplates);
+    setProjectTemplateStatus({ tone: '', message: `Deleting “${template.name}”…` });
+    try {
+      await runSettingsMutation(
+        { projectTemplates: currentTemplates.filter((item) => item.id !== template.id) },
+        ['settings', 'projectTemplates'],
+      );
+      setProjectTemplateStatus({ tone: 'success', message: `Template “${template.name}” deleted.` });
+    } catch (error) {
+      setProjectTemplateStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to delete the project template.',
+      });
+    }
   }
 
   async function handleTaskAssignmentEmailToggle(field, value) {
@@ -1259,6 +1328,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const externalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToExternalAssignees']);
   const complianceEmailTestSaving = isMutating(['settings', 'complianceEmailTestMode']);
   const complianceScheduledRemindersSaving = isMutating(['settings', 'complianceScheduledRemindersEnabled']);
+  const projectTemplatesSaving = isMutating(['settings', 'projectTemplates']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
   const isUserSaving = (userId) => isMutating(['settings', 'user', userId]);
@@ -1608,6 +1678,103 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                   <h3>No holidays yet</h3>
                   <p>Add your first holiday or closure period to start shaping the scheduling calendar.</p>
                 </div>
+              )}
+            </section>
+          </div>
+        </section>
+
+        <section id="settings-panel-templates" className="settings-section project-templates-settings" role="tabpanel" aria-labelledby="settings-tab-templates" hidden={activeSettingsSection !== 'templates'}>
+          <div className="settings-section-header">
+            <div>
+              <h3>Project templates</h3>
+              <p>Capture reusable project structure from an existing project without copying customers, uploaded files, photos, or completed activity.</p>
+            </div>
+          </div>
+          <div className="settings-grid settings-grid-single">
+            <section className="settings-card settings-card-full">
+              <div className="settings-card-header">
+                <div>
+                  <h3>Create a template</h3>
+                  <p>Schedule dates become relative offsets and will be recalculated from each new project's start date.</p>
+                </div>
+              </div>
+              <div className="project-template-form">
+                <label>
+                  <span>Template name</span>
+                  <input
+                    value={projectTemplateDraft.name}
+                    onChange={(event) => setProjectTemplateDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Standard new home"
+                    disabled={projectTemplatesSaving}
+                  />
+                </label>
+                <label>
+                  <span>Source project</span>
+                  <select
+                    value={projectTemplateDraft.sourceProjectId}
+                    onChange={(event) => setProjectTemplateDraft((current) => ({ ...current, sourceProjectId: event.target.value }))}
+                    disabled={projectTemplatesSaving}
+                  >
+                    <option value="">Choose a project</option>
+                    {data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+                <label className="full">
+                  <span>Description</span>
+                  <textarea
+                    value={projectTemplateDraft.description}
+                    onChange={(event) => setProjectTemplateDraft((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="When this setup should be used"
+                    disabled={projectTemplatesSaving}
+                  />
+                </label>
+                <div className="project-template-form-actions full">
+                  <button
+                    className={`button primary${projectTemplatesSaving ? ' is-loading' : ''}`}
+                    type="button"
+                    onClick={() => void handleCreateProjectTemplate()}
+                    disabled={projectTemplatesSaving || !projectTemplateDraft.name.trim() || !projectTemplateDraft.sourceProjectId}
+                    aria-busy={projectTemplatesSaving}
+                  >
+                    {projectTemplatesSaving ? 'Saving…' : 'Create template'}
+                  </button>
+                </div>
+              </div>
+              <p className="panel-copy">Templates include phases, schedule steps, standard assignments, locations, folder definitions, inspection definitions, open standalone tasks, and reusable closeout items. Attachments and completion history are never copied.</p>
+              {projectTemplateStatus.message ? <p className={projectTemplateStatus.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">{projectTemplateStatus.message}</p> : null}
+            </section>
+
+            <section className="settings-card settings-card-full">
+              <div className="settings-card-header">
+                <div><h3>Saved templates</h3><p>{projectTemplates.length} reusable setup{projectTemplates.length === 1 ? '' : 's'} available when creating a project.</p></div>
+              </div>
+              {projectTemplates.length ? (
+                <div className="project-template-list">
+                  {projectTemplates.map((template) => {
+                    const stepCount = template.phases.reduce((total, phase) => total + phase.steps.length, 0);
+                    return (
+                      <article key={template.id} className="project-template-row">
+                        <div>
+                          <strong>{template.name}</strong>
+                          <p>{template.description || `Created from ${template.sourceProjectName || 'an existing project'}.`}</p>
+                          <small>{template.phases.length} phases · {stepCount} schedule steps · {template.tasks.length} tasks · {template.closeoutItems.length} closeout items · {template.locations.length} locations · {template.folders.length} folders · {template.inspections.length} inspections</small>
+                        </div>
+                        <button
+                          className="button secondary danger gantt-icon-button"
+                          type="button"
+                          onClick={() => void handleDeleteProjectTemplate(template)}
+                          disabled={projectTemplatesSaving}
+                          title={`Delete ${template.name}`}
+                          aria-label={`Delete ${template.name}`}
+                        >
+                          <FluentIcon name="delete" />
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state compact"><h3>No project templates yet</h3><p>Create one from a well-structured project, then select it from the New project dialog.</p></div>
               )}
             </section>
           </div>

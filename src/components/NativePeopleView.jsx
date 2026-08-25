@@ -4,7 +4,7 @@ import { showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
 import { useVirtualRange } from '../utils/virtualization.js';
-import { deliverBlob, isShareDismissed } from '../platform/platformAdapter.js';
+import { deliverBlob, isNativeAndroidApp, isShareDismissed } from '../platform/platformAdapter.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 const PersonModal = lazy(() => import('./PersonModal.jsx'));
 import { DashboardStat, PageStats } from './SharedUI.jsx';
@@ -317,6 +317,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
 }
 
 export default function NativePeopleView({ data, onStateChange, refresh, loading, navigationTarget = null }) {
+  const nativeAndroid = isNativeAndroidApp();
   const [personType, setPersonType] = useState('sub');
   const [query, setQuery] = useState('');
   const [viewMode, setViewMode] = useState(() => {
@@ -566,7 +567,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
     : isMutating('person:create');
 
   return (
-    <section className="panel native-panel workspace-page top-level-people-page">
+    <section className={`panel native-panel workspace-page top-level-people-page${nativeAndroid ? ' android-pinch-zoom' : ''}`}>
       <div className="panel-actions people-page-actions">
         <button className={`button secondary${importSaving ? ' is-loading' : ''}`} type="button" onClick={triggerImport} disabled={importSaving} aria-busy={importSaving}>
           {importSaving ? 'Importing...' : 'Import CSV'}

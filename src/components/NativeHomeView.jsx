@@ -12,6 +12,7 @@ import {
   buildHomeAttentionSummary,
   buildHomeCertificateExceptions,
   buildHomeFinancialExceptions,
+  buildMyDaySummary,
   buildHomeOfflineSyncExceptions,
   buildHomeWarrantyCloseoutExceptions,
   buildHomeOpenTasks,
@@ -242,7 +243,7 @@ function QuickTaskForm({ draft, projects, locationOptions, assigneeOptions, comp
     <form className="home-quick-task" onSubmit={onSubmit}>
       <div><p className="eyebrow">Quick action</p><h2>Add a task</h2></div>
       <div className="home-quick-task-fields">
-        <input value={draft.label} onChange={(event) => onChange('label', event.target.value)} placeholder="What needs to be done?" aria-label="Task name" />
+        <input id="home-quick-task-name" value={draft.label} onChange={(event) => onChange('label', event.target.value)} placeholder="What needs to be done?" aria-label="Task name" />
         <select value={draft.projectId} onChange={(event) => onChange('projectId', event.target.value)} aria-label="Task project">
           <option value="">General task</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -268,6 +269,37 @@ function QuickTaskForm({ draft, projects, locationOptions, assigneeOptions, comp
   );
 }
 
+function MyDayWorkspace({ summary, activeUser, canEdit, offline, onOpen, onComplete, onAddTask, onQuickAction }) {
+  const count = new Set([
+    ...summary.tasks,
+    ...summary.inspections,
+    ...summary.scheduleItems,
+    ...summary.overdueItems,
+  ].map((item) => `${item.type}:${item.projectId || 'general'}:${item.id}`)).size;
+  const scopeLabel = activeUser?.role === 'Admin' ? 'Portfolio scope' : 'Assigned to you';
+  return (
+    <section className="my-day-workspace" aria-labelledby="my-day-title">
+      <header className="my-day-header">
+        <div><p className="eyebrow">Field workspace</p><h2 id="my-day-title">My Day</h2><p>{scopeLabel} · {count} visible work {count === 1 ? 'item' : 'items'}{offline ? ' · Using offline data' : ''}</p></div>
+        {canEdit ? (
+          <div className="my-day-quick-actions" aria-label="My Day quick actions">
+            <button className="button primary" type="button" onClick={onAddTask}><FluentIcon name="add" />Task</button>
+            <button className="button secondary" type="button" onClick={() => onQuickAction?.('create-daily-log')}><FluentIcon name="document" />Daily log</button>
+            <button className="button secondary" type="button" onClick={() => onQuickAction?.('create-photo')} disabled={offline} title={offline ? 'Reconnect before uploading a project photo.' : 'Open project photos'}><FluentIcon name="camera" />Photo</button>
+          </div>
+        ) : null}
+      </header>
+      {offline ? <p className="my-day-offline-note"><FluentIcon name="warning" />Tasks and daily logs can be saved on this device. Reconnect before uploading photos.</p> : null}
+      <div className="my-day-grid">
+        <HomeList title="Due today" items={summary.tasks} emptyMessage="No assigned tasks due today." onOpen={onOpen} onComplete={onComplete} limit={4} />
+        <HomeList title="Schedule" items={summary.scheduleItems} emptyMessage="No assigned schedule work today." onOpen={onOpen} limit={4} />
+        <HomeList title="Inspections" items={summary.inspections} emptyMessage="No inspections today." onOpen={onOpen} limit={4} />
+        <HomeList title="Overdue & blocked" items={summary.overdueItems} emptyMessage="Nothing overdue or blocked." onOpen={onOpen} onComplete={onComplete} limit={4} tone="danger" />
+      </div>
+    </section>
+  );
+}
+
 export default function NativeHomeView({
   data,
   activeUser,
@@ -277,6 +309,7 @@ export default function NativeHomeView({
   onStateChange,
   onOpenItem,
   onOpenCollection,
+  onQuickAction,
   includeCertificateExceptions = false,
   offlineOperations = [],
 }) {
@@ -330,6 +363,14 @@ export default function NativeHomeView({
       : [],
     [certificates, complianceDocuments, data.subs, includeCertificateExceptions, todayIso],
   );
+  const people = useMemo(() => [...(data.subs || []), ...(data.employees || [])], [data.employees, data.subs]);
+  const myDaySummary = useMemo(
+    () => buildMyDaySummary(visibleProjects, scopedOpenTasks, activeUser, people, todayIso),
+    [activeUser, people, scopedOpenTasks, todayIso, visibleProjects],
+  );
+  const offline = data.storageMode === 'offline-cache'
+    || data.storageMode === 'workspace-cache-offline'
+    || (typeof navigator !== 'undefined' && navigator.onLine === false);
   const pendingDecisions = useMemo(
     () => buildHomePendingDecisionExceptions(visibleProjects, portalItems, todayIso, {
       includeSelections: visibleProjectTabIds.has('selections'),
@@ -639,6 +680,11 @@ export default function NativeHomeView({
 
   const taskComplete = canEdit ? (task) => void completeTask(task) : null;
 
+  function focusQuickTask() {
+    document.getElementById('home-quick-task-name')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => document.getElementById('home-quick-task-name')?.focus(), 250);
+  }
+
   return (
     <section className="panel native-panel workspace-page home-page">
       <header className="home-page-header">
@@ -648,6 +694,17 @@ export default function NativeHomeView({
           <button className="button secondary home-refresh-button" type="button" onClick={() => void refreshHome()} disabled={loading || auditLoading}><FluentIcon name="replace" />{loading || auditLoading ? 'Refreshing…' : 'Refresh'}</button>
         </div>
       </header>
+
+      <MyDayWorkspace
+        summary={myDaySummary}
+        activeUser={activeUser}
+        canEdit={canEdit}
+        offline={offline}
+        onOpen={onOpenItem}
+        onComplete={taskComplete}
+        onAddTask={focusQuickTask}
+        onQuickAction={onQuickAction}
+      />
 
       <section className="home-health-section">
         <header className="home-changes-heading"><div><p className="eyebrow">Portfolio</p><h2>Project health</h2></div><span>Based on overdue and blocked work</span></header>

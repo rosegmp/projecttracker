@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { renderModalPortal, showAppAlert, showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
+import Vendor1099Review from './Vendor1099Review.jsx';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
 import { formatFileSize } from '../utils/fileUi.js';
 import { findClosestSubcontractor } from '../utils/certificateMatching.js';
@@ -538,6 +539,7 @@ function ComplianceUploadRoutingModal({
 
 export default function NativeCertificatesView({ data, activeUser, onStateChange, navigationTarget = null }) {
   const canEdit = ['Admin', 'Edit'].includes(activeUser?.role);
+  const [workspaceMode, setWorkspaceMode] = useState('compliance');
   const subcontractors = useMemo(
     () => [...(data.subs || [])].sort((a, b) => subcontractorLabel(a).localeCompare(subcontractorLabel(b))),
     [data.subs],
@@ -611,6 +613,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
 
   useEffect(() => {
     if (!navigationTarget?.subcontractorId && !navigationTarget?.statusId) return;
+    setWorkspaceMode('compliance');
     setSubcontractorFilter(navigationTarget.subcontractorId || 'all');
     if (navigationTarget.statusId === 'inactive') {
       setActivityFilter('inactive');
@@ -1405,8 +1408,25 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     return result;
   }, [activityFilter, subcontractorRoster]);
 
+  const workspaceSwitch = (
+    <div className="project-document-workflow-switch compliance-workspace-switch" role="tablist" aria-label="Compliance workspace">
+      <button type="button" role="tab" aria-selected={workspaceMode === 'compliance'} className={workspaceMode === 'compliance' ? 'active' : ''} onClick={() => setWorkspaceMode('compliance')}>Compliance</button>
+      {activeUser?.role === 'Admin' ? <button type="button" role="tab" aria-selected={workspaceMode === '1099'} className={workspaceMode === '1099' ? 'active' : ''} onClick={() => setWorkspaceMode('1099')}>1099 Review</button> : null}
+    </div>
+  );
+
+  if (workspaceMode === '1099' && activeUser?.role === 'Admin') {
+    return (
+      <section className="panel native-panel workspace-page top-level-certificates-page">
+        {workspaceSwitch}
+        <Vendor1099Review data={data} subcontractors={subcontractors} documents={complianceDocuments} taxIdStatuses={taxIdStatuses} activeUser={activeUser} />
+      </section>
+    );
+  }
+
   return (
     <section className="panel native-panel workspace-page top-level-certificates-page">
+      {workspaceSwitch}
       <div className="panel-actions certificates-page-actions">
         <button className="button secondary" type="button" onClick={() => void refreshCertificates()} disabled={loading}>
           {loading ? 'Refreshing...' : 'Refresh'}

@@ -163,6 +163,7 @@ export function ScheduleItemModal({
             <span>Status</span>
             <select value={draft.status} onChange={(event) => onChange('status', event.target.value)}>
               <option value="planning">Planning</option>
+              {type === 'step' ? <option value="scheduled">Scheduled</option> : null}
               <option value="active">Active</option>
               <option value="delayed">Delayed</option>
               <option value="done">Done</option>

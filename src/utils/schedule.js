@@ -130,7 +130,13 @@ export function normalizePreds(preds) {
 
   return source
     .map((item) => (typeof item === 'string' ? { id: item, lag: 0 } : item))
-    .filter((item) => item?.id);
+    .filter((item) => item?.id)
+    .map((item) => ({
+      ...item,
+      id: String(item.id),
+      lag: Number(item.lag) || 0,
+      ...(item.type === 'inspection' ? { type: 'inspection' } : {}),
+    }));
 }
 
 export function addWorkdaysFromSettings(dateStr, count, settings) {
@@ -153,13 +159,17 @@ export function addWorkdaysFromSettings(dateStr, count, settings) {
   return toIsoDate(cursor);
 }
 
-export function calcStepFirstAvailable(phase, predecessors, settings) {
+export function calcStepFirstAvailable(phase, predecessors, settings, inspections = []) {
   const steps = phase.steps || [];
   let latestStart = '';
 
-  normalizePreds(predecessors).forEach(({ id, lag }) => {
-    const predecessor = steps.find((step) => step.id === id);
-    const predecessorEnd = predecessor?.end || predecessor?.start || '';
+  normalizePreds(predecessors).forEach(({ id, lag, type }) => {
+    const predecessor = type === 'inspection'
+      ? inspections.find((inspection) => inspection.id === id)
+      : steps.find((step) => step.id === id);
+    const predecessorEnd = type === 'inspection'
+      ? predecessor?.date || ''
+      : predecessor?.end || predecessor?.start || '';
     if (!predecessorEnd) return;
     const candidate = addWorkdaysFromSettings(predecessorEnd, 1 + (parseInt(lag, 10) || 0), settings);
     const normalized = normalizeStartDate(candidate, settings);
@@ -185,13 +195,17 @@ export function calcPhaseFirstAvailable(project, predecessors, settings) {
   return latestStart;
 }
 
-export function syncStepLinks(phase) {
+export function syncStepLinks(phase, inspections = []) {
   const validIds = new Set((phase.steps || []).map((step) => step.id));
+  const validInspectionIds = new Set((inspections || []).map((inspection) => inspection.id));
   const successorMap = new Map();
   (phase.steps || []).forEach((step) => successorMap.set(step.id, []));
   (phase.steps || []).forEach((step) => {
-    step.predecessors = normalizePreds(step.predecessors).filter((pred) => validIds.has(pred.id));
+    step.predecessors = normalizePreds(step.predecessors).filter((pred) => (
+      pred.type === 'inspection' ? validInspectionIds.has(pred.id) : validIds.has(pred.id)
+    ));
     step.predecessors.forEach((pred) => {
+      if (pred.type === 'inspection') return;
       if (!successorMap.has(pred.id)) successorMap.set(pred.id, []);
       successorMap.get(pred.id).push(step.id);
     });
@@ -206,6 +220,7 @@ export function wouldCreateCycleFromPreds(phase, fromStepId, toStepId) {
   (phase.steps || []).forEach((step) => successorMap.set(step.id, []));
   (phase.steps || []).forEach((step) => {
     normalizePreds(step.predecessors).forEach((pred) => {
+      if (pred.type === 'inspection') return;
       if (!successorMap.has(pred.id)) successorMap.set(pred.id, []);
       successorMap.get(pred.id).push(step.id);
     });
@@ -344,8 +359,8 @@ export function cascadePhaseDates(project, settings, skipId = null) {
 
     const offset = diffWorkdaysFromSettings(currentStart, requiredStart, settings);
     const shiftedPhase = shiftPhaseByWorkdays(phase, offset, settings);
-    syncStepLinks(shiftedPhase);
-    cascadeStepDates(shiftedPhase, settings);
+    syncStepLinks(shiftedPhase, project.inspections);
+    cascadeStepDates(shiftedPhase, settings, null, project.inspections);
     phases[phaseIndex] = syncSinglePhaseDates(shiftedPhase, project.status || 'planning');
   });
 
@@ -355,7 +370,7 @@ export function cascadePhaseDates(project, settings, skipId = null) {
   };
 }
 
-export function cascadeStepDates(phase, settings, skipId = null) {
+export function cascadeStepDates(phase, settings, skipId = null, inspections = []) {
   const steps = phase.steps || [];
   if (!steps.length) return;
   steps.forEach((step) => {
@@ -369,7 +384,8 @@ export function cascadeStepDates(phase, settings, skipId = null) {
     adjacency[step.id] = [];
   });
   steps.forEach((step) => {
-    step.predecessors.forEach(({ id }) => {
+    step.predecessors.forEach(({ id, type }) => {
+      if (type === 'inspection') return;
       if (adjacency[id]) adjacency[id].push(step.id);
       if (inDegree[step.id] !== undefined) inDegree[step.id] += 1;
     });
@@ -395,12 +411,42 @@ export function cascadeStepDates(phase, settings, skipId = null) {
       step.notBefore = '';
       return;
     }
-    const requiredStart = calcStepFirstAvailable(phase, predecessors, settings);
+    const requiredStart = calcStepFirstAvailable(phase, predecessors, settings, inspections);
     const noSoonerThan = normalizeStartDate(step.notBefore || '', settings);
     const scheduledStart = noSoonerThan && noSoonerThan > requiredStart ? noSoonerThan : requiredStart;
     step.start = scheduledStart;
     step.end = computeStepEndDate(scheduledStart, step.duration || 1, settings);
   });
+}
+
+export function projectUsesInspectionPredecessor(project, inspectionId = '') {
+  return (project?.phases || []).some((phase) => (phase.steps || []).some((step) => (
+    normalizePreds(step.predecessors).some((predecessor) => (
+      predecessor.type === 'inspection' && (!inspectionId || predecessor.id === inspectionId)
+    ))
+  )));
+}
+
+export function cascadeProjectStepDates(project, settings) {
+  const inspections = (project?.inspections || []).map((inspection) => ({ ...inspection }));
+  const nextProject = {
+    ...project,
+    inspections,
+    phases: (project?.phases || []).map((phase) => {
+      const nextPhase = {
+        ...phase,
+        steps: (phase.steps || []).map((step) => ({
+          ...step,
+          predecessors: normalizePreds(step.predecessors),
+          successors: Array.isArray(step.successors) ? [...step.successors] : [],
+        })),
+      };
+      syncStepLinks(nextPhase, inspections);
+      cascadeStepDates(nextPhase, settings, null, inspections);
+      return nextPhase;
+    }),
+  };
+  return syncProjectPhaseDates(cascadePhaseDates(syncProjectPhaseDates(nextProject), settings));
 }
 
 export function syncProjectTasks(projectId, project, tasks) {

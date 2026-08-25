@@ -2,6 +2,8 @@ package com.destinyhomes.projecthub;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.PluginHandle;
@@ -13,6 +15,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AndroidIntentsPlugin.class);
         registerPlugin(NotificationSettingsPlugin.class);
         super.onCreate(savedInstanceState);
+        configurePinchZoom();
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -23,6 +26,16 @@ public class MainActivity extends BridgeActivity {
                 }
             }
         });
+    }
+
+    private void configurePinchZoom() {
+        WebView webView = bridge == null ? null : bridge.getWebView();
+        if (webView == null) return;
+
+        WebSettings settings = webView.getSettings();
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
     }
 
     @Override

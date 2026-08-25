@@ -1436,6 +1436,34 @@ export default function App() {
     goToProjectsHome();
   }
 
+  function openHomeQuickAction(actionType) {
+    if (!capabilities.canEdit) return;
+    const requiredProjectTab = actionType === 'create-daily-log'
+      ? 'daily-logs'
+      : actionType === 'create-photo'
+        ? 'photos'
+        : '';
+    if (!requiredProjectTab || !visibleProjectTabIds.has(requiredProjectTab)) {
+      void showAppAlert('That project workspace is hidden by the administrator.', 'Quick action unavailable');
+      return;
+    }
+    if (!visibleProjects.length) {
+      void showAppAlert('No editable project is available for this action.', 'Project required');
+      return;
+    }
+    const locationProjectId = getProjectIdFromLocation();
+    const preferredProjectId = visibleProjects.some((project) => project.id === locationProjectId)
+      ? locationProjectId
+      : visibleProjects.some((project) => project.id === sessionProjectFilter)
+        ? sessionProjectFilter
+        : visibleProjects[0].id;
+    setAndroidProjectPrompt({
+      type: actionType,
+      projectId: preferredProjectId,
+      token: `home-quick-action-${Date.now()}`,
+    });
+  }
+
   function openNewProjectFromRail() {
     if (activeTab === 'projects' && getProjectIdFromLocation()) {
       syncProjectToLocation('', { push: true });
@@ -1619,6 +1647,7 @@ export default function App() {
           onStateChange={setTrackerState}
           onOpenItem={openHomeItem}
           onOpenCollection={openHomeCollection}
+          onQuickAction={openHomeQuickAction}
           includeCertificateExceptions={capabilities.allowedTabs.includes('certificates')}
           offlineOperations={offlineReviewOperations}
         />
@@ -1801,7 +1830,9 @@ export default function App() {
                     ? 'Add inspection'
                     : androidProjectPrompt.type === 'create-daily-log'
                       ? 'Add daily log'
-                      : 'Add shared photo'}
+                      : androidProjectPrompt.type === 'create-photo'
+                        ? 'Add project photo'
+                        : 'Add shared photo'}
                 </h2>
               </div>
             </div>

@@ -7,10 +7,11 @@ function normalizeProjectAccessUserIds(userIds) {
     : [];
 }
 
-export default function ProjectModal({ draft, users, onChange, onClose, onSave, onDelete, saving, isEditing }) {
+export default function ProjectModal({ draft, templates = [], users, onChange, onClose, onSave, onDelete, saving, isEditing }) {
   const selectedUserIds = normalizeProjectAccessUserIds(draft.accessUserIds);
   const assignableUsers = (users || []).filter((user) => user?.id);
   const projectPhotos = Array.isArray(draft.photos) ? draft.photos : [];
+  const selectedTemplate = templates.find((template) => template.id === draft.templateId) || null;
 
   function toggleProjectUserAccess(userId, checked) {
     const nextUserIds = checked
@@ -29,6 +30,24 @@ export default function ProjectModal({ draft, users, onChange, onClose, onSave, 
           </div>
         </div>
         <div className="project-form-grid">
+          {!isEditing ? (
+            <div className="project-template-choice full">
+              <label>
+                <span>Project template</span>
+                <select value={draft.templateId || ''} onChange={(event) => onChange('templateId', event.target.value)}>
+                  <option value="">Blank project</option>
+                  {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                </select>
+              </label>
+              {selectedTemplate ? (
+                <small>
+                  {selectedTemplate.tasks.length} tasks and {selectedTemplate.closeoutItems.length} closeout items will be created atomically. Dates are calculated from the project start; files and task-assignment emails are not copied or sent.
+                </small>
+              ) : (
+                <small>{templates.length ? 'Choose a reusable setup or continue with a blank project.' : 'Administrators can create reusable templates in Settings.'}</small>
+              )}
+            </div>
+          ) : null}
           <div className="project-form-section full">Project details</div>
           <label><span>Name</span><input value={draft.name} onChange={(event) => onChange('name', event.target.value)} /></label>
           <label>

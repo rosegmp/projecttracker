@@ -1,6 +1,6 @@
 begin;
 
-select plan(60);
+select plan(94);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -23,7 +23,24 @@ insert into public.tasks (id, data) values
   ('auth-task-b', '{"name":"Restricted task","projectId":"auth-project-b"}');
 
 insert into public.project_inspections (project_id, id, position, data) values
-  ('auth-project-a', 'auth-inspection-a', 0, '{"id":"auth-inspection-a","inspectionType":"Framing","status":"scheduled"}');
+  ('auth-project-a', 'auth-inspection-a', 0, '{"id":"auth-inspection-a","inspectionType":"Framing","status":"scheduled"}'),
+  ('auth-project-b', 'auth-inspection-b', 0, '{"id":"auth-inspection-b","inspectionType":"Final","status":"scheduled"}');
+
+insert into public.project_phases (project_id, id, position, data) values
+  ('auth-project-a', 'auth-phase-a', 0, '{"name":"Authorized phase"}'),
+  ('auth-project-b', 'auth-phase-b', 0, '{"name":"Restricted phase"}');
+insert into public.project_steps (project_id, phase_id, id, position, data) values
+  ('auth-project-a', 'auth-phase-a', 'auth-step-a', 0, '{"name":"Authorized step"}'),
+  ('auth-project-b', 'auth-phase-b', 'auth-step-b', 0, '{"name":"Restricted step"}');
+insert into public.project_step_inspection_dependencies (
+  project_id, phase_id, step_id, predecessor_inspection_id, position, lag
+) values
+  ('auth-project-a', 'auth-phase-a', 'auth-step-a', 'auth-inspection-a', 0, 0),
+  ('auth-project-b', 'auth-phase-b', 'auth-step-b', 'auth-inspection-b', 0, 0);
+
+insert into public.project_change_orders (id, project_id, order_number, title, status, data) values
+  ('auth-change-order-a', 'auth-project-a', 'CO-001', 'Authorized change order', 'proposed', '{"description":"Add pantry cabinets","costImpact":"1250","scheduleDays":"2","dueDate":"2026-08-25","attachments":[]}'),
+  ('auth-change-order-stale', 'auth-project-a', 'CO-002', 'Approval will become stale', 'proposed', '{"description":"Original issued terms","costImpact":"500","attachments":[]}');
 
 insert into public.subs (id, data) values
   ('auth-sub-a', '{"company":"Authorized Subcontractor","email":"certs@sub.test","peopleType":"sub"}');
@@ -44,8 +61,69 @@ select results_eq(
   array['auth-project-a'::text, 'auth-project-b'::text],
   'administrators can read every project'
 );
+select results_eq(
+  'select predecessor_inspection_id from public.project_step_inspection_dependencies order by predecessor_inspection_id',
+  array['auth-inspection-a'::text, 'auth-inspection-b'::text],
+  'administrators can read inspection predecessors for every project'
+);
+select lives_ok(
+  $$select public.replace_vendor_1099_import(
+    2026,
+    'admin-import.xlsx',
+    '[{"vendor_name":"Authorized Subcontractor","tax_id_last_four":"6789","reportable_total":"2400.00","subcontractor_id":"auth-sub-a"}]'::jsonb
+  )$$,
+  'administrators can replace an annual 1099 spreadsheet import'
+);
+select results_eq(
+  $$select vendor_name from public.vendor_1099_import_rows where tax_year = 2026 order by position$$,
+  array['Authorized Subcontractor'::text],
+  'administrators can read normalized imported 1099 rows'
+);
+select lives_ok(
+  $$select public.create_project_from_template(
+    '{"id":"template-project-admin","name":"Template Admin","accessUserIds":["test-admin"],"phases":[],"files":{"folders":[]},"inspections":[]}'::jsonb,
+    '[{"id":"template-task-admin","label":"Template task","assignees":["Test Admin"],"done":true,"attachments":[{"id":"must-strip"}]}]'::jsonb,
+    '[{"id":"template-closeout-admin","title":"Owner manuals","status":"complete","attachments":[{"id":"must-strip"}]}]'::jsonb
+  )$$,
+  'administrators can atomically create a project from template records'
+);
+select results_eq(
+  $$select id from public.projects where id = 'template-project-admin'$$,
+  array['template-project-admin'::text],
+  'atomic template creation persists the project'
+);
+select results_eq(
+  $$select (data->>'done')::boolean, data->'attachments'
+      from public.tasks where id = 'template-task-admin'$$,
+  $$values (false, '[]'::jsonb)$$,
+  'atomic template creation resets task completion and strips attachments'
+);
+select results_eq(
+  $$select item_number, status, data->'attachments'
+      from public.project_closeout_items where id = 'template-closeout-admin'$$,
+  $$values ('CLS-001'::text, 'not_started'::text, '[]'::jsonb)$$,
+  'atomic template creation numbers and resets closeout items while stripping attachments'
+);
+select results_eq(
+  $$select assignee from public.task_assignments where task_id = 'template-task-admin'$$,
+  array['Test Admin'::text],
+  'atomic template creation synchronizes standard task assignments'
+);
+delete from public.tasks where id = 'template-task-admin';
+delete from public.projects where id = 'template-project-admin';
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000002","email":"editor@test.local","role":"authenticated"}';
+select results_eq(
+  $$select vendor_name from public.vendor_1099_import_rows where tax_year = 2026$$,
+  array[]::text[],
+  'non-admin staff cannot read imported 1099 financial rows'
+);
+select throws_ok(
+  $$select public.replace_vendor_1099_import(2026, 'blocked.xlsx', '[{"vendor_name":"Blocked","tax_id_last_four":"","reportable_total":"10.00"}]'::jsonb)$$,
+  '42501',
+  'Only administrators can import 1099 payments.',
+  'non-admin staff cannot replace a 1099 spreadsheet import'
+);
 select results_eq(
   'select id from public.projects order by id',
   array['auth-project-a'::text],
@@ -56,8 +134,61 @@ select results_eq(
   array['auth-task-a'::text],
   'task visibility follows project authorization'
 );
+select results_eq(
+  'select predecessor_inspection_id from public.project_step_inspection_dependencies order by predecessor_inspection_id',
+  array['auth-inspection-a'::text],
+  'inspection predecessor visibility follows project authorization'
+);
 select ok(public.app_user_can_edit_project('auth-project-a'), 'editors can edit assigned projects');
 select ok(not public.app_user_can_edit_project('auth-project-b'), 'editors cannot edit unassigned projects');
+select lives_ok(
+  $$select public.create_project_from_template(
+    '{"id":"template-project-editor","name":"Template Editor","accessUserIds":["test-editor"],"phases":[],"files":{"folders":[]},"inspections":[]}'::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb
+  )$$,
+  'editors can create a project when they retain access'
+);
+select results_eq(
+  $$select user_id from public.project_user_access where project_id = 'template-project-editor'$$,
+  array['test-editor'::text],
+  'editor template creation synchronizes project access'
+);
+select throws_ok(
+  $$select public.create_project_from_template(
+    '{"id":"template-project-editor-blocked","name":"Template Editor Blocked","accessUserIds":["test-admin"]}'::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb
+  )$$,
+  '42501',
+  'Editors must retain access to projects they create.',
+  'editors cannot create a template project that removes their own access'
+);
+delete from public.projects where id = 'template-project-editor';
+select lives_ok(
+  $$select public.create_change_order_approval_request('auth-change-order-a', 1, '2026-08-25'::date)$$,
+  'assigned editors can issue a version-bound change order approval request'
+);
+select results_eq(
+  $$select status from public.project_portal_items where data->>'changeOrderId' = 'auth-change-order-a'$$,
+  array['response_requested'::text],
+  'new change order approval requests await a customer response'
+);
+select throws_ok(
+  $$update public.project_portal_items
+    set data = jsonb_set(data, '{changeOrderSnapshot,title}', '"Altered after issue"'::jsonb)
+    where data->>'changeOrderId' = 'auth-change-order-a'$$,
+  '22023',
+  'The issued change order approval snapshot cannot be changed.',
+  'issued change order approval terms are immutable'
+);
+select lives_ok(
+  $$select public.create_change_order_approval_request('auth-change-order-stale', 1, null)$$,
+  'editors can issue a second approval request for stale-version protection'
+);
+update public.project_change_orders
+set title = 'Changed after approval request'
+where id = 'auth-change-order-stale';
 select lives_ok(
   $$select public.apply_tracker_batch(
     '[{"table":"tasks","id":"auth-task-a","expectedVersion":1,"data":{"name":"Updated by editor","projectId":"auth-project-a"}}]'::jsonb
@@ -169,6 +300,16 @@ select results_eq(
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000003","email":"viewer@test.local","role":"authenticated"}';
 select ok(not public.app_user_can_edit(), 'view-only users do not receive edit capability');
+select throws_ok(
+  $$select public.create_project_from_template(
+    '{"id":"template-project-viewer","name":"Template Viewer"}'::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb
+  )$$,
+  '42501',
+  'You do not have permission to create projects.',
+  'view-only users cannot create projects from templates'
+);
 select results_eq(
   'select distinct subcontractor_id from public.insurance_certificates',
   array['auth-sub-a'::text],
@@ -220,6 +361,12 @@ select throws_ok(
   'You do not have access to edit this project.',
   'view-only users cannot delete inspections through the focused RPC'
 );
+select throws_ok(
+  $$select public.create_change_order_approval_request('auth-change-order-a', 1, '2026-08-25'::date)$$,
+  '42501',
+  'You do not have access to edit this project.',
+  'view-only users cannot issue change order approval requests'
+);
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000004","email":"customer@test.local","role":"authenticated"}';
 select results_eq(
@@ -253,8 +400,40 @@ select throws_ok(
   'You do not have permission to view subcontractor tax ID status.',
   'portal users cannot read subcontractor tax ID status'
 );
+select lives_ok(
+  $$select public.respond_to_project_portal_item(
+    (select id from public.project_portal_items where data->>'changeOrderId' = 'auth-change-order-a'),
+    1,
+    'Approved for construction.',
+    'approved',
+    'Test Customer'
+  )$$,
+  'the assigned customer can sign the issued change order version'
+);
+select throws_ok(
+  $$select public.respond_to_project_portal_item(
+    (select id from public.project_portal_items where data->>'changeOrderId' = 'auth-change-order-stale'),
+    1,
+    'Approved stale terms.',
+    'approved',
+    'Test Customer'
+  )$$,
+  '40001',
+  'This change order changed after the request was sent. Ask the project team to issue a new approval request.',
+  'customers cannot approve a change order that changed after it was issued'
+);
 
 reset role;
+select results_eq(
+  $$select status from public.project_change_orders where id = 'auth-change-order-a'$$,
+  array['approved'::text],
+  'a signed approval atomically approves the linked change order'
+);
+select results_eq(
+  $$select data->>'signerName' from public.project_portal_items where data->>'changeOrderId' = 'auth-change-order-a'$$,
+  array['Test Customer'::text],
+  'the portal approval retains the signer name'
+);
 select results_eq(
   $$select count(*)::bigint
     from information_schema.columns
@@ -296,6 +475,47 @@ select ok(
     'EXECUTE'
   ),
   'authenticated application users cannot claim scheduled compliance follow-ups'
+);
+
+select ok(
+  not has_table_privilege('anon', 'public.vendor_1099_import_rows', 'SELECT'),
+  'anonymous clients cannot read imported 1099 financial rows'
+);
+select ok(
+  not has_table_privilege('anon', 'public.project_step_inspection_dependencies', 'SELECT'),
+  'anonymous clients cannot read inspection predecessors'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.project_step_inspection_dependencies', 'INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot write inspection predecessors directly'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.create_project_from_template(jsonb,jsonb,jsonb)', 'EXECUTE'),
+  'authenticated application users can invoke the role-guarded template creation RPC'
+);
+select ok(
+  not has_function_privilege('anon', 'public.create_project_from_template(jsonb,jsonb,jsonb)', 'EXECUTE'),
+  'anonymous clients cannot invoke project template creation'
+);
+select ok(
+  has_table_privilege('authenticated', 'public.vendor_1099_import_rows', 'SELECT'),
+  'authenticated administrators receive RLS-scoped read access to imported 1099 rows'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.vendor_1099_import_rows', 'INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot write imported 1099 rows directly'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.replace_vendor_1099_import(integer,text,jsonb)', 'EXECUTE'),
+  'authenticated administrators can invoke the guarded annual import RPC'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.set_vendor_1099_import_match(uuid,text)', 'EXECUTE'),
+  'authenticated administrators can invoke the guarded vendor-match RPC'
+);
+select ok(
+  has_table_privilege('service_role', 'public.vendor_1099_import_rows', 'SELECT, INSERT, UPDATE, DELETE'),
+  'the service role can manage imported 1099 rows'
 );
 
 set local role service_role;

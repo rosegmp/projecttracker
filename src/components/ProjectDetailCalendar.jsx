@@ -79,7 +79,7 @@ export default function ProjectDetailCalendar({ project, tasks, settings, onDate
         onDateClick={(cell, event) => onDateClick?.(cell.key, event)}
         onItemClick={onItemClick}
         isRangeItemClickable={(item) => item.type === 'step'}
-        isDayItemClickable={() => false}
+        isDayItemClickable={(item) => item.type === 'inspection'}
         getDayItemSubtitle={(item) => item.type === 'inspection' ? item.inspectionType || 'Inspection' : ''}
         shellClassName="project-detail-calendar"
         swipeHandlers={calendarSwipeHandlers}

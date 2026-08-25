@@ -1,5 +1,6 @@
 export const STEP_STATUS_OPTIONS = [
   { value: 'planning', label: 'Planning', icon: 'clock' },
+  { value: 'scheduled', label: 'Scheduled', icon: 'clock' },
   { value: 'active', label: 'Active', icon: 'play' },
   { value: 'delayed', label: 'Delayed', icon: 'warning' },
   { value: 'done', label: 'Done', icon: 'checkCircle' },
