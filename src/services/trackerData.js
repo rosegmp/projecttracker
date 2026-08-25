@@ -4,6 +4,7 @@ import { reportError } from './observability.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS, normalizeVisibleProjectTabs } from '../utils/projectTabs.js';
 import { is1099ReportingCompanyType, normalizeCompanyType } from '../utils/companyType.js';
+import { normalizeProjectTemplates } from '../utils/projectTemplates.js';
 import {
   attachRequestId,
   createRequestId,
@@ -32,6 +33,8 @@ const SUPABASE_FILES_BUCKET = (import.meta.env?.VITE_SUPABASE_FILES_BUCKET || 'p
 const AUTH_STORAGE_KEY = 'cx_auth_session';
 
 let authSession = readAuthSessionFromStorage();
+let authSessionRevision = 0;
+let authRefreshPromise = null;
 
 function readAuthSessionFromStorage() {
   if (typeof window === 'undefined') return null;
@@ -47,6 +50,7 @@ function writeAuthSession(session) {
   const nextIdentity = String(session?.user?.id || session?.user?.email || '').trim().toLowerCase();
   if (previousIdentity !== nextIdentity) trackerQueryClient.clear();
   authSession = session || null;
+  authSessionRevision += 1;
   if (typeof window === 'undefined') return;
   if (authSession) {
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authSession));
@@ -74,6 +78,19 @@ function getAuthEndpoint(path) {
   return `${SUPABASE_URL}/auth/v1${path}`;
 }
 
+function normalizeAuthTransportError(error, label) {
+  const message = String(error?.message || error || '');
+  if (/CertPathValidatorException|Trust anchor for certification path not found|certificate path/i.test(message)) {
+    return new Error(
+      'Unable to connect securely to Project Hub. Check any VPN, web filter, or HTTPS inspection settings, then try again.',
+    );
+  }
+  if (error instanceof TypeError || /failed to fetch|network request failed|load failed/i.test(message)) {
+    return new Error(`${label} failed because the network connection was lost.`);
+  }
+  return error;
+}
+
 async function fetchAuthWithTimeout(url, options = {}, label = 'Sign-in service', timeoutMs = 12000) {
   const controller = new AbortController();
   const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
@@ -83,7 +100,7 @@ async function fetchAuthWithTimeout(url, options = {}, label = 'Sign-in service'
     if (error?.name === 'AbortError') {
       throw new Error(`${label} timed out. Check your connection and try again.`);
     }
-    throw error;
+    throw normalizeAuthTransportError(error, label);
   } finally {
     globalThis.clearTimeout(timeoutId);
   }
@@ -155,23 +172,40 @@ function normalizeAuthSessionFromUrlParams(params) {
 
 async function refreshAuthSession(session) {
   if (!isSupabaseConfigured() || !session?.refreshToken) return null;
-  const response = await fetchAuthWithTimeout(getAuthEndpoint('/token?grant_type=refresh_token'), {
-    method: 'POST',
-    headers: buildHeaders({
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-    }),
-    body: JSON.stringify({ refresh_token: session.refreshToken }),
-  }, 'Session refresh');
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    if (/refresh token not found|invalid refresh token|refresh token.*(?:expired|revoked|already used)/i.test(errorText)) {
-      writeAuthSession(null);
+  if (authRefreshPromise) return authRefreshPromise;
+
+  const refreshToken = session.refreshToken;
+  const startingRevision = authSessionRevision;
+  const refreshRequest = (async () => {
+    const response = await fetchAuthWithTimeout(getAuthEndpoint('/token?grant_type=refresh_token'), {
+      method: 'POST',
+      headers: buildHeaders({
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      }),
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }, 'Session refresh');
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      if (/refresh token not found|invalid refresh token|refresh token.*(?:expired|revoked|already used)/i.test(errorText)) {
+        if (authSessionRevision === startingRevision && authSession?.refreshToken === refreshToken) {
+          writeAuthSession(null);
+        }
+        return null;
+      }
+      throw new Error('Unable to restore your session right now. Check your connection and try again.');
     }
-    return null;
+    const nextSession = normalizeAuthSession(await response.json());
+    if (!nextSession) throw new Error('Supabase returned an invalid refreshed session.');
+    if (authSessionRevision !== startingRevision) return authSession;
+    writeAuthSession(nextSession);
+    return nextSession;
+  })();
+  authRefreshPromise = refreshRequest;
+  try {
+    return await refreshRequest;
+  } finally {
+    if (authRefreshPromise === refreshRequest) authRefreshPromise = null;
   }
-  const nextSession = normalizeAuthSession(await response.json());
-  writeAuthSession(nextSession);
-  return nextSession;
 }
 
 async function hydrateAuthSessionUser(session) {
@@ -210,7 +244,14 @@ export async function initializeAuthSession() {
     return null;
   }
   if (session.expiresAt && session.expiresAt - Date.now() < 60_000) {
-    return refreshAuthSession(session);
+    try {
+      return await refreshAuthSession(session);
+    } catch {
+      // Temporary certificate, filter, timeout, and network failures are not a
+      // sign-out. Preserve the identity so the authorized offline cache can load
+      // and normal requests can retry when connectivity recovers.
+      return session;
+    }
   }
   writeAuthSession(session);
   if (!String(session?.user?.email || '').trim()) {
@@ -223,7 +264,7 @@ export async function signInWithPassword(email, password) {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase is not configured for sign-in.');
   }
-  const response = await fetch(getAuthEndpoint('/token?grant_type=password'), {
+  const response = await fetchAuthWithTimeout(getAuthEndpoint('/token?grant_type=password'), {
     method: 'POST',
     headers: buildHeaders(),
     body: JSON.stringify({
@@ -483,6 +524,7 @@ function normalizeSettings(settings) {
     emailNewTasksToExternalAssignees: settings?.emailNewTasksToExternalAssignees === true,
     complianceEmailTestMode: settings?.complianceEmailTestMode === true,
     complianceScheduledRemindersEnabled: settings?.complianceScheduledRemindersEnabled === true,
+    projectTemplates: normalizeProjectTemplates(settings?.projectTemplates),
     visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     visibleProjectTabs: normalizeVisibleProjectTabs(settings?.visibleProjectTabs),
     users,
@@ -538,7 +580,11 @@ function normalizeDependencyList(preds) {
   return source
     .map((item) => (typeof item === 'string' ? { id: item, lag: 0 } : item))
     .filter((item) => item?.id)
-    .map((item) => ({ id: String(item.id), lag: Number(item.lag) || 0 }));
+    .map((item) => ({
+      id: String(item.id),
+      lag: Number(item.lag) || 0,
+      ...(item.type === 'inspection' ? { type: 'inspection' } : {}),
+    }));
 }
 
 function normalizeProjectInspection(inspection, index = 0) {
@@ -1119,7 +1165,7 @@ export function hydrateTrackerWithNormalizedAssignments(
   };
 }
 
-export function hydrateProjectsWithNormalizedScheduleRelationships(projects, phaseRows, stepRows, delayRows) {
+export function hydrateProjectsWithNormalizedScheduleRelationships(projects, phaseRows, stepRows, delayRows, inspectionStepRows = []) {
   if (!Array.isArray(phaseRows) || !Array.isArray(stepRows) || !Array.isArray(delayRows)) return projects;
   const phasePredecessors = new Map();
   phaseRows.forEach((row) => {
@@ -1139,6 +1185,20 @@ export function hydrateProjectsWithNormalizedScheduleRelationships(projects, pha
     if (!stepPredecessors.has(key)) stepPredecessors.set(key, []);
     stepPredecessors.get(key).push({ id: predecessorId, lag: Number(row.lag) || 0, position: Number(row.position) || 0 });
   });
+  stepPredecessors.forEach((values) => values.sort((left, right) => left.position - right.position));
+
+  inspectionStepRows.forEach((row) => {
+    const key = `${String(row?.project_id || '').trim()}:${String(row?.phase_id || '').trim()}:${String(row?.step_id || '').trim()}`;
+    const predecessorId = String(row?.predecessor_inspection_id || '').trim();
+    if (!predecessorId || key === '::') return;
+    if (!stepPredecessors.has(key)) stepPredecessors.set(key, []);
+    stepPredecessors.get(key).push({
+      id: predecessorId,
+      type: 'inspection',
+      lag: Number(row.lag) || 0,
+      position: Number(row.position) || 0,
+    });
+  }, 'Sign-in');
   stepPredecessors.forEach((values) => values.sort((left, right) => left.position - right.position));
 
   const delaysByPhase = new Map();
@@ -2169,7 +2229,7 @@ async function loadNormalizedAssignments() {
 
 async function loadNormalizedScheduleRelationships() {
   try {
-    const [phases, steps, delays] = await Promise.all([
+    const [phases, steps, inspectionSteps, delays] = await Promise.all([
       querySupabaseJson(
         ['project-phase-dependencies'],
         '/rest/v1/project_phase_dependencies?select=project_id,phase_id,predecessor_phase_id,position,lag&order=project_id.asc,phase_id.asc,position.asc',
@@ -2183,14 +2243,20 @@ async function loadNormalizedScheduleRelationships() {
         { retry: 0 },
       ),
       querySupabaseJson(
+        ['project-step-inspection-dependencies'],
+        '/rest/v1/project_step_inspection_dependencies?select=project_id,phase_id,step_id,predecessor_inspection_id,position,lag&order=project_id.asc,phase_id.asc,step_id.asc,position.asc',
+        'Step inspection dependencies',
+        { retry: 0 },
+      ),
+      querySupabaseJson(
         ['project-schedule-delays'],
         '/rest/v1/project_schedule_delays?select=project_id,phase_id,id,step_id,position,data,version&order=project_id.asc,phase_id.asc,position.asc',
         'Schedule delays',
         { retry: 0 },
       ),
     ]);
-    if (!Array.isArray(phases) || !Array.isArray(steps) || !Array.isArray(delays)) return null;
-    return { phases, steps, delays };
+    if (!Array.isArray(phases) || !Array.isArray(steps) || !Array.isArray(inspectionSteps) || !Array.isArray(delays)) return null;
+    return { phases, steps, inspectionSteps, delays };
   } catch (error) {
     console.warn('Normalized schedule relationship tables are not available yet; using embedded dependency and delay data.', error);
     return null;
@@ -2461,6 +2527,7 @@ async function fetchTrackerData() {
           normalizedScheduleRelationships.phases,
           normalizedScheduleRelationships.steps,
           normalizedScheduleRelationships.delays,
+          normalizedScheduleRelationships.inspectionSteps,
         )
       : projectsWithSchedule;
     const projectsWithAssets = normalizedAssets
@@ -2977,6 +3044,36 @@ export async function deleteTask(currentState, taskId, options = {}) {
   return { ...currentState, tasks: persisted.items, storageMode: persisted.storageMode };
 }
 
+async function persistProjectTemplateCreation(project, tasks, closeoutItems) {
+  const response = await fetchAuthorizedSupabase('/rest/v1/rpc/create_project_from_template', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_project: stripRecordMetadata(project),
+      p_tasks: tasks.map(stripRecordMetadata),
+      p_closeout_items: closeoutItems,
+    }),
+  }, 'Project template creation', 30000);
+  const text = await response.text();
+  if (!response.ok) {
+    let message = 'Unable to create the project from its template.';
+    try {
+      const payload = JSON.parse(text);
+      message = payload?.message || message;
+    } catch {
+      // Keep the stable user-facing message for an invalid error response.
+    }
+    throw new Error(message);
+  }
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    // The transaction has already committed when PostgREST returns a successful
+    // status, so a malformed optional result must not produce a false failure.
+    return null;
+  }
+}
+
 export async function createProject(currentState, payload) {
   const project = normalizeProject({
     id: `p${Date.now()}`,
@@ -2999,13 +3096,46 @@ export async function createProject(currentState, payload) {
     customerNotes: payload.customerNotes?.trim() || '',
     progress: Number(payload.progress) || 0,
     accessUserIds: Array.isArray(payload.accessUserIds) ? payload.accessUserIds : [],
+    locations: payload.locations || [],
     phases: payload.phases || [],
     files: payload.files,
     photos: payload.photos || [],
     mainPhotoId: payload.mainPhotoId || '',
     mainPhotoCrop: payload.mainPhotoCrop === true,
     selections: payload.selections || [],
+    inspections: payload.inspections || [],
   });
+  const templateTasks = (Array.isArray(payload.templateTasks) ? payload.templateTasks : []).map((task) => normalizeTask({
+    ...task,
+    projectId: project.id,
+    done: false,
+    createdAt: new Date().toISOString(),
+    attachments: [],
+  }));
+  const templateCloseoutItems = (Array.isArray(payload.templateCloseoutItems) ? payload.templateCloseoutItems : []).map((item) => ({
+    ...item,
+    projectId: project.id,
+    status: 'not_started',
+    completedDate: '',
+    attachments: [],
+    deletedAttachments: [],
+  }));
+  if (templateTasks.length || templateCloseoutItems.length) {
+    if (currentState.storageMode !== 'supabase' || !currentState.concurrencyEnabled) {
+      throw new Error('Reconnect to Project Hub before creating a project with template tasks or closeout items. Nothing was created.');
+    }
+    await persistProjectTemplateCreation(project, templateTasks, templateCloseoutItems);
+    return {
+      ...currentState,
+      projects: [...currentState.projects, { ...project, _version: 1 }],
+      tasks: [...currentState.tasks, ...templateTasks.map((task) => ({
+        ...task,
+        _version: 1,
+        _normalizedVersions: { attachments: {} },
+      }))],
+      storageMode: 'supabase',
+    };
+  }
   const projects = [...currentState.projects, project];
   const persisted = await persistVersionedCollection({
     table: 'projects', nextItems: projects, previousItems: currentState.projects,

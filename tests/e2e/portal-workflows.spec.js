@@ -154,9 +154,94 @@ test('customer approves a linked selection through the restricted response RPC',
     p_version: 1,
     p_response: 'Quartz is approved.',
     p_decision: 'approved',
+    p_signer_name: '',
   });
   await expect(page.getByText('Customer response:')).toBeVisible();
   await expect(page.getByText('Quartz is approved.')).toBeVisible();
+});
+
+test('customer signs a version-bound change order approval from the portal', async ({ page }) => {
+  const approvalId = 'change-order-approval-1';
+  let responsePayload = null;
+  const approvalRow = {
+    id: approvalId,
+    project_id: PROJECT_ID,
+    item_number: 'APR-CO-001-01',
+    item_type: 'approval',
+    audience: 'customer',
+    status: 'response_requested',
+    title: 'Change order approval: CO-001 - Add pantry cabinets',
+    due_date: '2026-08-25',
+    data: {
+      id: approvalId,
+      projectId: PROJECT_ID,
+      number: 'APR-CO-001-01',
+      itemType: 'approval',
+      audience: 'customer',
+      status: 'response_requested',
+      title: 'Change order approval: CO-001 - Add pantry cabinets',
+      message: 'Please review the change order terms below and approve or decline them.',
+      changeOrderId: 'change-order-1',
+      changeOrderVersion: 3,
+      changeOrderSnapshot: {
+        number: 'CO-001',
+        title: 'Add pantry cabinets',
+        description: 'Add two matching pantry cabinets beside the refrigerator.',
+        reason: 'Owner request',
+        costImpact: '2450',
+        scheduleDays: '2',
+        dueDate: '2026-08-25',
+        notes: '',
+        attachmentNames: ['cabinet-elevation.pdf'],
+      },
+    },
+    version: 1,
+  };
+
+  await mockPortalBackend(page, {
+    handleRequest: async ({ request, url }) => {
+      if (url.pathname.endsWith('/project_portal_items')) return { status: 200, body: [approvalRow] };
+      if (url.pathname.endsWith('/rpc/respond_to_project_portal_item')) {
+        responsePayload = request.postDataJSON();
+        return {
+          status: 200,
+          body: [{
+            ...approvalRow,
+            status: 'approved',
+            data: {
+              ...approvalRow.data,
+              status: 'approved',
+              response: 'Approved as presented.',
+              signerName: 'Jamie Customer',
+              respondedAt: '2026-08-17T15:00:00Z',
+            },
+            version: 2,
+          }],
+        };
+      }
+      return null;
+    },
+  });
+
+  await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
+  await page.getByRole('tab', { name: 'Portal' }).click();
+  await expect(page.getByText('Issued terms · Version 3')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('$2,450.00')).toBeVisible();
+  await expect(page.getByText('cabinet-elevation.pdf')).toBeVisible();
+  await page.getByRole('button', { name: 'Review request' }).click();
+  await page.getByLabel('Full name').fill('Jamie Customer');
+  await page.getByLabel('Your response (optional)').fill('Approved as presented.');
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+
+  await expect.poll(() => responsePayload, { timeout: 20_000 }).not.toBeNull();
+  expect(responsePayload).toEqual({
+    p_item_id: approvalId,
+    p_version: 1,
+    p_response: 'Approved as presented.',
+    p_decision: 'approved',
+    p_signer_name: 'Jamie Customer',
+  });
+  await expect(page.getByText('Signed by Jamie Customer')).toBeVisible();
 });
 
 test('customer submits and then sees a warranty request through customer-only RPCs', async ({ page }) => {

@@ -91,7 +91,7 @@ async function responseJson(response, fallback) {
 }
 
 function missingTable(error) {
-  return /project_daily_logs|project_change_orders|project_rfis|project_submittals|project_budget_items|project_commitments|project_portal_items|project_warranty_items|project_closeout_items|respond_to_project_portal_item|list_customer_warranty_requests|submit_customer_warranty_request|PGRST205|42P01|schema cache|does not exist|404/i.test(String(error?.message || error || ''));
+  return /project_daily_logs|project_change_orders|project_rfis|project_submittals|project_budget_items|project_commitments|project_portal_items|project_warranty_items|project_closeout_items|create_change_order_approval_request|respond_to_project_portal_item|list_customer_warranty_requests|submit_customer_warranty_request|PGRST205|42P01|schema cache|does not exist|404/i.test(String(error?.message || error || ''));
 }
 
 export async function loadWorkflowItemsForProjects(type, projectIds = []) {
@@ -519,7 +519,31 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
       }
     },
 
-    async respondToPortalItem(record, response, decision = '') {
+    async requestChangeOrderApproval(record) {
+      assertEdit();
+      if (!configured) throw new Error('Connect to Project Hub before requesting customer approval.');
+      const remoteResponse = await fetchAuthorizedSupabase('/rest/v1/rpc/create_change_order_approval_request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          p_change_order_id: record.id,
+          p_version: record.version,
+          p_due_date: record.dueDate || null,
+        }),
+      }, 'Change order approval request');
+      const payload = await responseJson(remoteResponse, 'Unable to create the customer approval request.');
+      if (!Array.isArray(payload) || !payload[0]) throw new Error('The customer approval request was not created.');
+      const savedRecord = normalize('portalItems', payload[0]);
+      const nextLocalRecords = [
+        savedRecord,
+        ...readLocal('portalItems', scopedProjectId).filter((item) => item.id !== savedRecord.id),
+      ];
+      writeLocal('portalItems', scopedProjectId, nextLocalRecords);
+      await refreshOfflineWorkflowCache(userId, scopedProjectId, 'portalItems', nextLocalRecords);
+      return { record: savedRecord, local: false };
+    },
+
+    async respondToPortalItem(record, response, decision = '', signerName = '') {
       const updated = {
         ...record,
         response: String(response || '').trim(),
@@ -535,6 +559,7 @@ export function createConstructionWorkflowService({ projectId, canEdit = true, o
             p_version: record.version,
             p_response: updated.response,
             p_decision: decision,
+            p_signer_name: String(signerName || '').trim(),
           }),
         }, 'Portal response');
         const payload = await responseJson(remoteResponse, 'Unable to save portal response.');

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { formatShortDate } from '../utils/calendarUi.js';
+import { legacyUnallocatedPaidAmount, normalizeVendorPayments, totalPaidAmount, VENDOR_PAYMENT_METHODS } from '../utils/vendorReporting.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import WorkflowAttachments, { addPendingWorkflowAttachments, deleteWorkflowAttachments, prepareWorkflowAttachments, removeWorkflowAttachment } from './WorkflowAttachments.jsx';
@@ -39,6 +40,22 @@ function nextNumber(type, records) {
   return `COM-${String(max + 1).padStart(3, '0')}`;
 }
 
+function newPayment() {
+  return {
+    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    date: new Date().toLocaleDateString('en-CA'), amount: '', method: 'check', reference: '', reportable: true,
+  };
+}
+
+function commitmentDraft(record) {
+  return {
+    ...record,
+    legacyPaidAmount: legacyUnallocatedPaidAmount(record) || '',
+    payments: Array.isArray(record?.payments) ? record.payments.map((payment) => ({ ...payment })) : [],
+    deletedAttachments: [],
+  };
+}
+
 function emptyDraft(type, records) {
   if (type === 'budgetItems') return {
     id: '', version: 0, number: nextNumber(type, records), title: '', status: 'active', category: '',
@@ -46,7 +63,7 @@ function emptyDraft(type, records) {
   };
   return {
     id: '', version: 0, number: nextNumber(type, records), title: '', status: 'draft', vendorId: '', vendorName: '',
-    budgetCode: '', scope: '', committedAmount: '', paidAmount: '', retainagePercent: '', startDate: '', endDate: '', notes: '',
+    budgetCode: '', scope: '', committedAmount: '', paidAmount: '', legacyPaidAmount: '', payments: [], retainagePercent: '', startDate: '', endDate: '', notes: '',
     invoices: [], deletedAttachments: [],
   };
 }
@@ -79,7 +96,7 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
     const changes = budgetItems.reduce((sum, record) => sum + numeric(record.approvedChanges), 0);
     const current = original + changes;
     const committed = commitments.reduce((sum, record) => sum + numeric(record.committedAmount), 0);
-    const paid = commitments.reduce((sum, record) => sum + numeric(record.paidAmount), 0);
+    const paid = commitments.reduce((sum, record) => sum + totalPaidAmount(record), 0);
     const forecast = budgetItems.reduce((sum, record) => sum + numeric(record.forecastCost), 0);
     return { original, changes, current, committed, paid, forecast, remaining: current - committed };
   }, [recordsByType]);
@@ -144,6 +161,21 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
     setDraft((current) => removeWorkflowAttachment(current, attachmentId, 'invoices'));
   }
 
+  function addPayment() {
+    setDraft((current) => ({ ...current, payments: [...(current.payments || []), newPayment()] }));
+  }
+
+  function updatePayment(paymentId, field, value) {
+    setDraft((current) => ({
+      ...current,
+      payments: (current.payments || []).map((payment) => (payment.id === paymentId ? { ...payment, [field]: value } : payment)),
+    }));
+  }
+
+  function removePayment(paymentId) {
+    setDraft((current) => ({ ...current, payments: (current.payments || []).filter((payment) => payment.id !== paymentId) }));
+  }
+
   function switchType(type) {
     setActiveType(type);
     setDraft(null);
@@ -152,12 +184,23 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
 
   async function save() {
     if (!draft || saving || !draft.number.trim() || !draft.title.trim()) return;
+    if (activeType === 'commitments' && (draft.payments || []).some((payment) => !payment.date || numeric(payment.amount) <= 0)) {
+      setMessage('Each payment needs a date and an amount greater than zero.');
+      return;
+    }
     setSaving(true);
     setMessage('');
     let uploaded = [];
     try {
+      const normalizedPayments = activeType === 'commitments' ? normalizeVendorPayments(draft.payments) : [];
+      const commitmentPayload = activeType === 'commitments' ? {
+        ...draft,
+        payments: normalizedPayments,
+        legacyPaidAmount: numeric(draft.legacyPaidAmount),
+        paidAmount: numeric(draft.legacyPaidAmount) + normalizedPayments.reduce((sum, payment) => sum + payment.amount, 0),
+      } : draft;
       const preparedResult = activeType === 'commitments'
-        ? await prepareWorkflowAttachments(project.id, 'commitment-invoices', draft, 'invoices')
+        ? await prepareWorkflowAttachments(project.id, 'commitment-invoices', commitmentPayload, 'invoices')
         : { prepared: draft, uploaded: [] };
       uploaded = preparedResult.uploaded;
       const result = await service.save(activeType, preparedResult.prepared);
@@ -233,10 +276,26 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
                 <label><span>Budget code</span><select value={draft.budgetCode} onChange={(event) => change('budgetCode', event.target.value)}><option value="">Not linked</option>{recordsByType.budgetItems.map((item) => <option value={item.number} key={item.id}>{item.number} · {item.title}</option>)}</select></label>
                 <label className="full"><span>Scope</span><textarea value={draft.scope} onChange={(event) => change('scope', event.target.value)} /></label>
                 <label><span>Committed amount</span><input type="number" step="0.01" value={draft.committedAmount} onChange={(event) => change('committedAmount', event.target.value)} /></label>
-                <label><span>Paid amount</span><input type="number" step="0.01" value={draft.paidAmount} onChange={(event) => change('paidAmount', event.target.value)} /></label>
+                <label><span>Legacy / undated paid amount</span><input type="number" min="0" step="0.01" value={draft.legacyPaidAmount} onChange={(event) => change('legacyPaidAmount', event.target.value)} /><small>Allocate this balance into dated payments before year-end reporting.</small></label>
                 <label><span>Retainage percent</span><input type="number" min="0" max="100" step="0.01" value={draft.retainagePercent} onChange={(event) => change('retainagePercent', event.target.value)} /></label>
                 <label><span>Start date</span><input type="date" value={draft.startDate} onChange={(event) => change('startDate', event.target.value)} /></label>
                 <label><span>End date</span><input type="date" value={draft.endDate} onChange={(event) => change('endDate', event.target.value)} /></label>
+                <section className="vendor-payment-editor full" aria-label="Vendor payments">
+                  <div className="vendor-payment-editor-heading">
+                    <div><strong>Dated payments</strong><span>Payment method determines whether the amount is included in 1099-NEC preparation.</span></div>
+                    <button className="button secondary" type="button" onClick={addPayment}><FluentIcon name="add" size={16} />Add payment</button>
+                  </div>
+                  {(draft.payments || []).length ? (draft.payments || []).map((payment) => (
+                    <div className="vendor-payment-row" key={payment.id}>
+                      <label><span>Date</span><input type="date" value={payment.date || ''} onChange={(event) => updatePayment(payment.id, 'date', event.target.value)} /></label>
+                      <label><span>Amount</span><input type="number" min="0" step="0.01" value={payment.amount ?? ''} onChange={(event) => updatePayment(payment.id, 'amount', event.target.value)} /></label>
+                      <label><span>Method</span><select value={payment.method || 'check'} onChange={(event) => updatePayment(payment.id, 'method', event.target.value)}>{VENDOR_PAYMENT_METHODS.map((method) => <option value={method.id} key={method.id}>{method.label}</option>)}</select></label>
+                      <label><span>Reference</span><input value={payment.reference || ''} onChange={(event) => updatePayment(payment.id, 'reference', event.target.value)} placeholder="Check or transaction number" /></label>
+                      <label className="vendor-payment-reportable"><input type="checkbox" checked={payment.reportable !== false} onChange={(event) => updatePayment(payment.id, 'reportable', event.target.checked)} /><span>Service payment</span></label>
+                      <button className="button secondary gantt-icon-button" type="button" onClick={() => removePayment(payment.id)} aria-label="Remove payment"><FluentIcon name="delete" size={16} /></button>
+                    </div>
+                  )) : <p className="vendor-payment-empty">No dated payments entered.</p>}
+                </section>
                 <label className="full"><span>Notes</span><textarea value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
                 <WorkflowAttachments attachments={draft.invoices || []} onAdd={addInvoices} onRemove={removeInvoice} label="Invoices" addLabel="Add invoices" disabled={saving} />
               </>
@@ -262,11 +321,11 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
                   else delete recordRefs.current[record.id];
                 }}
               >
-                <div className="project-workflow-card-heading"><div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>{canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}</div>
+                <div className="project-workflow-card-heading"><div><span className={`status-pill status-${record.status}`}>{statusLabel(record.status)}</span><h3>{record.number} · {record.title}</h3></div>{canEdit ? <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(activeType === 'commitments' ? commitmentDraft(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button> : null}</div>
                 {activeType === 'budgetItems' ? (
                   <dl className="project-workflow-summary"><div><dt>Current budget</dt><dd>{money(currentBudget)}</dd></div><div><dt>Forecast</dt><dd>{money(record.forecastCost)}</dd></div><div><dt>Variance</dt><dd>{money(currentBudget - numeric(record.forecastCost))}</dd></div></dl>
                 ) : (
-                  <dl className="project-workflow-summary"><div><dt>Company</dt><dd>{record.vendorName || 'Unassigned'}</dd></div><div><dt>Committed / paid</dt><dd>{money(record.committedAmount)} / {money(record.paidAmount)}</dd></div><div><dt>End date</dt><dd>{record.endDate ? formatShortDate(record.endDate) : 'Not set'}</dd></div></dl>
+                  <dl className="project-workflow-summary"><div><dt>Company</dt><dd>{record.vendorName || 'Unassigned'}</dd></div><div><dt>Committed / paid</dt><dd>{money(record.committedAmount)} / {money(totalPaidAmount(record))}</dd></div><div><dt>End date</dt><dd>{record.endDate ? formatShortDate(record.endDate) : 'Not set'}</dd></div></dl>
                 )}
               </article>
             );

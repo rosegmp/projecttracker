@@ -21,13 +21,20 @@ function emptyDraft(records) {
   };
 }
 
+function money(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(amount)
+    : 'Not set';
+}
+
 export default function ProjectPortalManager({ project, activeUser, canEdit = true }) {
   const role = String(activeUser?.role || 'View Only');
   const portalUser = PORTAL_ROLES.has(role);
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [records, setRecords] = useState([]);
   const [draft, setDraft] = useState(null);
-  const [responseDraft, setResponseDraft] = useState({ id: '', text: '' });
+  const [responseDraft, setResponseDraft] = useState({ id: '', text: '', signerName: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -89,6 +96,11 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
 
   async function submitResponse(record, decision = '') {
     const text = responseDraft.id === record.id ? responseDraft.text.trim() : '';
+    const signerName = responseDraft.id === record.id ? responseDraft.signerName.trim() : '';
+    if (record.changeOrderId && !signerName) {
+      setMessage('Enter your full name before approving or declining this change order.');
+      return;
+    }
     if (!text && !decision) {
       setMessage('Add a response before submitting.');
       return;
@@ -96,9 +108,9 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
     setSaving(true);
     setMessage('');
     try {
-      const result = await service.respondToPortalItem(record, text, decision);
+      const result = await service.respondToPortalItem(record, text, decision, signerName);
       setRecords((current) => current.map((item) => (item.id === record.id ? result.record : item)));
-      setResponseDraft({ id: '', text: '' });
+      setResponseDraft({ id: '', text: '', signerName: '' });
       setLocalMode(!!result.local);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to save your response.');
@@ -134,8 +146,11 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
       {loading ? <div className="empty-state compact"><p>Loading portal items…</p></div> : records.length ? (
         <div className="project-workflow-list">
           {records.map((record) => {
-            const acceptsResponse = portalUser && !['draft', 'closed'].includes(record.status);
+            const acceptsResponse = portalUser && !['draft', 'closed', 'approved', 'declined'].includes(record.status);
             const responding = responseDraft.id === record.id;
+            const changeOrderSnapshot = record.changeOrderSnapshot && typeof record.changeOrderSnapshot === 'object'
+              ? record.changeOrderSnapshot
+              : null;
             return (
               <article className="project-workflow-card project-portal-card" key={record.id}>
                 <div className="project-workflow-card-heading">
@@ -143,11 +158,12 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
                   <div className="project-workflow-card-actions"><span className={`status-pill status-${record.status}`}>{STATUS_LABELS[record.status] || record.status}</span>{canEdit ? <><button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button><button className="button danger gantt-icon-button" type="button" onClick={() => void removeRecord(record)} aria-label={`Delete ${record.number}`}><FluentIcon name="delete" /></button></> : null}</div>
                 </div>
                 <p className="project-portal-message">{record.message}</p>
+                {changeOrderSnapshot ? <section className="change-order-approval-snapshot" aria-label={`Issued terms for ${changeOrderSnapshot.number || 'change order'}`}><div className="change-order-approval-snapshot-heading"><strong>{changeOrderSnapshot.number || 'Change order'} · {changeOrderSnapshot.title || 'Untitled change order'}</strong><span>Issued terms · Version {record.changeOrderVersion}</span></div><dl className="project-workflow-summary"><div><dt>Cost impact</dt><dd>{money(changeOrderSnapshot.costImpact)}</dd></div><div><dt>Schedule impact</dt><dd>{changeOrderSnapshot.scheduleDays ? `${changeOrderSnapshot.scheduleDays} days` : 'None'}</dd></div><div><dt>Response due</dt><dd>{changeOrderSnapshot.dueDate ? formatShortDate(changeOrderSnapshot.dueDate) : 'Not set'}</dd></div></dl>{changeOrderSnapshot.description ? <div><strong>Scope</strong><p>{changeOrderSnapshot.description}</p></div> : null}{changeOrderSnapshot.reason ? <div><strong>Reason</strong><p>{changeOrderSnapshot.reason}</p></div> : null}{changeOrderSnapshot.notes ? <div><strong>Notes</strong><p>{changeOrderSnapshot.notes}</p></div> : null}{changeOrderSnapshot.attachmentNames?.length ? <div><strong>Referenced attachments</strong><p>{changeOrderSnapshot.attachmentNames.join(', ')}</p></div> : null}</section> : null}
                 {record.dueDate ? <p className="project-portal-due"><strong>Response due:</strong> {formatShortDate(record.dueDate)}</p> : null}
-                {record.response ? <div className="project-portal-response"><strong>Portal response</strong><p>{record.response}</p>{record.respondedAt ? <span>{formatShortDate(record.respondedAt)}</span> : null}</div> : null}
+                {record.response || record.signerName ? <div className="project-portal-response"><strong>Portal response</strong>{record.signerName ? <p>Signed by {record.signerName}</p> : null}{record.response ? <p>{record.response}</p> : null}{record.respondedAt ? <span>{formatShortDate(record.respondedAt)}</span> : null}</div> : null}
                 {acceptsResponse ? (
-                  responding ? <div className="project-portal-response-form"><label><span>Your response</span><textarea value={responseDraft.text} onChange={(event) => setResponseDraft({ id: record.id, text: event.target.value })} /></label><div>{record.itemType === 'approval' ? <><button className="button primary" type="button" disabled={saving} onClick={() => void submitResponse(record, 'approved')}>Approve</button><button className="button danger" type="button" disabled={saving} onClick={() => void submitResponse(record, 'declined')}>Decline</button></> : <button className="button primary" type="button" disabled={saving} onClick={() => void submitResponse(record)}>Submit response</button>}<button className="button secondary" type="button" onClick={() => setResponseDraft({ id: '', text: '' })}>Cancel</button></div></div>
-                    : <button className="button secondary" type="button" onClick={() => setResponseDraft({ id: record.id, text: record.response || '' })}>{record.itemType === 'approval' ? 'Review request' : 'Respond'}</button>
+                  responding ? <div className="project-portal-response-form">{record.changeOrderId ? <label><span>Full name</span><input value={responseDraft.signerName} onChange={(event) => setResponseDraft((current) => ({ ...current, id: record.id, signerName: event.target.value }))} autoComplete="name" required /></label> : null}<label><span>Your response{record.itemType === 'approval' ? ' (optional)' : ''}</span><textarea value={responseDraft.text} onChange={(event) => setResponseDraft((current) => ({ ...current, id: record.id, text: event.target.value }))} /></label>{record.changeOrderId ? <p className="project-portal-signature-consent">By selecting Approve or Decline, you confirm that the name above identifies you and that your decision applies to the issued terms shown here.</p> : null}<div>{record.itemType === 'approval' ? <><button className="button primary" type="button" disabled={saving} onClick={() => void submitResponse(record, 'approved')}>Approve</button><button className="button danger" type="button" disabled={saving} onClick={() => void submitResponse(record, 'declined')}>Decline</button></> : <button className="button primary" type="button" disabled={saving} onClick={() => void submitResponse(record)}>Submit response</button>}<button className="button secondary" type="button" onClick={() => setResponseDraft({ id: '', text: '', signerName: '' })}>Cancel</button></div></div>
+                    : <button className="button secondary" type="button" onClick={() => setResponseDraft({ id: record.id, text: record.response || '', signerName: record.signerName || '' })}>{record.itemType === 'approval' ? 'Review request' : 'Respond'}</button>
                 ) : null}
               </article>
             );

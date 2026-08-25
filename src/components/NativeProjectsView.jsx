@@ -17,6 +17,7 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { getScheduleAssignees, scheduleAssigneeFields } from '../utils/assignees.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
+import { applyProjectTemplate, normalizeProjectTemplates } from '../utils/projectTemplates.js';
 import {
   cacheProjectForOffline,
   formatOfflineProjectSize,
@@ -78,6 +79,7 @@ export default function NativeProjectsView({
   const [selectedProjectId, setSelectedProjectId] = useState(getProjectIdFromLocation);
   const [stepDraft, setStepDraft] = useState(null);
   const [stepPredecessorDraft, setStepPredecessorDraft] = useState(null);
+  const [inspectionEditRequest, setInspectionEditRequest] = useState(null);
   const [phaseNameDraft, setPhaseNameDraft] = useState(null);
   const { runMutation, isMutating } = useEntityMutations();
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
@@ -102,6 +104,10 @@ export default function NativeProjectsView({
   const visibleProjectTabs = useMemo(
     () => getVisibleProjectTabs(data.settings?.visibleProjectTabs, activeUser?.role),
     [activeUser?.role, data.settings?.visibleProjectTabs],
+  );
+  const projectTemplates = useMemo(
+    () => normalizeProjectTemplates(data.settings?.projectTemplates),
+    [data.settings?.projectTemplates],
   );
   const visibleOfflineProjectRecords = useMemo(() => {
     const visibleIds = new Set(visibleProjects.map((project) => project.id));
@@ -380,7 +386,13 @@ export default function NativeProjectsView({
       mainPhotoCrop: false,
       photos: [],
       accessUserIds: [],
+      templateId: '',
+      locations: [],
       phases: [],
+      files: undefined,
+      inspections: [],
+      templateTasks: [],
+      templateCloseoutItems: [],
     });
   }
 
@@ -408,7 +420,62 @@ export default function NativeProjectsView({
       mainPhotoCrop: project.mainPhotoCrop === true,
       photos: project.photos || [],
       accessUserIds: normalizeProjectAccessUserIds(project.accessUserIds),
+      templateId: '',
+      locations: project.locations || [],
       phases: project.phases || [],
+      files: project.files,
+      inspections: project.inspections || [],
+      templateTasks: [],
+      templateCloseoutItems: [],
+    });
+  }
+
+  function handleProjectDraftChange(field, value) {
+    setProjectDraft((current) => {
+      if (!current) return current;
+      if (field === 'templateId' && !current.id) {
+        const template = projectTemplates.find((item) => item.id === value);
+        if (!template) {
+          return {
+            ...current,
+            templateId: '',
+            phases: [],
+            locations: [],
+            files: undefined,
+            inspections: [],
+            templateTasks: [],
+            templateCloseoutItems: [],
+          };
+        }
+        const applied = applyProjectTemplate(template, current.start);
+        return {
+          ...current,
+          templateId: template.id,
+          phases: applied.phases,
+          locations: applied.locations,
+          files: applied.files,
+          inspections: applied.inspections,
+          templateTasks: applied.tasks,
+          templateCloseoutItems: applied.closeoutItems,
+          end: current.start ? applied.suggestedEnd : current.end,
+        };
+      }
+      if (field === 'start' && current.templateId && !current.id) {
+        const template = projectTemplates.find((item) => item.id === current.templateId);
+        if (template) {
+          const applied = applyProjectTemplate(template, value);
+          return {
+            ...current,
+            start: value,
+            end: applied.suggestedEnd,
+            phases: applied.phases,
+            inspections: applied.inspections,
+            templateTasks: applied.tasks,
+            templateCloseoutItems: applied.closeoutItems,
+          };
+        }
+      }
+      return { ...current, [field]: value };
     });
   }
 
@@ -420,7 +487,18 @@ export default function NativeProjectsView({
   }
 
   function handleProjectDetailCalendarItemClick(item) {
-    if (!selectedProject || item?.type !== 'step') return;
+    if (!selectedProject) return;
+    if (item?.type === 'inspection') {
+      const inspectionId = item.inspectionId || item.entityId;
+      if (!(selectedProject.inspections || []).some((inspection) => inspection.id === inspectionId)) return;
+      setInspectionEditRequest({
+        projectId: selectedProject.id,
+        inspectionId,
+        token: `${selectedProject.id}-${inspectionId}-${Date.now()}`,
+      });
+      return;
+    }
+    if (item?.type !== 'step') return;
     const phase = (selectedProject.phases || []).find(
       (entry) => entry.id === (item.phaseId || item.parentPhaseId),
     );
@@ -462,8 +540,11 @@ export default function NativeProjectsView({
   function buildProjectStepDependencyOptions(projectId, phaseId, selectedPreds = [], projectsSource = data.projects) {
     const project = (projectsSource || []).find((item) => item.id === projectId);
     const phase = project?.phases?.find((item) => item.id === phaseId);
-    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [pred.id, pred.lag || 0]));
-    return (phase?.steps || [])
+    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [
+      `${pred.type === 'inspection' ? 'inspection' : 'step'}:${pred.id}`,
+      pred.lag || 0,
+    ]));
+    const stepOptions = (phase?.steps || [])
       .slice()
       .sort((a, b) => {
         const aKey = a.start || a.end || '9999-12-31';
@@ -473,15 +554,30 @@ export default function NativeProjectsView({
       })
       .map((item) => ({
         id: item.id,
+        key: `step:${item.id}`,
+        type: 'step',
         name: item.name,
         dateLabel: item.start
           ? `${formatShortDate(item.start)} - ${item.end ? formatShortDate(item.end) : 'No end'}`
           : item.end
             ? `Ends ${formatShortDate(item.end)}`
             : 'Date not set',
-        selected: selectedMap.has(item.id),
-        lag: selectedMap.get(item.id) || 0,
+        selected: selectedMap.has(`step:${item.id}`),
+        lag: selectedMap.get(`step:${item.id}`) || 0,
       }));
+    const inspectionOptions = (project?.inspections || [])
+      .slice()
+      .sort((a, b) => (a.date || '9999-12-31').localeCompare(b.date || '9999-12-31') || (a.inspectionType || '').localeCompare(b.inspectionType || ''))
+      .map((inspection) => ({
+        id: inspection.id,
+        key: `inspection:${inspection.id}`,
+        type: 'inspection',
+        name: `Inspection · ${inspection.inspectionType || inspection.subcode || 'Untitled'}`,
+        dateLabel: inspection.date ? formatShortDate(inspection.date) : 'Date not set',
+        selected: selectedMap.has(`inspection:${inspection.id}`),
+        lag: selectedMap.get(`inspection:${inspection.id}`) || 0,
+      }));
+    return [...stepOptions, ...inspectionOptions];
   }
 
   function getProjectDetailDefaultStepStart(project, phaseId, settings, startOverride = '') {
@@ -610,6 +706,7 @@ export default function NativeProjectsView({
         (next.predecessorOptions || []).filter((option) => option.selected).map((option) => ({
           id: option.id,
           lag: option.lag || 0,
+          ...(option.type === 'inspection' ? { type: 'inspection' } : {}),
         })),
       );
       return next;
@@ -631,7 +728,7 @@ export default function NativeProjectsView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
             ),
           }
         : current,
@@ -644,7 +741,7 @@ export default function NativeProjectsView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, lag: Number(value) || 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, lag: Number(value) || 0 } : option,
             ),
           }
         : current,
@@ -755,7 +852,11 @@ export default function NativeProjectsView({
         stepDraft.mode === 'edit' && (stepDraft.projectId !== sourceProjectId || stepDraft.phaseId !== sourcePhaseId);
       const nextPredecessors = (stepDraft.predecessorOptions || [])
         .filter((option) => option.selected)
-        .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+        .map((option) => ({
+          id: option.id,
+          lag: option.lag || 0,
+          ...(option.type === 'inspection' ? { type: 'inspection' } : {}),
+        }));
       const noSoonerThan = nextPredecessors.length
         ? normalizeStartDate(
             stepDraft.startEdited ? stepDraft.start : stepDraft.notBefore || '',
@@ -780,12 +881,12 @@ export default function NativeProjectsView({
         nextStep.successors = [];
       }
       nextStep.predecessors.forEach((pred) => {
-        if (wouldCreateCycleFromPreds(targetPhase, pred.id, nextStep.id)) {
+        if (pred.type !== 'inspection' && wouldCreateCycleFromPreds(targetPhase, pred.id, nextStep.id)) {
           throw new Error('Cannot create a circular dependency.');
         }
       });
 
-      const removeStepFromPhase = (phase) => {
+      const removeStepFromPhase = (phase, inspections = project.inspections) => {
         const filteredSteps = (phase.steps || []).map((step) => ({
           ...step,
           predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== stepDraft.stepId),
@@ -798,12 +899,12 @@ export default function NativeProjectsView({
           steps: filteredSteps.filter((step) => step.id !== stepDraft.stepId),
           delays: (phase.delays || []).filter((delay) => delay.stepId !== stepDraft.stepId),
         };
-        syncStepLinks(nextPhase);
-        cascadeStepDates(nextPhase, data.settings);
+        syncStepLinks(nextPhase, inspections);
+        cascadeStepDates(nextPhase, data.settings, null, inspections);
         return nextPhase;
       };
 
-      const upsertStepInPhase = (phase, preserveExistingLinks) => {
+      const upsertStepInPhase = (phase, preserveExistingLinks, inspections = project.inspections) => {
         const existingSteps = [...(phase.steps || [])];
         const nextSteps =
           stepDraft.mode === 'create'
@@ -823,8 +924,8 @@ export default function NativeProjectsView({
           ...phase,
           steps: nextSteps,
         };
-        syncStepLinks(nextPhase);
-        cascadeStepDates(nextPhase, data.settings);
+        syncStepLinks(nextPhase, inspections);
+        cascadeStepDates(nextPhase, data.settings, null, inspections);
         return nextPhase;
       };
 
@@ -860,14 +961,14 @@ export default function NativeProjectsView({
       const nextSourceProject = resyncProjectSchedule({
         ...sourceProject,
         phases: (sourceProject.phases || []).map((phase) =>
-          phase.id === sourcePhaseId ? removeStepFromPhase(phase) : phase,
+          phase.id === sourcePhaseId ? removeStepFromPhase(phase, sourceProject.inspections) : phase,
         ),
       });
 
       const nextTargetProject = resyncProjectSchedule({
         ...project,
         phases: (project.phases || []).map((phase) =>
-          phase.id === stepDraft.phaseId ? upsertStepInPhase(phase, false) : phase,
+          phase.id === stepDraft.phaseId ? upsertStepInPhase(phase, false, project.inspections) : phase,
         ),
       });
 
@@ -920,8 +1021,8 @@ export default function NativeProjectsView({
               .filter((step) => step.id !== stepId),
             delays: (phase.delays || []).filter((delay) => delay.stepId !== stepId),
           };
-          syncStepLinks(nextPhase);
-          cascadeStepDates(nextPhase, currentState.settings);
+          syncStepLinks(nextPhase, project.inspections);
+          cascadeStepDates(nextPhase, currentState.settings, null, project.inspections);
           return nextPhase;
         }),
       });
@@ -977,6 +1078,7 @@ export default function NativeProjectsView({
           offlineUserId={offlineUserId}
           offlineOperations={offlineOperations}
           selectionNavigationRequest={navigationTarget}
+          calendarInspectionEditRequest={inspectionEditRequest}
           onBack={activeUser?.role === 'Customer' ? null : () => setSelectedProject('', 'push')}
           onEdit={startEdit}
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
@@ -1153,8 +1255,9 @@ export default function NativeProjectsView({
       {projectDraft ? (
         <ProjectModal
           draft={projectDraft}
+          templates={projectTemplates}
           users={users}
-          onChange={(field, value) => setProjectDraft((current) => ({ ...current, [field]: value }))}
+          onChange={handleProjectDraftChange}
           onClose={() => setProjectDraft(null)}
           onSave={readOnly ? () => {} : handleSaveProject}
           onDelete={readOnly ? () => {} : handleDeleteProject}

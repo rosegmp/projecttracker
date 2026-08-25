@@ -302,6 +302,7 @@ test('customer stays inside the allowlisted portal and can answer a published re
     p_version: 1,
     p_response: 'Friday morning works for us.',
     p_decision: '',
+    p_signer_name: '',
   });
 });
 
@@ -342,6 +343,29 @@ test('administrator project-tab settings hide project sections and preserve requ
     id: 'admin-folder-1',
     position: 0,
     data: { name: 'Offline plans' },
+    version: 1,
+  };
+  const calendarDate = new Date().toISOString().slice(0, 10);
+  const adminPhaseRow = {
+    project_id: adminProjectId,
+    id: 'admin-phase-1',
+    position: 0,
+    data: { name: 'Rough work', status: 'active', start: calendarDate, end: calendarDate },
+    version: 1,
+  };
+  const adminStepRow = {
+    project_id: adminProjectId,
+    phase_id: adminPhaseRow.id,
+    id: 'admin-step-1',
+    position: 0,
+    data: { name: 'Close walls', status: 'scheduled', start: calendarDate, end: calendarDate, duration: 1 },
+    version: 1,
+  };
+  const adminInspectionRow = {
+    project_id: adminProjectId,
+    id: 'admin-inspection-1',
+    position: 0,
+    data: { subcode: 'FRAME-220', inspectionType: 'Framing inspection', status: 'scheduled', date: calendarDate },
     version: 1,
   };
   const adminFileRow = {
@@ -451,13 +475,13 @@ test('administrator project-tab settings hide project sections and preserve requ
           projectAccess: [adminAccessRow],
           projects: [adminProjectRow],
           tasks: [],
-          phases: [],
-          steps: [],
+          phases: [adminPhaseRow],
+          steps: [adminStepRow],
           folders: [adminFolderRow],
           files: [adminFileRow],
           photos: [],
           selections: [adminSelectionRow],
-          inspections: [],
+          inspections: [adminInspectionRow],
         }),
       });
       return;
@@ -471,13 +495,19 @@ test('administrator project-tab settings hide project sections and preserve requ
           : url.pathname.endsWith('/app_users')
             ? [adminUserRow]
             : url.pathname.endsWith('/project_user_access')
-              ? [adminAccessRow]
-              : url.pathname.endsWith('/project_file_folders')
+            ? [adminAccessRow]
+            : url.pathname.endsWith('/project_phases')
+              ? [adminPhaseRow]
+              : url.pathname.endsWith('/project_steps')
+                ? [adminStepRow]
+            : url.pathname.endsWith('/project_file_folders')
                 ? [adminFolderRow]
                 : url.pathname.endsWith('/project_files')
                   ? [adminFileRow]
                   : url.pathname.endsWith('/project_selections')
                     ? [adminSelectionRow]
+                    : url.pathname.endsWith('/project_inspections')
+                      ? [adminInspectionRow]
                   : url.pathname.endsWith('/project_selection_attachments')
                     ? [adminSelectionAttachmentRow]
                     : url.pathname.endsWith('/project_daily_logs')
@@ -578,6 +608,20 @@ test('administrator project-tab settings hide project sections and preserve requ
   await page.reload();
   await expect.poll(() => projectFilesReadCount).toBeGreaterThan(filesBeforeChangedReload);
   await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
+
+  await page.getByRole('tab', { name: 'Calendar' }).click();
+  await page.getByRole('button', { name: /FRAME-220.*Framing inspection/ }).click();
+  await expect(page).toHaveURL(/projectTab=inspections/);
+  await expect(page.getByRole('dialog', { name: 'Edit inspection' })).toBeVisible();
+  await page.getByRole('dialog', { name: 'Edit inspection' }).getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByRole('tab', { name: 'Calendar' }).click();
+  await page.getByRole('button', { name: 'Close walls' }).click();
+  await page.getByRole('button', { name: 'Edit predecessors' }).click();
+  const predecessorDialog = page.getByRole('dialog', { name: 'Schedule step Predecessors' });
+  await expect(predecessorDialog.getByText('Inspection · Framing inspection')).toBeVisible();
+  await predecessorDialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('dialog', { name: 'Edit schedule step' }).getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByRole('button', { name: /^Settings:/ }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();

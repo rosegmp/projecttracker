@@ -3,10 +3,12 @@ import { readFile, readdir } from 'node:fs/promises';
 import {
   applyDelayToStep,
   cascadePhaseDates,
+  cascadeProjectStepDates,
   cascadeStepDates,
   computeStepEndDate,
   normalizePreds,
   normalizeStartDate,
+  projectUsesInspectionPredecessor,
   syncProjectPhaseDates,
   syncProjectTasks,
   syncStepLinks,
@@ -25,12 +27,14 @@ import {
   normalizeProjectAccessUserIds,
 } from '../src/utils/accessUi.js';
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
+import { applyProjectTemplate, buildProjectTemplate, normalizeProjectTemplates } from '../src/utils/projectTemplates.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import {
   buildHomeActionCenterItems,
   buildHomeAttentionSummary,
   buildHomeCertificateExceptions,
   buildHomeFinancialExceptions,
+  buildMyDaySummary,
   buildHomeOfflineSyncExceptions,
   buildHomeWarrantyCloseoutExceptions,
   buildHomeDaySummary,
@@ -98,6 +102,8 @@ import {
   normalizeSubcontractorName,
 } from '../src/utils/certificateMatching.js';
 import { certificateMatchesStatusFilter, subcontractorComplianceStatus } from '../src/utils/certificateStatus.js';
+import { buildVendor1099Review, legacyUnallocatedPaidAmount, reportingThresholdForYear, totalPaidAmount } from '../src/utils/vendorReporting.js';
+import { parseVendor1099Rows, suggestVendor1099Matches } from '../src/utils/vendor1099Spreadsheet.js';
 import { is1099ReportingCompanyType, normalizeCompanyType } from '../src/utils/companyType.js';
 import {
   DEFAULT_VISIBLE_PROJECT_TABS,
@@ -462,6 +468,7 @@ const tests = [
       assert.equal(warrantyItems[0]._offlineStatus, 'pending');
       assert.equal(warrantyItems[0]._offlineServerRecord.title, 'Server punch item');
       assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
+      assert.equal(isOfflineNetworkError(new Error('Unable to connect securely to Project Hub.')), true);
       assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
     },
   },
@@ -1144,6 +1151,43 @@ const tests = [
     },
   },
   {
+    name: 'My Day combines role-scoped today and overdue field work',
+    run() {
+      const activeUser = { name: 'Alex Rivera', email: 'alex@example.com', role: 'Edit' };
+      const people = [{ first: 'Alex', last: 'Rivera', company: 'Destiny', email: 'alex@example.com' }];
+      const projects = [{
+        id: 'p1',
+        name: 'Maple House',
+        inspections: [
+          { id: 'inspection-today', date: '2026-07-16', status: 'requested', inspectionType: 'Framing' },
+          { id: 'inspection-overdue', date: '2026-07-15', status: 'requested', inspectionType: 'Footing' },
+        ],
+        phases: [{
+          id: 'phase-alex', name: 'Roughs', start: '2026-07-16', end: '2026-07-16', assignees: ['Alex Rivera'],
+          steps: [
+            { id: 'step-alex', name: 'Alex work', start: '2026-07-16', end: '2026-07-16', assignees: ['Alex Rivera'], status: 'scheduled' },
+            { id: 'step-alex-blocked', name: 'Blocked Alex work', start: '2026-07-15', end: '2026-07-16', assignees: ['Alex Rivera'], status: 'delayed' },
+            { id: 'step-jamie', name: 'Jamie work', start: '2026-07-16', end: '2026-07-16', assignees: ['Jamie Smith'], status: 'delayed' },
+          ],
+        }],
+      }];
+      const tasks = [
+        { id: 'task-today', projectId: 'p1', label: 'Alex today', due: '2026-07-16', assignees: ['Alex Rivera (Destiny)'], done: false },
+        { id: 'task-overdue', projectId: 'p1', label: 'Alex overdue', due: '2026-07-15', assignees: ['Alex Rivera'], done: false },
+        { id: 'task-jamie', projectId: 'p1', label: 'Jamie today', due: '2026-07-16', assignees: ['Jamie Smith'], done: false },
+      ];
+      const scopedTasks = buildHomeOpenTasks(tasks, projects, activeUser, people);
+      const summary = buildMyDaySummary(projects, scopedTasks, activeUser, people, '2026-07-16');
+      assert.deepEqual(summary.tasks.map((item) => item.id), ['task-today']);
+      assert.deepEqual(summary.inspections.map((item) => item.id), ['inspection-today']);
+      assert.deepEqual(summary.scheduleItems.map((item) => item.id).sort(), ['phase-alex', 'step-alex', 'step-alex-blocked']);
+      assert.deepEqual(summary.overdueItems.map((item) => item.id), ['task-overdue', 'step-alex-blocked', 'inspection-overdue']);
+      assert.ok(!summary.scheduleItems.some((item) => item.id === 'step-jamie'));
+      const adminSummary = buildMyDaySummary(projects, tasks, { name: 'Admin', role: 'Admin' }, people, '2026-07-16');
+      assert.ok(adminSummary.scheduleItems.some((item) => item.id === 'step-jamie'));
+    },
+  },
+  {
     name: 'home action center aggregates certificate exceptions with portfolio drill-through data',
     run() {
       const subcontractors = [
@@ -1497,6 +1541,11 @@ const tests = [
       assert.equal(health.tone, 'attention');
       assert.equal(health.issueCount, 3);
       assert.match(homeSource, /Action center/);
+      assert.match(homeSource, /Field workspace/);
+      assert.match(homeSource, /My Day/);
+      assert.match(homeSource, /create-daily-log/);
+      assert.match(homeSource, /create-photo/);
+      assert.match(homeSource, /Using offline data/);
       assert.match(homeSource, /Work item.*Project.*Owner.*Due.*Reason.*Status.*Actions/);
       assert.match(homeSource, /Next 7 days/);
       assert.match(homeSource, /QuickTaskForm/);
@@ -1515,7 +1564,10 @@ const tests = [
       assert.match(appSource, /const NativeHomeView = lazy/);
       assert.match(appSource, /id: 'home'/);
       assert.match(appSource, /if \(activeTab === 'home'\)/);
+      assert.match(appSource, /onQuickAction=\{openHomeQuickAction\}/);
       assert.match(styleSource, /\.home-day-grid[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+      assert.match(styleSource, /\.my-day-grid[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+      assert.match(styleSource, /\.my-day-quick-actions[\s\S]*min-height: var\(--touch-target-size\)/);
       assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.home-day-grid,[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
       assert.match(detailSource, /'inspections'/);
     },
@@ -1575,6 +1627,12 @@ const tests = [
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Unable to reach the login invite service/);
       assert.match(trackerSource, /refresh token not found\|invalid refresh token/);
       assert.match(trackerSource, /writeAuthSession\(null\)/);
+      assert.match(trackerSource, /let authRefreshPromise = null/);
+      assert.match(trackerSource, /if \(authRefreshPromise\) return authRefreshPromise/);
+      assert.match(trackerSource, /authSessionRevision === startingRevision/);
+      assert.match(trackerSource, /Temporary certificate, filter, timeout, and network failures are not a/);
+      assert.match(trackerSource, /Unable to connect securely to Project Hub\. Check any VPN, web filter, or HTTPS inspection settings/);
+      assert.match(trackerSource, /fetchAuthWithTimeout\(getAuthEndpoint\('\/token\?grant_type=password'\)/);
       assert.match(trackerSource, /Your login session expired\. Sign out, then sign in again before sending the invite\./);
       assert.match(appSource, /\['recovery', 'invite'\]\.includes\(recoverySession\?\.type\)/);
       assert.match(trackerSource, /error_description/);
@@ -2871,6 +2929,10 @@ const tests = [
         new URL('../supabase/migrations/20260716170000_normalize_schedule_relationships.sql', import.meta.url),
         'utf8',
       );
+      const inspectionDependencyMigrationSource = await readFile(
+        new URL('../supabase/migrations/20260824120000_add_inspection_step_predecessors.sql', import.meta.url),
+        'utf8',
+      );
       assert.match(migrationSource, /create table if not exists public\.project_phase_dependencies/);
       assert.match(migrationSource, /create table if not exists public\.project_step_dependencies/);
       assert.match(migrationSource, /create table if not exists public\.project_schedule_delays/);
@@ -2884,7 +2946,12 @@ const tests = [
       assert.match(trackerSource, /export function hydrateProjectsWithNormalizedScheduleRelationships/);
       assert.match(trackerSource, /\/rest\/v1\/project_phase_dependencies\?select=/);
       assert.match(trackerSource, /\/rest\/v1\/project_step_dependencies\?select=/);
+      assert.match(trackerSource, /\/rest\/v1\/project_step_inspection_dependencies\?select=/);
       assert.match(trackerSource, /\/rest\/v1\/project_schedule_delays\?select=/);
+      assert.match(inspectionDependencyMigrationSource, /create table if not exists public\.project_step_inspection_dependencies/);
+      assert.match(inspectionDependencyMigrationSource, /references public\.project_inspections\(project_id, id\) on delete cascade/);
+      assert.match(inspectionDependencyMigrationSource, /using \(public\.app_user_can_view_project\(project_id\)\)/);
+      assert.match(inspectionDependencyMigrationSource, /item->>'type' = 'inspection'/);
 
       const [project] = hydrateProjectsWithNormalizedScheduleRelationships(
         [{
@@ -2897,12 +2964,33 @@ const tests = [
         [{ project_id: 'p1', phase_id: 'ph2', predecessor_phase_id: 'ph1', position: 0, lag: 2 }],
         [{ project_id: 'p1', phase_id: 'ph1', step_id: 's2', predecessor_step_id: 's1', position: 0, lag: 1 }],
         [{ project_id: 'p1', phase_id: 'ph1', id: 'delay-1', step_id: 's2', position: 0, data: { days: 3, cause: 'Weather' } }],
+        [{ project_id: 'p1', phase_id: 'ph1', step_id: 's2', predecessor_inspection_id: 'inspection-1', position: 1, lag: 2 }],
       );
       assert.deepEqual(project.phases[1].predecessors, [{ id: 'ph1', lag: 2 }]);
       assert.deepEqual(project.phases[0].successors, ['ph2']);
-      assert.deepEqual(project.phases[0].steps[1].predecessors, [{ id: 's1', lag: 1 }]);
+      assert.deepEqual(project.phases[0].steps[1].predecessors, [
+        { id: 's1', lag: 1 },
+        { id: 'inspection-1', type: 'inspection', lag: 2 },
+      ]);
       assert.deepEqual(project.phases[0].steps[0].successors, ['s2']);
       assert.deepEqual(project.phases[0].delays[0], { id: 'delay-1', stepId: 's2', days: 3, cause: 'Weather' });
+    },
+  },
+  {
+    name: 'project calendar inspections route into the existing edit inspection dialog',
+    async run() {
+      const [projectsSource, detailSource, inspectionsSource, calendarSource] = await Promise.all([
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectDetailCalendar.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(projectsSource, /item\?\.type === 'inspection'/);
+      assert.match(projectsSource, /calendarInspectionEditRequest=\{inspectionEditRequest\}/);
+      assert.match(detailSource, /setActiveDetailTab\('inspections'\)/);
+      assert.match(detailSource, /editRequest=\{calendarInspectionEditRequest\}/);
+      assert.match(inspectionsSource, /startEdit\(\{ \.\.\.inspection, projectId: project\.id \}\)/);
+      assert.match(calendarSource, /isDayItemClickable=\{\(item\) => item\.type === 'inspection'\}/);
     },
   },
   {
@@ -3173,10 +3261,13 @@ const tests = [
       assert.match(styleSource, /\.step-status-modal-card/);
       assert.deepEqual(
         statusModule.STEP_STATUS_OPTIONS.map((option) => option.value),
-        ['planning', 'active', 'delayed', 'done'],
+        ['planning', 'scheduled', 'active', 'delayed', 'done'],
       );
       assert.equal(statusModule.normalizeStepStatus('unknown'), 'planning');
+      assert.equal(statusModule.normalizeStepStatus('scheduled'), 'scheduled');
       assert.equal(statusModule.normalizeStepStatus('active', true), 'done');
+      assert.match(dialogSource, /type === 'step' \? <option value="scheduled">Scheduled<\/option> : null/);
+      assert.match(styleSource, /\.schedule-step-status-button\.status-scheduled/);
       const statusRows = buildScheduleRows(
         [{
           id: 'project-status',
@@ -3319,6 +3410,21 @@ const tests = [
       assert.match(formSource, /aria-modal=\{modal \? 'true' : undefined\}/);
       assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*?\.task-create-desktop\s*\{\s*display:\s*none;/s);
       assert.match(styleSource, /\.mobile-task-create-trigger\s*\{\s*display:\s*inline-flex;/s);
+    },
+  },
+  {
+    name: 'Android People supports native pinch zoom without onscreen zoom controls',
+    async run() {
+      const [activitySource, peopleSource, styleSource] = await Promise.all([
+        readFile(new URL('../android/app/src/main/java/com/destinyhomes/projecthub/MainActivity.java', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativePeopleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(activitySource, /settings\.setSupportZoom\(true\)/);
+      assert.match(activitySource, /settings\.setBuiltInZoomControls\(true\)/);
+      assert.match(activitySource, /settings\.setDisplayZoomControls\(false\)/);
+      assert.match(peopleSource, /nativeAndroid \? ' android-pinch-zoom' : ''/);
+      assert.match(styleSource, /\.top-level-people-page\.android-pinch-zoom[\s\S]*?touch-action: pan-x pan-y pinch-zoom/);
     },
   },
   {
@@ -3682,6 +3788,58 @@ const tests = [
       phase.steps[1].predecessors = [];
       cascadeStepDates(phase, weekdaySettings);
       assert.equal(phase.steps[1].notBefore, '');
+    },
+  },
+  {
+    name: 'inspection predecessors schedule steps after the inspection date',
+    run() {
+      const phase = {
+        start: '2026-05-18',
+        steps: [{
+          id: 'finish',
+          name: 'Close walls',
+          start: '',
+          duration: 2,
+          end: '',
+          predecessors: [{ id: 'rough-inspection', type: 'inspection', lag: 1 }],
+        }],
+      };
+      const inspections = [{ id: 'rough-inspection', date: '2026-05-21', status: 'scheduled' }];
+
+      syncStepLinks(phase, inspections);
+      cascadeStepDates(phase, weekdaySettings, null, inspections);
+
+      assert.deepEqual(phase.steps[0].predecessors, [{ id: 'rough-inspection', type: 'inspection', lag: 1 }]);
+      assert.equal(phase.steps[0].start, '2026-05-26');
+      assert.equal(phase.steps[0].end, '2026-05-27');
+      assert.deepEqual(phase.steps[0].successors, []);
+    },
+  },
+  {
+    name: 'inspection date changes recascade dependent project steps',
+    run() {
+      const project = {
+        id: 'project-1',
+        status: 'active',
+        inspections: [{ id: 'rough-inspection', date: '2026-06-03', status: 'scheduled' }],
+        phases: [{
+          id: 'phase-1',
+          start: '2026-05-18',
+          steps: [{
+            id: 'finish',
+            start: '2026-05-22',
+            end: '2026-05-22',
+            duration: 1,
+            predecessors: [{ id: 'rough-inspection', type: 'inspection', lag: 0 }],
+          }],
+        }],
+      };
+
+      assert.equal(projectUsesInspectionPredecessor(project, 'rough-inspection'), true);
+      const rescheduled = cascadeProjectStepDates(project, weekdaySettings);
+      assert.equal(rescheduled.phases[0].steps[0].start, '2026-06-04');
+      assert.equal(rescheduled.phases[0].steps[0].end, '2026-06-04');
+      assert.equal(project.phases[0].steps[0].start, '2026-05-22');
     },
   },
   {
@@ -5433,6 +5591,33 @@ const tests = [
     },
   },
   {
+    name: 'change orders use version-bound customer portal approvals with named decisions',
+    async run() {
+      const [managerSource, portalSource, serviceSource, migrationSource, styleSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/constructionWorkflows.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260817120000_add_change_order_customer_approvals.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+      ]);
+      assert.match(managerSource, /requestChangeOrderApproval\(record\)/);
+      assert.match(managerSource, /Send updated approval/);
+      assert.match(managerSource, /Assign at least one Customer user/);
+      assert.match(portalSource, /Issued terms · Version \{record\.changeOrderVersion\}/);
+      assert.match(portalSource, /Full name/);
+      assert.match(portalSource, /signature-consent/);
+      assert.match(serviceSource, /rpc\/create_change_order_approval_request/);
+      assert.match(serviceSource, /p_signer_name/);
+      assert.match(migrationSource, /create or replace function public\.create_change_order_approval_request/);
+      assert.match(migrationSource, /public\.app_user_can_edit_project\(change_order_row\.project_id\)/);
+      assert.match(migrationSource, /changeOrderSnapshot/);
+      assert.match(migrationSource, /protect_change_order_approval_snapshot/);
+      assert.match(migrationSource, /change_order_row\.version/);
+      assert.match(migrationSource, /approvalSignerName/);
+      assert.match(styleSource, /\.change-order-approval-snapshot/);
+    },
+  },
+  {
     name: 'certificate renewals use server-authoritative history and fixed-purpose email delivery',
     async run() {
       const [migrationSource, serviceSource, componentSource, settingsSource, trackerSource, functionSource, configSource] = await Promise.all([
@@ -5788,6 +5973,181 @@ const tests = [
       assert.match(componentSource, /function coverageTypeMatches/);
       assert.match(componentSource, /normalized\.startsWith\(`\$\{type\} `\)/);
       assert.match(componentSource, /'workmans compensation'/);
+    },
+  },
+  {
+    name: '1099 review uses dated direct payments and keeps legacy totals unallocated',
+    async run() {
+      assert.equal(reportingThresholdForYear(2025), 600);
+      assert.equal(reportingThresholdForYear(2026), 2000);
+      assert.equal(reportingThresholdForYear(2027), null);
+      const commitment = {
+        paidAmount: 3500,
+        payments: [
+          { id: 'p1', date: '2026-02-01', amount: 2200, method: 'check', reportable: true },
+          { id: 'p2', date: '2026-03-01', amount: 500, method: 'credit_card', reportable: true },
+        ],
+      };
+      assert.equal(legacyUnallocatedPaidAmount(commitment), 800);
+      assert.equal(totalPaidAmount(commitment), 3500);
+      const review = buildVendor1099Review({
+        year: 2026,
+        subcontractors: [{ id: 'sub-1', company: 'Acme', companyType: 'Limited Liability Company', legalName: 'Acme LLC' }],
+        documents: [{ subcontractorId: 'sub-1', documentType: 'w9' }],
+        taxIdStatuses: [{ subcontractorId: 'sub-1', taxIdLastFour: '6789', mailingAddress: '1 Main St' }],
+        commitments: [{ ...commitment, vendorId: 'sub-1', status: 'approved' }],
+      });
+      assert.equal(review.rows[0].directTotal, 2200);
+      assert.equal(review.rows[0].excludedMethodTotal, 500);
+      assert.equal(review.rows[0].unallocatedTotal, 800);
+      assert.equal(review.rows[0].status, 'needs-attention');
+      assert.match(review.rows[0].issues.join(' '), /Undated payments/);
+    },
+  },
+  {
+    name: '1099 workspace keeps tax IDs masked and exposes dated payment controls',
+    async run() {
+      const [reviewSource, commitmentsSource, complianceSource, importService, importParser, importMigration] = await Promise.all([
+        readFile(new URL('../src/components/Vendor1099Review.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/vendor1099Imports.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/vendor1099Spreadsheet.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260818120000_add_vendor_1099_imports.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.match(reviewSource, /Tax ID •••• \$\{row\.taxIdLastFour\}/);
+      assert.doesNotMatch(reviewSource, /encryptedTaxId|encrypted_tax_id|fullTaxId/);
+      assert.match(commitmentsSource, /Legacy \/ undated paid amount/);
+      assert.match(commitmentsSource, /Add payment/);
+      assert.match(commitmentsSource, /VENDOR_PAYMENT_METHODS/);
+      assert.match(complianceSource, />1099 Review</);
+      assert.match(reviewSource, /Upload QuickBooks 1099 report/);
+      assert.match(reviewSource, /Full tax IDs are discarded after matching/);
+      assert.match(reviewSource, /Match imported vendors/);
+      assert.match(importService, /\/rest\/v1\/rpc\/replace_vendor_1099_import/);
+      assert.match(importParser, /read-excel-file\/browser/);
+      assert.doesNotMatch(importService, /fullTaxId|tax_identifier|encryptedTaxId/);
+      assert.match(importMigration, /Only administrators can import 1099 payments/);
+      assert.match(importMigration, /Only the tax ID last four digits are retained/);
+      assert.match(importMigration, /revoke all on public\.vendor_1099_import_rows from public, anon, authenticated/);
+      assert.match(complianceSource, /activeUser\?\.role === 'Admin'/);
+    },
+  },
+  {
+    name: 'QuickBooks Excel rows parse safely and match without retaining full tax IDs',
+    async run() {
+      const imported = parseVendor1099Rows([
+        [null, null, null, 'NEC Box 1: Nonemployee Compensation', null, 'TOTAL'],
+        [null, 'Acme LLC', null, 2400, null, 2400],
+        [null, null, '12-3456789', null, null, null],
+        [null, 'Unmatched Vendor', null, 700, null, 700],
+        [null, null, '(no tax ID on file)', null, null, null],
+        ['TOTAL', null, null, 3100, null, 3100],
+      ]);
+      assert.deepEqual(imported, [
+        { sourceRow: 2, vendorName: 'Acme LLC', taxIdLastFour: '6789', reportableTotal: 2400, subcontractorId: '' },
+        { sourceRow: 4, vendorName: 'Unmatched Vendor', taxIdLastFour: '', reportableTotal: 700, subcontractorId: '' },
+      ]);
+      assert.doesNotMatch(JSON.stringify(imported), /12-3456789/);
+      const matched = suggestVendor1099Matches(imported, [{ id: 'sub-1', company: 'Different display name' }], [{ subcontractorId: 'sub-1', taxIdLastFour: '6789' }]);
+      assert.equal(matched[0].subcontractorId, 'sub-1');
+      assert.equal(matched[0].matchReason, 'tax-id');
+      const review = buildVendor1099Review({
+        year: 2026,
+        paymentSource: 'spreadsheet',
+        subcontractors: [{ id: 'sub-1', company: 'Acme', companyType: 'Limited Liability Company', legalName: 'Acme LLC' }],
+        documents: [{ subcontractorId: 'sub-1', documentType: 'w9' }],
+        taxIdStatuses: [{ subcontractorId: 'sub-1', taxIdLastFour: '6789', mailingAddress: '1 Main St' }],
+        commitments: [{ vendorId: 'sub-1', paidAmount: 9000, payments: [{ date: '2026-01-10', amount: 9000, method: 'check' }] }],
+        importedVendors: [
+          { importRowId: 'q1', subcontractorId: 'sub-1', displayName: 'Acme', directTotal: 2400, excludedMethodTotal: 0 },
+          { importRowId: 'q2', displayName: 'Unmatched Vendor', directTotal: 700, excludedMethodTotal: 0 },
+        ],
+      });
+      assert.equal(review.rows[0].directTotal, 2400);
+      assert.equal(review.rows[0].excludedMethodTotal, 0);
+      assert.equal(review.rows[0].unallocatedTotal, 0);
+      assert.equal(review.unmatchedImportedVendors.length, 1);
+      assert.equal(review.unmatchedImportedVendors[0].importRowId, 'q2');
+    },
+  },
+  {
+    name: 'project templates preserve reusable structure and rebase dates without copying activity',
+    async run() {
+      const template = buildProjectTemplate({
+        name: '105 Destiny',
+        start: '2026-01-05',
+        locations: ['Kitchen', ' kitchen ', 'Garage'],
+        files: { folders: [{ id: 'plans', name: 'Plans', customerVisible: true, files: [{ id: 'secret-plan' }] }] },
+        phases: [{
+          id: 'phase-framing', name: 'Framing', start: '2026-01-12', end: '2026-01-23', assignees: ['sub-framer'], delays: [{ days: 2 }],
+          steps: [{ id: 'step-walls', name: 'Frame walls', start: '2026-01-12', end: '2026-01-16', assignees: ['sub-framer'], predecessors: [] }],
+        }],
+        inspections: [{ id: 'inspection-frame', subcode: 'FRAME-220', inspectionType: 'Framing', agency: 'Township', date: '2026-01-26', status: 'passed', reportFile: { id: 'report' } }],
+      }, {
+        name: 'Standard build',
+        tasks: [
+          { id: 'task-open', label: 'Order appliances', projectId: 'source', location: 'Kitchen', due: '2026-01-19', assignees: ['emp-pm'], attachments: [{ id: 'task-file' }] },
+          { id: 'task-done', label: 'Completed history', projectId: 'source', due: '2026-01-10', done: true },
+        ],
+        closeoutItems: [
+          { id: 'closeout-manuals', title: 'Owner manuals', category: 'Document', required: true, responsibleId: 'emp-pm', responsibleName: 'Project Manager', dueDate: '2026-01-30', status: 'complete', attachments: [{ id: 'closeout-file' }] },
+          { id: 'closeout-na', title: 'Not applicable', status: 'not_applicable' },
+        ],
+      });
+      assert.deepEqual(template.locations, ['Kitchen', 'Garage']);
+      assert.equal(template.folders[0].name, 'Plans');
+      assert.equal('files' in template.folders[0], false);
+      assert.equal(template.phases[0].startOffset, 7);
+      assert.equal(template.inspections[0].dateOffset, 21);
+      assert.equal(template.tasks.length, 1);
+      assert.equal(template.tasks[0].dueOffset, 14);
+      assert.equal(template.closeoutItems.length, 1);
+      assert.equal(template.closeoutItems[0].dueOffset, 25);
+      assert.doesNotMatch(JSON.stringify(template), /secret-plan|reportFile|passed|task-file|closeout-file|Completed history|Not applicable/);
+
+      const applied = applyProjectTemplate(template, '2026-03-02', (kind, source, index) => `${kind}-${source}-${index}`);
+      assert.equal(applied.phases[0].start, '2026-03-09');
+      assert.equal(applied.phases[0].steps[0].end, '2026-03-13');
+      assert.equal(applied.phases[0].steps[0].status, 'scheduled');
+      assert.equal(applied.inspections[0].date, '2026-03-23');
+      assert.equal(applied.inspections[0].status, 'requested');
+      assert.equal(applied.tasks[0].due, '2026-03-16');
+      assert.equal(applied.tasks[0].done, false);
+      assert.deepEqual(applied.tasks[0].attachments, []);
+      assert.equal(applied.closeoutItems[0].dueDate, '2026-03-27');
+      assert.equal(applied.closeoutItems[0].status, 'not_started');
+      assert.deepEqual(applied.closeoutItems[0].attachments, []);
+      assert.equal(applied.suggestedEnd, '2026-03-27');
+      assert.deepEqual(applied.files.folders[0].files, []);
+    },
+  },
+  {
+    name: 'project template settings and blank project creation remain backward compatible',
+    async run() {
+      const [trackerSource, projectsSource, modalSource, settingsSource, migrationSource] = await Promise.all([
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeProjectsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectModal.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260820120000_add_atomic_project_template_creation.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.deepEqual(normalizeProjectTemplates(null), []);
+      assert.match(trackerSource, /projectTemplates: normalizeProjectTemplates/);
+      assert.match(trackerSource, /locations: payload\.locations \|\| \[\]/);
+      assert.match(trackerSource, /inspections: payload\.inspections \|\| \[\]/);
+      assert.match(projectsSource, /templateId: ''/);
+      assert.match(projectsSource, /applyProjectTemplate\(template, current\.start\)/);
+      assert.match(modalSource, /<option value="">Blank project<\/option>/);
+      assert.match(settingsSource, /Create a template/);
+      assert.match(settingsSource, /open standalone tasks, and reusable closeout items/);
+      assert.match(trackerSource, /\/rest\/v1\/rpc\/create_project_from_template/);
+      assert.match(trackerSource, /Nothing was created/);
+      assert.match(migrationSource, /create or replace function public\.create_project_from_template/);
+      assert.match(migrationSource, /A project template can create at most 250 tasks and 250 closeout items/);
+      assert.match(migrationSource, /perform public\.sync_explicit_project_sections/);
+      assert.match(migrationSource, /perform public\.sync_explicit_task_sections/);
+      assert.match(migrationSource, /revoke all on function public\.create_project_from_template\(jsonb, jsonb, jsonb\) from public, anon/);
     },
   },
 ];

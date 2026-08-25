@@ -34,7 +34,8 @@
     "@sentry/react": "10.60.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "read-excel-file": "^9.3.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

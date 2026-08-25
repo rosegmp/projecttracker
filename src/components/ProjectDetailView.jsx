@@ -149,6 +149,7 @@ export default function ProjectDetailView({
   activeUser = null,
   deferredDataLoading = false,
   selectionNavigationRequest = null,
+  calendarInspectionEditRequest = null,
   onBack = null,
   offlineUserId = '',
   offlineOperations = [],
@@ -297,6 +298,11 @@ export default function ProjectDetailView({
   useEffect(() => {
     if (!visibleProjectTabIds.has(activeDetailTab)) setActiveDetailTab(defaultProjectTabId);
   }, [activeDetailTab, defaultProjectTabId, visibleProjectTabIds]);
+
+  useEffect(() => {
+    if (!calendarInspectionEditRequest?.inspectionId || !visibleProjectTabIds.has('inspections')) return;
+    setActiveDetailTab('inspections');
+  }, [calendarInspectionEditRequest?.inspectionId, calendarInspectionEditRequest?.token, visibleProjectTabIds]);
 
   useEffect(() => {
     if (!visibleProjectTabIds.has(activeDetailTab)) return;
@@ -957,6 +963,7 @@ export default function ProjectDetailView({
             projectFilter={project.id}
             onProjectFilterChange={() => {}}
             createRequest={selectionNavigationRequest?.detailAction === 'create-inspection' ? selectionNavigationRequest : null}
+            editRequest={calendarInspectionEditRequest}
             highlightInspectionId={selectionNavigationRequest?.inspectionId || ''}
             highlightToken={selectionNavigationRequest?.token || ''}
             embedded
@@ -1018,6 +1025,7 @@ export default function ProjectDetailView({
       {activeDetailTab === 'change-orders' ? (
         <section id="project-panel-change-orders" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-change-orders">
           <ProjectWorkflowManager
+            data={data}
             project={project}
             canEdit={canEdit}
             workflowType="changeOrders"

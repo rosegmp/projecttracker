@@ -37,7 +37,7 @@ export function createOfflineOperationId() {
 
 export function isOfflineNetworkError(error) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
-  return /offline|network connection was lost|network request failed|failed to fetch|load failed|timed out/i
+  return /offline|network connection was lost|network request failed|failed to fetch|load failed|timed out|unable to connect securely|trust anchor|certificate path/i
     .test(String(error?.message || error || ''));
 }
 

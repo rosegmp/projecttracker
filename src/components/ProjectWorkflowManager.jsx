@@ -128,6 +128,7 @@ export default function ProjectWorkflowManager({
   const nativeAndroid = isNativeAndroidApp();
   const service = useMemo(() => createConstructionWorkflowService({ projectId: project.id, canEdit }), [canEdit, project.id]);
   const [records, setRecords] = useState([]);
+  const [portalItems, setPortalItems] = useState([]);
   const [draft, setDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -141,6 +142,8 @@ export default function ProjectWorkflowManager({
   const recordRefs = useRef({});
   const [highlightedRecordId, setHighlightedRecordId] = useState('');
   const [creatingPdfId, setCreatingPdfId] = useState('');
+  const [approvalSavingId, setApprovalSavingId] = useState('');
+  const [approvalNotice, setApprovalNotice] = useState('');
   const subcontractorOptions = useMemo(() => (subcontractors || [])
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
@@ -150,9 +153,13 @@ export default function ProjectWorkflowManager({
     setLoading(true);
     setMessage('');
     try {
-      const result = await service.list(workflowType);
+      const [result, portalResult] = await Promise.all([
+        service.list(workflowType),
+        daily ? Promise.resolve({ records: [], local: false }) : service.list('portalItems'),
+      ]);
       setRecords(result.records || []);
-      setSetupRequired(result.setupRequired === true);
+      setPortalItems(portalResult.records || []);
+      setSetupRequired(result.setupRequired === true || portalResult.setupRequired === true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to load records.');
     } finally { setLoading(false); }
@@ -195,6 +202,15 @@ export default function ProjectWorkflowManager({
     ? getOfflineOperations(String(getStoredAuthSession()?.user?.id || ''), { kind: 'daily-log.save', projectId: project.id })
     : [];
   const offlineAttentionCount = offlineOperations.filter((operation) => operation.status === 'needs-attention').length;
+  const latestChangeOrderApprovals = useMemo(() => {
+    const latest = new Map();
+    portalItems.forEach((item) => {
+      const changeOrderId = String(item.changeOrderId || '').trim();
+      if (!changeOrderId || latest.has(changeOrderId)) return;
+      latest.set(changeOrderId, item);
+    });
+    return latest;
+  }, [portalItems]);
 
   function change(field, value) { setDraft((current) => ({ ...current, [field]: value })); }
 
@@ -447,6 +463,40 @@ export default function ProjectWorkflowManager({
     }
   }
 
+  async function requestCustomerApproval(record) {
+    if (daily || !record || approvalSavingId) return;
+    const projectAccessIds = new Set((project.accessUserIds || []).map(String));
+    const assignedCustomers = (data?.settings?.users || [])
+      .filter((user) => user.role === 'Customer' && projectAccessIds.has(String(user.id)));
+    if (!assignedCustomers.length) {
+      await showAppAlert(
+        'Assign at least one Customer user to this project before requesting change-order approval.',
+        'Customer access required',
+      );
+      return;
+    }
+    const confirmed = await showAppConfirm(
+      `Send ${record.number} to the assigned customer user(s) for approval? The issued terms will be locked to the current version.`,
+      { title: 'Request customer approval', confirmLabel: 'Send request' },
+    );
+    if (!confirmed) return;
+
+    setApprovalSavingId(record.id);
+    setApprovalNotice('');
+    try {
+      const result = await service.requestChangeOrderApproval(record);
+      setPortalItems((current) => [result.record, ...current.filter((item) => item.id !== result.record.id)]);
+      setApprovalNotice(`${record.number} is available in the assigned customer portal for approval.`);
+    } catch (error) {
+      await showAppAlert(
+        error instanceof Error ? error.message : 'Unable to request customer approval.',
+        'Send failed',
+      );
+    } finally {
+      setApprovalSavingId('');
+    }
+  }
+
   return (
     <div className="project-workflow-manager">
       <header className="project-workflow-header">
@@ -470,6 +520,7 @@ export default function ProjectWorkflowManager({
         </div>
       ) : null}
       {message ? <div className="audit-trail-message error" role="alert">{message}</div> : null}
+      {approvalNotice ? <div className="project-workflow-notice" role="status"><FluentIcon name="checkCircle" size={18} /><span>{approvalNotice}</span></div> : null}
 
       {draft ? (
         <section className="project-workflow-editor">
@@ -545,7 +596,13 @@ export default function ProjectWorkflowManager({
 
       {loading ? <div className="empty-state compact"><p>Loading {daily ? 'daily logs' : 'change orders'}...</p></div> : records.length ? (
         <div className="project-workflow-list">
-          {records.map((record) => (
+          {records.map((record) => {
+            const approval = daily ? null : latestChangeOrderApprovals.get(record.id);
+            const approvalVersion = Number(approval?.changeOrderVersion) || 0;
+            const approvalIsStale = Boolean(approval && approvalVersion !== Number(record.version));
+            const approvalPending = approval?.status === 'response_requested' && !approvalIsStale;
+            const approvalComplete = ['approved', 'declined'].includes(approval?.status) && !approvalIsStale;
+            return (
             <article
               className={`project-workflow-card${record._offlineDeleted ? ' offline-delete-pending' : ''}${highlightedRecordId === record.id ? ' highlighted' : ''}`}
               key={record.id}
@@ -558,6 +615,7 @@ export default function ProjectWorkflowManager({
                 <div><span className={`status-pill status-${record.status || 'active'}`}>{daily ? formatShortDate(record.date) : record.status}</span>{record._offlineStatus ? <span className={`status-pill offline-${record._offlineStatus}`}>{record._offlineStatus === 'needs-attention' ? 'Needs attention' : record._offlineDeleted ? 'Delete saved on device' : 'Saved on device'}</span> : null}<h3>{daily ? record.title || 'Daily log' : `${record.number} · ${record.title}`}</h3></div>
                 {canEdit && !record._offlineDeleted ? <div className="project-workflow-card-actions">
                   {!daily ? <button className={`button secondary${creatingPdfId === record.id ? ' is-loading' : ''}`} type="button" onClick={() => void createCustomerApprovalPdf(record)} disabled={Boolean(creatingPdfId)} aria-busy={creatingPdfId === record.id} aria-label={`Create customer approval PDF for ${record.number}`}><FluentIcon name="document" size={16} />{creatingPdfId === record.id ? 'Creating PDF...' : 'Customer PDF'}</button> : null}
+                  {!daily ? <button className={`button secondary${approvalSavingId === record.id ? ' is-loading' : ''}`} type="button" onClick={() => void requestCustomerApproval(record)} disabled={Boolean(approvalSavingId) || approvalPending || (approvalComplete && approval?.status === 'approved')} aria-busy={approvalSavingId === record.id}>{approvalSavingId === record.id ? 'Sending...' : approvalPending ? 'Awaiting customer' : approvalComplete && approval?.status === 'approved' ? 'Approved' : approvalIsStale ? 'Send updated approval' : approval?.status === 'declined' ? 'Send again' : 'Send for approval'}</button> : null}
                   <button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft(daily ? dailyDraftFromRecord(record) : { ...record, deletedAttachments: [] })} aria-label={`Edit ${daily ? `daily log ${record.date}` : record.number}`}><FluentIcon name="edit" /></button>
                 </div> : null}
               </div>
@@ -567,10 +625,14 @@ export default function ProjectWorkflowManager({
                   {contractorEntries(record).length ? <div className="project-workflow-contractor-summary">{contractorEntries(record).map((entry) => <div key={entry.id}><strong>{subcontractorEntryName(entry, subcontractorOptions)}</strong><span>{entry.workPerformed || 'No work details recorded.'}</span>{(entry.photos || []).length ? <div className="project-workflow-photo-list">{entry.photos.map((photo) => <WorkflowPhoto key={photo.id} photo={photo} />)}</div> : null}</div>)}</div> : null}
                 </>
               ) : (
-                <dl className="project-workflow-summary"><div><dt>Cost impact</dt><dd>{money(record.costImpact)}</dd></div><div><dt>Schedule impact</dt><dd>{record.scheduleDays ? `${record.scheduleDays} days` : 'None'}</dd></div><div><dt>Response due</dt><dd>{record.dueDate ? formatShortDate(record.dueDate) : 'Not set'}</dd></div></dl>
+                <>
+                  <dl className="project-workflow-summary"><div><dt>Cost impact</dt><dd>{money(record.costImpact)}</dd></div><div><dt>Schedule impact</dt><dd>{record.scheduleDays ? `${record.scheduleDays} days` : 'None'}</dd></div><div><dt>Response due</dt><dd>{record.dueDate ? formatShortDate(record.dueDate) : 'Not set'}</dd></div></dl>
+                  {approval ? <div className={`project-portal-response${approvalIsStale ? ' stale' : ''}`}><strong>Customer approval · {approvalIsStale ? 'Change order updated since request' : approval.status === 'approved' ? 'Approved' : approval.status === 'declined' ? 'Declined' : 'Awaiting response'}</strong>{approval.signerName ? <p>Signed by {approval.signerName}</p> : null}{approval.response ? <p>{approval.response}</p> : null}{approval.respondedAt ? <span>{formatShortDate(approval.respondedAt)}</span> : null}</div> : null}
+                </>
               )}
             </article>
-          ))}
+            );
+          })}
         </div>
       ) : <div className="empty-state compact"><h3>No {daily ? 'daily logs' : 'change orders'} yet</h3><p>{canEdit ? `Create the first ${daily ? 'jobsite log' : 'change order'} for this project.` : 'No records are available.'}</p></div>}
 

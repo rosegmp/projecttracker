@@ -4,11 +4,11 @@ import { renderModalPortal } from './AppDialogs.jsx';
 export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange, onClose, onSave }) {
   if (!draft) return null;
   const entityLabel = draft.entityType === 'phase' ? 'Phase' : 'Schedule step';
-  const emptyTitle = draft.entityType === 'phase' ? 'No other phases in this project' : 'No other schedule steps in this phase';
+  const emptyTitle = draft.entityType === 'phase' ? 'No other phases in this project' : 'No available predecessors';
   const emptyCopy =
     draft.entityType === 'phase'
       ? 'Add more phases to create dependencies between phases in this project.'
-      : 'Add more schedule steps to create dependencies in this phase.';
+      : 'Add another schedule step or a dated inspection to create a dependency.';
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card dependency-modal-card" role="dialog" aria-modal="true" aria-labelledby="predecessor-dialog-title" onClick={(event) => event.stopPropagation()}>
@@ -30,12 +30,12 @@ export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange,
         <div className="dependency-list">
           {draft.options.length ? (
             draft.options.map((option) => (
-              <label key={option.id} className="dependency-option">
+              <label key={option.key || option.id} className="dependency-option">
                 <div className="dependency-option-main">
                   <input
                     type="checkbox"
                     checked={option.selected}
-                    onChange={(event) => onTogglePred(option.id, event.target.checked)}
+                    onChange={(event) => onTogglePred(option.key || option.id, event.target.checked)}
                     disabled={saving}
                   />
                   <span>
@@ -48,7 +48,7 @@ export function StepPredecessorModal({ draft, saving, onTogglePred, onLagChange,
                   type="number"
                   value={option.lag}
                   disabled={!option.selected || saving}
-                  onChange={(event) => onLagChange(option.id, event.target.value)}
+                  onChange={(event) => onLagChange(option.key || option.id, event.target.value)}
                 />
               </label>
             ))

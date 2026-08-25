@@ -2,11 +2,11 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, personAssignmentLabel } from '../utils/accessUi.js';
 import {
   addProjectTaskLocation, createPerson, createTask, deleteProjectFileFromStorage, deleteTask, isSupabaseStorageConfigured,
-  saveProjectInspection, updateProject, updateProjectAndTasks, updateProjects, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
+  saveProjectInspection, updateProjectAndTasks, updateProjectsAndTasks, updateSettings, updateTask, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import {
-  applyDelayToStep, cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds,
-  normalizeStartDate, syncProjectPhaseDates, syncProjectTasks, syncStepLinks,
+  applyDelayToStep, cascadePhaseDates, cascadeProjectStepDates, cascadeStepDates, computeStepEndDate, normalizePreds,
+  normalizeStartDate, projectUsesInspectionPredecessor, syncProjectPhaseDates, syncProjectTasks, syncStepLinks,
   wouldCreateCycleFromPreds, wouldCreatePhaseCycleFromPreds,
 } from '../utils/schedule.js';
 import { buildCalendarItems as buildCalendarItemsView, buildCalendarWeeks as buildCalendarWeeksView, buildScheduleRows as buildScheduleRowsView, filterScheduleRows, filterScheduleRowsForToday, getDefaultPhaseExpansion } from '../utils/scheduleView.js';
@@ -862,8 +862,11 @@ export default function NativeScheduleView({
   function buildStepDependencyOptions(projectId, phaseId, stepId = '', selectedPreds = [], projectsSource = data.projects) {
     const project = (projectsSource || []).find((item) => item.id === projectId);
     const phase = project?.phases?.find((item) => item.id === phaseId);
-    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [pred.id, pred.lag || 0]));
-    return (phase?.steps || [])
+    const selectedMap = new Map(normalizePreds(selectedPreds).map((pred) => [
+      `${pred.type === 'inspection' ? 'inspection' : 'step'}:${pred.id}`,
+      pred.lag || 0,
+    ]));
+    const stepOptions = (phase?.steps || [])
       .filter((item) => item.id !== stepId)
       .sort((a, b) => {
         const aKey = a.start || a.end || '9999-12-31';
@@ -873,15 +876,30 @@ export default function NativeScheduleView({
       })
       .map((item) => ({
         id: item.id,
+        key: `step:${item.id}`,
+        type: 'step',
         name: item.name,
         dateLabel: item.start
           ? `${formatShortDate(item.start)} - ${item.end ? formatShortDate(item.end) : 'No end'}`
           : item.end
             ? `Ends ${formatShortDate(item.end)}`
             : 'Date not set',
-        selected: selectedMap.has(item.id),
-        lag: selectedMap.get(item.id) || 0,
+        selected: selectedMap.has(`step:${item.id}`),
+        lag: selectedMap.get(`step:${item.id}`) || 0,
       }));
+    const inspectionOptions = (project?.inspections || [])
+      .slice()
+      .sort((a, b) => (a.date || '9999-12-31').localeCompare(b.date || '9999-12-31') || (a.inspectionType || '').localeCompare(b.inspectionType || ''))
+      .map((inspection) => ({
+        id: inspection.id,
+        key: `inspection:${inspection.id}`,
+        type: 'inspection',
+        name: `Inspection · ${inspection.inspectionType || inspection.subcode || 'Untitled'}`,
+        dateLabel: inspection.date ? formatShortDate(inspection.date) : 'Date not set',
+        selected: selectedMap.has(`inspection:${inspection.id}`),
+        lag: selectedMap.get(`inspection:${inspection.id}`) || 0,
+      }));
+    return [...stepOptions, ...inspectionOptions];
   }
 
   function buildPhaseDependencyOptions(projectId, phaseId = '', selectedPreds = [], projectsSource = data.projects) {
@@ -943,26 +961,12 @@ export default function NativeScheduleView({
     const phase = project?.phases?.find((item) => item.id === row.parentPhaseId);
     const step = phase?.steps?.find((item) => item.id === row.entityId);
     if (!phase || !step) return;
-    const selectedMap = new Map(normalizePreds(step.predecessors).map((pred) => [pred.id, pred.lag || 0]));
-    const options = (phase.steps || [])
-      .filter((item) => item.id !== row.entityId)
-      .sort((a, b) => {
-        const aKey = a.start || a.end || '9999-12-31';
-        const bKey = b.start || b.end || '9999-12-31';
-        if (aKey !== bKey) return aKey < bKey ? -1 : 1;
-        return (a.name || '').localeCompare(b.name || '');
-      })
-      .map((item) => ({
-        id: item.id,
-        name: item.name,
-        dateLabel: item.start
-          ? `${formatShortDate(item.start)} - ${item.end ? formatShortDate(item.end) : 'No end'}`
-          : item.end
-            ? `Ends ${formatShortDate(item.end)}`
-            : 'Date not set',
-        selected: selectedMap.has(item.id),
-        lag: selectedMap.get(item.id) || 0,
-      }));
+    const options = buildStepDependencyOptions(
+      row.parentProjectId,
+      row.parentPhaseId,
+      row.entityId,
+      step.predecessors,
+    );
 
     setDependencyDraft({
       projectId: row.parentProjectId,
@@ -1336,17 +1340,25 @@ export default function NativeScheduleView({
       };
       let nextState = data;
       if (sourceProject && sourceProject.id !== project.id) {
-        const nextSourceProject = {
+        const nextSourceProject = cascadeProjectStepDates({
           ...sourceProject,
           inspections: (sourceProject.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-        };
-        const nextTargetProject = {
+        }, data.settings);
+        const nextTargetProject = cascadeProjectStepDates({
           ...project,
           inspections: [...(project.inspections || []), nextInspection],
-        };
-        nextState = await updateProjects(nextState, [nextSourceProject, nextTargetProject]);
+        }, data.settings);
+        let nextTasks = syncProjectTasks(sourceProject.id, nextSourceProject, data.tasks);
+        nextTasks = syncProjectTasks(project.id, nextTargetProject, nextTasks);
+        nextState = await updateProjectsAndTasks(nextState, [nextSourceProject, nextTargetProject], nextTasks);
       } else {
         nextState = await saveProjectInspection(nextState, project.id, nextInspection);
+        const savedProject = nextState.projects.find((item) => item.id === project.id);
+        if (savedProject && projectUsesInspectionPredecessor(savedProject, nextInspection.id)) {
+          const rescheduledProject = cascadeProjectStepDates(savedProject, nextState.settings);
+          const nextTasks = syncProjectTasks(project.id, rescheduledProject, nextState.tasks);
+          nextState = await updateProjectsAndTasks(nextState, [rescheduledProject], nextTasks);
+        }
       }
       onStateChange(nextState);
       await Promise.allSettled(
@@ -1374,10 +1386,12 @@ export default function NativeScheduleView({
       const project = data.projects.find((item) => item.id === (inspectionDraft.originalProjectId || inspectionDraft.projectId));
       if (!project) return;
       const existing = (project.inspections || []).find((inspection) => inspection.id === inspectionDraft.id);
-      const nextState = await updateProject(data, project.id, {
+      const nextProject = cascadeProjectStepDates({
         ...project,
         inspections: (project.inspections || []).filter((inspection) => inspection.id !== inspectionDraft.id),
-      });
+      }, data.settings);
+      const nextTasks = syncProjectTasks(project.id, nextProject, data.tasks);
+      const nextState = await updateProjectsAndTasks(data, [nextProject], nextTasks);
       onStateChange(nextState);
       await Promise.allSettled(
         [existing?.stickerFile, existing?.reportFile]
@@ -1585,7 +1599,7 @@ export default function NativeScheduleView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
             ),
           }
         : current,
@@ -1598,7 +1612,7 @@ export default function NativeScheduleView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, lag: parseInt(value, 10) || 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, lag: parseInt(value, 10) || 0 } : option,
             ),
           }
         : current,
@@ -1627,7 +1641,11 @@ export default function NativeScheduleView({
       if (shouldRefreshPreds) {
         const selectedPreds = (next.predecessorOptions || [])
           .filter((option) => option.selected)
-          .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+          .map((option) => ({
+            id: option.id,
+            lag: option.lag || 0,
+            ...(option.type === 'inspection' ? { type: 'inspection' } : {}),
+          }));
         next.predecessorOptions = buildStepDependencyOptions(
           next.projectId,
           next.phaseId,
@@ -1674,7 +1692,7 @@ export default function NativeScheduleView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, selected: checked, lag: checked ? option.lag : 0 } : option,
             ),
           }
         : current,
@@ -1687,7 +1705,7 @@ export default function NativeScheduleView({
         ? {
             ...current,
             options: current.options.map((option) =>
-              option.id === stepId ? { ...option, lag: parseInt(value, 10) || 0 } : option,
+              (option.key || option.id) === stepId ? { ...option, lag: parseInt(value, 10) || 0 } : option,
             ),
           }
         : current,
@@ -1750,8 +1768,8 @@ export default function NativeScheduleView({
             ),
           };
 
-          syncStepLinks(nextPhase);
-          cascadeStepDates(nextPhase, data.settings);
+          syncStepLinks(nextPhase, project.inspections);
+          cascadeStepDates(nextPhase, data.settings, null, project.inspections);
           return nextPhase;
         }),
       };
@@ -1905,7 +1923,11 @@ export default function NativeScheduleView({
         editorDraft.mode === 'edit' && (targetProjectId !== sourceProjectId || targetPhaseId !== sourcePhaseId);
       const nextPredecessors = (editorDraft.predecessorOptions || [])
         .filter((option) => option.selected)
-        .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+        .map((option) => ({
+          id: option.id,
+          lag: option.lag || 0,
+          ...(option.type === 'inspection' ? { type: 'inspection' } : {}),
+        }));
       const noSoonerThan = nextPredecessors.length
         ? normalizeStartDate(
             editorDraft.startEdited ? editorDraft.start : editorDraft.notBefore || '',
@@ -1931,22 +1953,22 @@ export default function NativeScheduleView({
       }
 
       for (const pred of nextStep.predecessors || []) {
-        if (wouldCreateCycleFromPreds(targetPhase, pred.id, nextStep.id)) {
+        if (pred.type !== 'inspection' && wouldCreateCycleFromPreds(targetPhase, pred.id, nextStep.id)) {
           throw new Error('Cannot create a circular dependency.');
         }
       }
 
-      const finalizePhase = (phase) => {
+      const finalizePhase = (phase, inspections = targetProject.inspections) => {
         const nextPhase = {
           ...phase,
           steps: [...(phase.steps || [])],
         };
-        syncStepLinks(nextPhase);
-        cascadeStepDates(nextPhase, data.settings);
+        syncStepLinks(nextPhase, inspections);
+        cascadeStepDates(nextPhase, data.settings, null, inspections);
         return nextPhase;
       };
 
-      const removeStepFromPhase = (phase) => {
+      const removeStepFromPhase = (phase, inspections = targetProject.inspections) => {
         const filteredSteps = (phase.steps || []).map((step) => ({
           ...step,
           predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== editorDraft.stepId),
@@ -1958,7 +1980,7 @@ export default function NativeScheduleView({
           ...phase,
           steps: filteredSteps.filter((step) => step.id !== editorDraft.stepId),
           delays: (phase.delays || []).filter((delay) => delay.stepId !== editorDraft.stepId),
-        });
+        }, inspections);
       };
 
       const upsertStepInPhase = (phase, preserveExistingLinks) => {
@@ -2022,7 +2044,7 @@ export default function NativeScheduleView({
       const nextSourceProject = resyncProjectSchedule({
         ...sourceProject,
         phases: (sourceProject.phases || []).map((phase) =>
-          phase.id === sourcePhaseId ? removeStepFromPhase(phase) : phase,
+          phase.id === sourcePhaseId ? removeStepFromPhase(phase, sourceProject.inspections) : phase,
         ),
       });
       const nextTargetProject = resyncProjectSchedule({
@@ -2068,8 +2090,8 @@ export default function NativeScheduleView({
           delays: (phase.delays || []).filter((delay) => delay.stepId !== stepId),
         };
 
-        syncStepLinks(nextPhase);
-        cascadeStepDates(nextPhase, data.settings);
+        syncStepLinks(nextPhase, project.inspections);
+        cascadeStepDates(nextPhase, data.settings, null, project.inspections);
         return nextPhase;
       }),
     };
@@ -2317,10 +2339,14 @@ export default function NativeScheduleView({
               if (step.id !== dependencyDraft.stepId) return step;
               const nextPreds = dependencyDraft.options
                 .filter((option) => option.selected)
-                .map((option) => ({ id: option.id, lag: option.lag || 0 }));
+                .map((option) => ({
+                  id: option.id,
+                  lag: option.lag || 0,
+                  ...(option.type === 'inspection' ? { type: 'inspection' } : {}),
+                }));
 
               for (const pred of nextPreds) {
-                if (wouldCreateCycleFromPreds(phase, pred.id, step.id)) {
+                if (pred.type !== 'inspection' && wouldCreateCycleFromPreds(phase, pred.id, step.id)) {
                   throw new Error('Cannot create a circular dependency.');
                 }
               }
@@ -2332,8 +2358,8 @@ export default function NativeScheduleView({
             }),
           };
 
-          syncStepLinks(nextPhase);
-          cascadeStepDates(nextPhase, data.settings);
+          syncStepLinks(nextPhase, project.inspections);
+          cascadeStepDates(nextPhase, data.settings, null, project.inspections);
           return nextPhase;
         }),
       };
