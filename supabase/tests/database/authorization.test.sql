@@ -1,6 +1,6 @@
 begin;
 
-select plan(94);
+select plan(115);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -17,6 +17,12 @@ insert into public.project_user_access (project_id, user_id, position) values
   ('auth-project-a', 'test-viewer', 1),
   ('auth-project-a', 'test-customer', 2),
   ('auth-project-b', 'test-admin', 0);
+
+insert into public.project_file_folders (project_id, id, position, data) values
+  ('auth-project-a', 'shared-files', 0, '{"name":"Shared files","customerVisible":true,"subcontractorVisible":true}');
+insert into public.project_files (project_id, folder_id, id, position, data) values
+  ('auth-project-a', 'shared-files', 'active-portal-file', 0, '{"name":"Current plan.pdf","storagePath":"projects/auth-project-a/files/current-plan.pdf"}'),
+  ('auth-project-a', 'shared-files', 'archived-portal-file', 1, '{"name":"Old plan.pdf","storagePath":"projects/auth-project-a/files/old-plan.pdf","archivedAt":"2026-08-27T12:00:00.000Z"}');
 
 insert into public.tasks (id, data) values
   ('auth-task-a', '{"name":"Authorized task","projectId":"auth-project-a"}'),
@@ -41,6 +47,9 @@ insert into public.project_step_inspection_dependencies (
 insert into public.project_change_orders (id, project_id, order_number, title, status, data) values
   ('auth-change-order-a', 'auth-project-a', 'CO-001', 'Authorized change order', 'proposed', '{"description":"Add pantry cabinets","costImpact":"1250","scheduleDays":"2","dueDate":"2026-08-25","attachments":[]}'),
   ('auth-change-order-stale', 'auth-project-a', 'CO-002', 'Approval will become stale', 'proposed', '{"description":"Original issued terms","costImpact":"500","attachments":[]}');
+
+insert into public.project_portal_items (id, project_id, item_number, title, item_type, audience, status, data) values
+  ('auth-secure-approval', 'auth-project-a', 'POR-SECURE', 'Secure portal approval', 'approval', 'customer', 'response_requested', '{"message":"Approve the issued portal terms."}');
 
 insert into public.subs (id, data) values
   ('auth-sub-a', '{"company":"Authorized Subcontractor","email":"certs@sub.test","peopleType":"sub"}');
@@ -385,6 +394,20 @@ select results_eq(
   'portal users cannot read internal insurance certificates'
 );
 select results_eq(
+  $$select file_value->>'id'
+      from jsonb_array_elements(public.get_project_portal_bootstrap()->'projects'->0->'files'->'folders'->0->'files') file_row(file_value)$$,
+  array['active-portal-file'::text],
+  'portal bootstrap excludes archived project files'
+);
+select ok(
+  public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/current-plan.pdf'),
+  'portal users can download an active file from a shared folder'
+);
+select ok(
+  not public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/old-plan.pdf'),
+  'portal users cannot download an archived file'
+);
+select results_eq(
   'select count(*)::bigint from public.certificate_renewal_requests',
   array[0::bigint],
   'portal users cannot read internal certificate renewal history'
@@ -434,6 +457,123 @@ select results_eq(
   array['Test Customer'::text],
   'the portal approval retains the signer name'
 );
+
+select ok(
+  not has_table_privilege('authenticated', 'public.digital_approval_requests', 'SELECT, INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot access the secure approval ledger directly'
+);
+select ok(
+  not has_function_privilege('anon', 'public.create_digital_approval_request(text, text, bigint, text, timestamptz)', 'EXECUTE'),
+  'anonymous clients cannot create secure approval links'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.respond_to_digital_approval(text, text, text, text, text)', 'EXECUTE'),
+  'authenticated clients cannot bypass the public approval Edge Function response boundary'
+);
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000002","email":"editor@test.local","role":"authenticated"}';
+select is(
+  public.create_digital_approval_request(
+    'portal_item', 'auth-secure-approval', 1,
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    now() + interval '14 days'
+  )->>'sourceType',
+  'portal_item',
+  'project editors can issue version-bound portal approval links'
+);
+
+reset role;
+select results_eq(
+  $$select count(*)::bigint from public.digital_approval_requests
+    where source_id = 'auth-secure-approval'
+      and token_hash = encode(digest('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sha256'), 'hex')$$,
+  array[1::bigint],
+  'secure approval links store only a one-way token hash'
+);
+
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select throws_ok(
+  $$select public.respond_to_digital_approval(
+    encode(digest('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sha256'), 'hex'),
+    'approved', 'Wrong Recipient', 'wrong@test.local', ''
+  )$$,
+  '42501',
+  'Use the email address that received this approval request.',
+  'a secure approval decision requires an issued recipient email address'
+);
+select lives_ok(
+  $$select public.respond_to_digital_approval(
+    encode(digest('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sha256'), 'hex'),
+    'approved', 'Test Customer', 'customer@test.local', 'Approved securely.'
+  )$$,
+  'the service-only response boundary records a recipient decision'
+);
+select lives_ok(
+  $$select public.complete_digital_approval_document(
+    (select id from public.digital_approval_requests where source_id = 'auth-secure-approval'),
+    'certificate-files', 'certificates/digital-approvals/test/portal-signed.pdf', 'portal-signed.pdf'
+  )$$,
+  'the service-only completion boundary records the final signed PDF'
+);
+
+reset role;
+select results_eq(
+  $$select status from public.project_portal_items where id = 'auth-secure-approval'$$,
+  array['approved'::text],
+  'a secure decision atomically updates its portal approval'
+);
+select results_eq(
+  $$select data->>'signerEmail' from public.project_portal_items where id = 'auth-secure-approval'$$,
+  array['customer@test.local'::text],
+  'the secure portal decision records the signer email'
+);
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000002","email":"editor@test.local","role":"authenticated"}';
+select is(
+  public.create_digital_approval_request(
+    'subcontractor_agreement', 'auth-sub-a',
+    (select version from public.subs where id = 'auth-sub-a'),
+    'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    now() + interval '14 days'
+  )->>'sourceType',
+  'subcontractor_agreement',
+  'project editors can request a version-bound subcontractor agreement signature'
+);
+
+reset role;
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select lives_ok(
+  $$select public.respond_to_digital_approval(
+    encode(digest('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', 'sha256'), 'hex'),
+    'approved', 'Authorized Subcontractor', 'certs@sub.test', 'Signed agreement.'
+  )$$,
+  'a subcontractor can approve the issued agreement through the service boundary'
+);
+select lives_ok(
+  $$select public.complete_digital_approval_document(
+    (select id from public.digital_approval_requests where source_id = 'auth-sub-a'),
+    'certificate-files', 'certificates/digital-approvals/test/agreement-signed.pdf', 'agreement-signed.pdf'
+  )$$,
+  'an approved agreement can finalize its signed PDF'
+);
+
+reset role;
+select results_eq(
+  $$select source_path from public.subcontractor_compliance_documents
+    where subcontractor_id = 'auth-sub-a' and document_type = 'subcontractor_agreement'$$,
+  array['certificates/digital-approvals/test/agreement-signed.pdf'::text],
+  'an approved signed agreement automatically satisfies the compliance record'
+);
+select results_eq(
+  $$select signed_pdf_path from public.digital_approval_requests
+    where source_id = 'auth-secure-approval'$$,
+  array['certificates/digital-approvals/test/portal-signed.pdf'::text],
+  'the immutable approval ledger retains the final signed PDF location'
+);
 select results_eq(
   $$select count(*)::bigint
     from information_schema.columns
@@ -482,6 +622,18 @@ select ok(
   'anonymous clients cannot read imported 1099 financial rows'
 );
 select ok(
+  not has_table_privilege('anon', 'public.vendor_1099_payer_profiles', 'SELECT')
+    and not has_table_privilege('anon', 'public.vendor_1099_filing_batches', 'SELECT')
+    and not has_table_privilege('anon', 'public.vendor_1099_forms', 'SELECT'),
+  'anonymous clients cannot read 1099 payer, filing, or form records'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.vendor_1099_payer_profiles', 'SELECT, INSERT, UPDATE, DELETE')
+    and not has_table_privilege('authenticated', 'public.vendor_1099_filing_batches', 'SELECT, INSERT, UPDATE, DELETE')
+    and not has_table_privilege('authenticated', 'public.vendor_1099_forms', 'SELECT, INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot directly access server-only 1099 filing records'
+);
+select ok(
   not has_table_privilege('anon', 'public.project_step_inspection_dependencies', 'SELECT'),
   'anonymous clients cannot read inspection predecessors'
 );
@@ -516,6 +668,12 @@ select ok(
 select ok(
   has_table_privilege('service_role', 'public.vendor_1099_import_rows', 'SELECT, INSERT, UPDATE, DELETE'),
   'the service role can manage imported 1099 rows'
+);
+select ok(
+  has_table_privilege('service_role', 'public.vendor_1099_payer_profiles', 'SELECT, INSERT, UPDATE, DELETE')
+    and has_table_privilege('service_role', 'public.vendor_1099_filing_batches', 'SELECT, INSERT, UPDATE, DELETE')
+    and has_table_privilege('service_role', 'public.vendor_1099_forms', 'SELECT, INSERT, UPDATE, DELETE'),
+  'only the service workflow can manage encrypted 1099 filing records'
 );
 
 set local role service_role;

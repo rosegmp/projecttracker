@@ -15,6 +15,8 @@ import { deliverBlob, openPreview } from '../platform/platformAdapter.js';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { cascadeProjectStepDates, projectUsesInspectionPredecessor, syncProjectTasks } from '../utils/schedule.js';
+import { beginReinspectionDraft, inspectionAttemptAttachments } from '../utils/inspectionAttempts.js';
+import { groupInspections, sortInspections } from '../utils/inspectionView.js';
 
 const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
 const InspectionImageEditorModal = lazy(() => import('./InspectionImageEditorModal.jsx'));
@@ -45,6 +47,8 @@ export default function NativeInspectionsView({
   const lastEditRequestTokenRef = useRef('');
   const inspectionCardRefs = useRef({});
   const [activeHighlightInspectionId, setActiveHighlightInspectionId] = useState('');
+  const [groupBy, setGroupBy] = useState('none');
+  const [sortBy, setSortBy] = useState('date-desc');
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
   const offlineOperations = getOfflineOperations(offlineUserId, { kind: 'inspection.save' });
@@ -77,6 +81,11 @@ export default function NativeInspectionsView({
     projectFilter === 'all'
       ? null
       : visibleProjects.find((project) => project.id === projectFilter) || null;
+  useEffect(() => {
+    if (!selectedProject) return;
+    if (groupBy === 'project') setGroupBy('none');
+    if (sortBy === 'project') setSortBy('date-desc');
+  }, [groupBy, selectedProject, sortBy]);
   const inspectionSubcodes = useMemo(
     () =>
       Array.isArray(data.settings?.inspectionSubcodes)
@@ -94,14 +103,12 @@ export default function NativeInspectionsView({
             projectName: project.name,
           })),
         );
-    return [...source].sort((left, right) => {
-      const leftDate = left.date || '';
-      const rightDate = right.date || '';
-      const leftLabel = `${left.subcode || ''} ${left.inspectionType || ''}`.trim();
-      const rightLabel = `${right.subcode || ''} ${right.inspectionType || ''}`.trim();
-      return leftDate.localeCompare(rightDate) || leftLabel.localeCompare(rightLabel);
-    });
-  }, [selectedProject, visibleProjects]);
+    return sortInspections(source, sortBy);
+  }, [selectedProject, sortBy, visibleProjects]);
+  const inspectionGroups = useMemo(
+    () => groupInspections(inspections, groupBy),
+    [groupBy, inspections],
+  );
 
   const statusCounts = useMemo(() => {
     return inspections.reduce(
@@ -109,7 +116,7 @@ export default function NativeInspectionsView({
         counts[inspection.status] = (counts[inspection.status] || 0) + 1;
         return counts;
       },
-      { requested: 0, scheduled: 0, passed: 0, failed: 0, 'follow-up': 0 },
+      { requested: 0, scheduled: 0, passed: 0, failed: 0, 'follow-up': 0, cancelled: 0 },
     );
   }, [inspections]);
 
@@ -225,6 +232,7 @@ export default function NativeInspectionsView({
       reportFile: null,
       stickerPendingFile: null,
       reportPendingFile: null,
+      attemptHistory: [],
     });
   }
 
@@ -267,6 +275,7 @@ export default function NativeInspectionsView({
       reportFile: inspection.reportFile || null,
       stickerPendingFile: null,
       reportPendingFile: null,
+      attemptHistory: inspection.attemptHistory || [],
     });
   }
 
@@ -283,6 +292,10 @@ export default function NativeInspectionsView({
 
   function updateDraft(field, value) {
     setInspectionDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function addReinspection() {
+    setInspectionDraft((current) => beginReinspectionDraft(current));
   }
 
   async function handleAddInspectionSubcode() {
@@ -481,6 +494,7 @@ export default function NativeInspectionsView({
         notes: inspectionDraft.notes.trim(),
         stickerFile: nextStickerFile,
         reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? nextReportFile : null,
+        attemptHistory: inspectionDraft.attemptHistory || [],
       });
       offlineFallback = {
         project,
@@ -626,7 +640,7 @@ export default function NativeInspectionsView({
       const nextState = await updateProjectsAndTasks(data, [nextProject], nextTasks);
       onStateChange(nextState);
       await Promise.allSettled(
-        [existing?.stickerFile, existing?.reportFile]
+        inspectionAttemptAttachments(existing)
           .filter((file) => file?.storagePath)
           .map((file) => deleteProjectFileFromStorage(file)),
       );
@@ -650,13 +664,36 @@ export default function NativeInspectionsView({
 
   const inspectionContent = (
     <>
-      {!readOnly ? (
-        <div className={`panel-actions header-scope-actions${embedded ? ' embedded-inspection-actions' : ''}`}>
+      <div className={`inspection-view-toolbar header-scope-actions${embedded ? ' embedded-inspection-actions' : ''}`}>
+        <div className="inspection-view-controls">
+          <label className="task-filter">
+            <span>Group by</span>
+            <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
+              <option value="none">None</option>
+              {!selectedProject ? <option value="project">Project</option> : null}
+              <option value="status">Status</option>
+              <option value="type">Inspection type</option>
+              <option value="agency">Agency</option>
+            </select>
+          </label>
+          <label className="task-filter">
+            <span>Sort by</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+              <option value="date-asc">Date · Earliest first</option>
+              <option value="date-desc">Date · Latest first</option>
+              <option value="type">Inspection type · A–Z</option>
+              <option value="status">Status</option>
+              {!selectedProject ? <option value="project">Project · A–Z</option> : null}
+              <option value="agency">Agency · A–Z</option>
+            </select>
+          </label>
+        </div>
+        {!readOnly ? (
           <button className="button primary" type="button" onClick={startCreate} disabled={!visibleProjects.length}>
             Add inspection
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       {offlineOperations.length ? (
         <div className={`project-workflow-notice${offlineAttentionCount ? ' error' : ''}`} role="status">
@@ -673,8 +710,17 @@ export default function NativeInspectionsView({
         <>
           <section className={embedded ? 'project-inspection-list' : 'workspace-section'}>
             {inspections.length ? (
-                <div className="inspection-grid">
-                  {inspections.map((inspection) => {
+              <div className="inspection-groups">
+                {inspectionGroups.map((group) => (
+                  <section className="inspection-group" key={group.key}>
+                    {groupBy !== 'none' ? (
+                      <header className="inspection-group-header">
+                        <h3>{group.label}</h3>
+                        <span>{group.inspections.length} inspection{group.inspections.length === 1 ? '' : 's'}</span>
+                      </header>
+                    ) : null}
+                    <div className="inspection-grid">
+                  {group.inspections.map((inspection) => {
                     const operation = offlineOperationByRecord.get(`${selectedProject?.id || inspection.projectId}:${inspection.id}`);
                     return (
                     <article
@@ -807,10 +853,35 @@ export default function NativeInspectionsView({
                         </div>
                       ) : null}
                       {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
+                      {inspection.attemptHistory?.length ? (
+                        <details className="inspection-card-history">
+                          <summary>{inspection.attemptHistory.length} previous attempt{inspection.attemptHistory.length === 1 ? '' : 's'}</summary>
+                          {inspection.attemptHistory.map((attempt, index) => (
+                            <div className="inspection-attempt-row" key={attempt.id || index}>
+                              <strong>Attempt {index + 1} · {attempt.status}</strong>
+                              <span>{attempt.date ? formatTooltipDate(attempt.date) : 'Date not set'}{attempt.agency ? ` · ${attempt.agency}` : ''}</span>
+                              {attempt.notes ? <p>{attempt.notes}</p> : null}
+                              {attempt.stickerFile || attempt.reportFile ? (
+                                <div className="inspection-thumbnail-actions">
+                                  {attempt.stickerFile ? (
+                                    <button className="button secondary" type="button" onClick={() => void downloadInspectionAttachment(attempt, 'stickerFile')}>Download sticker</button>
+                                  ) : null}
+                                  {attempt.reportFile ? (
+                                    <button className="button secondary" type="button" onClick={() => void downloadInspectionAttachment(attempt, 'reportFile')}>Download report</button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </details>
+                      ) : null}
                     </article>
                     );
                   })}
-                </div>
+                    </div>
+                  </section>
+                ))}
+              </div>
             ) : (
                 <div className="empty-state compact">
                   <h3>No inspections yet</h3>
@@ -839,6 +910,7 @@ export default function NativeInspectionsView({
             <DashboardStat label="Scheduled" value={statusCounts.scheduled} />
             <DashboardStat label="Passed" value={statusCounts.passed} />
             <DashboardStat label="Needs follow-up" value={statusCounts['follow-up'] + statusCounts.failed} />
+            <DashboardStat label="Cancelled" value={statusCounts.cancelled} />
           </PageStats>
           <div className="page-refresh-footer">
           </div>
@@ -855,6 +927,7 @@ export default function NativeInspectionsView({
           saving={isMutating(['inspection', inspectionDraft.id || 'create'])}
           onChange={updateDraft}
           onAddSubcode={handleAddInspectionSubcode}
+          onAddReinspection={addReinspection}
           onClose={() => setInspectionDraft(null)}
           onSave={saveInspection}
           onDelete={deleteInspection}

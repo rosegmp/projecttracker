@@ -350,6 +350,7 @@ export function buildCalendarItems(projects, tasksByProject, settings) {
         notes: inspection.notes || '',
         stickerFile: inspection.stickerFile || null,
         reportFile: inspection.reportFile || null,
+        attemptHistory: inspection.attemptHistory || [],
         status: inspection.status || 'requested',
       });
     });

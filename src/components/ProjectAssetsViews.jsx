@@ -3,6 +3,7 @@ import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import ProjectFilesManager from './ProjectFilesManager.jsx';
 import ProjectPhotosManager from './ProjectPhotosManager.jsx';
 import { DashboardStat, PageStats } from './SharedUI.jsx';
+import { isProjectFileArchived } from '../utils/projectFiles.js';
 
 function useScopedProjects(data, activeUser, projectFilter, onProjectFilterChange) {
   const visibleProjects = useMemo(
@@ -31,7 +32,10 @@ export function NativePhotosView({ data, refresh, loading, onStateChange, readOn
 export function NativeFilesView({ data, refresh, loading, onStateChange, readOnly = false, activeUser = null, projectFilter = 'all', onProjectFilterChange = () => {} }) {
   const { visibleProjects, scopedProjects } = useScopedProjects(data, activeUser, projectFilter, onProjectFilterChange);
   const folderCount = scopedProjects.reduce((sum, project) => sum + (project.files?.folders?.length || 0), 0);
-  const fileCount = scopedProjects.reduce((sum, project) => sum + (project.files?.folders || []).reduce((folderSum, folder) => folderSum + (folder.files?.length || 0), 0), 0);
+  const fileCount = scopedProjects.reduce((sum, project) => sum + (project.files?.folders || []).reduce(
+    (folderSum, folder) => folderSum + (folder.files || []).filter((file) => !isProjectFileArchived(file)).length,
+    0,
+  ), 0);
   return <section className="panel native-panel workspace-page">
     {visibleProjects.length ? scopedProjects.map((project) => <section className="workspace-section" key={project.id}><h3>{project.name}</h3><ProjectFilesManager data={data} project={project} onStateChange={onStateChange} readOnly={readOnly} /></section>) : <div className="empty-state"><h3>No projects loaded</h3><p>Create a project first, then upload files into Plans, Permits, Surveys, Selections, or your own folders.</p></div>}
     <PageStats settings={data.settings}><DashboardStat label="Projects" value={visibleProjects.length} tone="brand" /><DashboardStat label="Folders" value={folderCount} /><DashboardStat label="Files" value={fileCount} /></PageStats>

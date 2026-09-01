@@ -9,6 +9,9 @@ import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { isNativeAndroidApp } from '../platform/platformAdapter.js';
+import {
+  archiveProjectFile, filterProjectFileFolders, isProjectFileArchived, restoreProjectFile,
+} from '../utils/projectFiles.js';
 
 const MoveFileModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.MoveFileModal })));
 const TextEntryModal = lazy(() => import('./FormDialogs.jsx').then((module) => ({ default: module.TextEntryModal })));
@@ -40,25 +43,36 @@ export default function ProjectFilesManager({
   const fileRowRefs = useRef({});
   const dataRef = useRef(data);
   const [highlightedFileId, setHighlightedFileId] = useState('');
+  const [archiveFilter, setArchiveFilter] = useState('active');
 
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
 
   const folders = project?.files?.folders || [];
+  const visibleFolders = useMemo(
+    () => filterProjectFileFolders(folders, readOnly ? 'active' : archiveFilter),
+    [archiveFilter, folders, readOnly],
+  );
   const flatFiles = useMemo(
     () =>
-      folders.flatMap((folder) =>
+      visibleFolders.flatMap((folder) =>
         (folder.files || []).map((file) => ({
           ...file,
           folderId: folder.id,
           folderName: folder.name,
         })),
       ),
-    [folders],
+    [visibleFolders],
   );
   const allFoldersExpanded = folders.length > 0 && folders.every((folder) => expandedFolders[folder.id] !== false);
   const effectiveViewMode = forcedViewMode || viewMode;
+  const emptyFilesHeading = archiveFilter === 'archived' ? 'No archived files' : 'No files yet';
+  const emptyFilesMessage = archiveFilter === 'archived'
+    ? 'Files archived from this folder will appear here.'
+    : archiveFilter === 'all'
+      ? 'Upload project documents to populate this folder.'
+      : 'Upload project documents here.';
 
   useEffect(() => {
     if (forcedViewMode && viewMode !== forcedViewMode) {
@@ -68,11 +82,13 @@ export default function ProjectFilesManager({
 
   useEffect(() => {
     if (navigationTarget?.detailTab !== 'files' || !navigationTarget.fileId) return;
+    const targetFile = folders.flatMap((folder) => folder.files || []).find((file) => String(file.id) === String(navigationTarget.fileId));
+    if (!readOnly && isProjectFileArchived(targetFile)) setArchiveFilter('archived');
     if (navigationTarget.folderId) {
       setExpandedFolders((current) => ({ ...current, [navigationTarget.folderId]: true }));
     }
     setHighlightedFileId(String(navigationTarget.fileId));
-  }, [navigationTarget]);
+  }, [folders, navigationTarget, readOnly]);
 
   useEffect(() => {
     if (!highlightedFileId) return undefined;
@@ -541,6 +557,25 @@ export default function ProjectFilesManager({
     setFileNameDraft(null);
   }
 
+  async function setProjectFileArchived(folderId, fileId, archived) {
+    await runFilesMutation(['file', fileId], (currentProject) => ({
+      ...currentProject,
+      files: {
+        folders: (currentProject.files?.folders || []).map((folder) =>
+          folder.id === folderId
+            ? {
+                ...folder,
+                files: (folder.files || []).map((file) => {
+                  if (file.id !== fileId) return file;
+                  return archived ? archiveProjectFile(file) : restoreProjectFile(file);
+                }),
+              }
+            : folder,
+        ),
+      },
+    }));
+  }
+
   async function deleteProjectFile(folderId, fileId) {
     if (!project?.id) return;
     const confirmed = await showAppConfirm('Delete this file?', {
@@ -792,6 +827,7 @@ export default function ProjectFilesManager({
 
   function renderFileActions(file, folderId, includeDragHandle = true) {
     const fileSaving = isMutating(['file', file.id]);
+    const archived = isProjectFileArchived(file);
     return (
       <div className="files-list-actions">
         <button
@@ -817,6 +853,17 @@ export default function ProjectFilesManager({
           <FluentIcon name="move" />
         </button>
         <button
+          className={`button secondary gantt-icon-button${fileSaving ? ' is-loading' : ''}`}
+          type="button"
+          onClick={() => void setProjectFileArchived(folderId, file.id, !archived)}
+          disabled={fileSaving}
+          title={fileSaving ? 'Updating file' : archived ? 'Restore file' : 'Archive file'}
+          aria-label={`${archived ? 'Restore' : 'Archive'} ${getDisplayFileName(file)}`}
+          aria-busy={fileSaving}
+        >
+          <FluentIcon name={archived ? 'restore' : 'archive'} />
+        </button>
+        <button
           className={`button secondary gantt-icon-button gantt-trash-button${fileSaving ? ' is-loading' : ''}`}
           type="button"
           onClick={() => deleteProjectFile(folderId, file.id)}
@@ -827,7 +874,7 @@ export default function ProjectFilesManager({
         >
           <FluentIcon name="delete" />
         </button>
-        {includeDragHandle ? renderFileDragHandle(file, folderId) : null}
+        {includeDragHandle && !archived ? renderFileDragHandle(file, folderId) : null}
       </div>
     );
   }
@@ -894,6 +941,25 @@ export default function ProjectFilesManager({
               {allFoldersExpanded ? 'Collapse all' : 'Expand all'}
             </button>
           ) : null}
+          {!readOnly ? (
+            <div className="people-view-toggle files-archive-filter" role="tablist" aria-label="File archive status">
+              {[
+                ['active', 'Active'],
+                ['archived', 'Archived'],
+                ['all', 'All'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={`people-toggle-button${archiveFilter === value ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => setArchiveFilter(value)}
+                  aria-selected={archiveFilter === value}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         {!readOnly ? (
           <>
@@ -925,7 +991,7 @@ export default function ProjectFilesManager({
       {effectiveViewMode === 'cards' ? (
         folders.length ? (
           <div className="files-folder-grid">
-            {folders.map((folder) => {
+            {visibleFolders.map((folder) => {
               const isDefault = DEFAULT_PROJECT_FILE_FOLDERS.includes(folder.name);
               return (
                 <article
@@ -957,7 +1023,7 @@ export default function ProjectFilesManager({
                       {folder.files.map((file) => (
                         <div
                           key={file.id}
-                          className={`files-list-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
+                          className={`files-list-row${isProjectFileArchived(file) ? ' is-archived' : ''}${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
                           ref={(node) => {
                             if (node) fileRowRefs.current[file.id] = node;
                             else delete fileRowRefs.current[file.id];
@@ -990,20 +1056,21 @@ export default function ProjectFilesManager({
                             <small>
                               {file.size ? `${formatFileSize(file.size)}` : ''}
                               {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                              {isProjectFileArchived(file) ? ` • Archived${file.archivedAt ? ` ${new Date(file.archivedAt).toLocaleDateString('en-US')}` : ''}` : ''}
                             </small>
                           </div>
                           <div className="files-card-trailing">
                               {renderFileAccessActions(file)}
                               {readOnly ? null : renderFileActions(file, folder.id, false)}
-                              {readOnly ? null : renderFileDragHandle(file, folder.id)}
+                              {readOnly || isProjectFileArchived(file) ? null : renderFileDragHandle(file, folder.id)}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
                     <div className="empty-state compact">
-                      <h3>No files yet</h3>
-                      <p>Upload project documents here for {folder.name.toLowerCase()}.</p>
+                      <h3>{emptyFilesHeading}</h3>
+                      <p>{emptyFilesMessage}</p>
                     </div>
                   )}
                 </article>
@@ -1018,7 +1085,7 @@ export default function ProjectFilesManager({
         )
       ) : flatFiles.length ? (
         <div className="files-hierarchy" role="tree" aria-label="Project files hierarchy">
-          {folders.map((folder) => {
+          {visibleFolders.map((folder) => {
             const isExpanded = expandedFolders[folder.id] !== false;
             return (
             <div
@@ -1057,7 +1124,7 @@ export default function ProjectFilesManager({
                   {folder.files.map((file) => (
                     <div
                       key={file.id}
-                      className={`files-hierarchy-file-row${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
+                      className={`files-hierarchy-file-row${isProjectFileArchived(file) ? ' is-archived' : ''}${dragItem?.type === 'file' && dragItem.fileId === file.id ? ' is-dragging' : ''}${highlightedFileId === file.id ? ' highlighted' : ''}`}
                       ref={(node) => {
                         if (node) fileRowRefs.current[file.id] = node;
                         else delete fileRowRefs.current[file.id];
@@ -1090,6 +1157,7 @@ export default function ProjectFilesManager({
                         <small>
                           {file.size ? `${formatFileSize(file.size)}` : ''}
                           {file.uploadedAt ? ` • ${new Date(file.uploadedAt).toLocaleDateString('en-US')}` : ''}
+                          {isProjectFileArchived(file) ? ` • Archived${file.archivedAt ? ` ${new Date(file.archivedAt).toLocaleDateString('en-US')}` : ''}` : ''}
                         </small>
                       </div>
                       <div className="files-card-trailing">
@@ -1101,7 +1169,7 @@ export default function ProjectFilesManager({
                 </div>
               ) : (
                 <div className="files-tree-empty" role="group">
-                  <p>Empty folder</p>
+                  <p>{archiveFilter === 'archived' ? 'No archived files' : 'Empty folder'}</p>
                 </div>
               ) : null}
             </div>
@@ -1110,8 +1178,8 @@ export default function ProjectFilesManager({
         </div>
       ) : (
         <div className="empty-state compact">
-          <h3>No files yet</h3>
-          <p>Upload your first project document to populate the list view.</p>
+          <h3>{emptyFilesHeading}</h3>
+          <p>{archiveFilter === 'archived' ? 'Archived project files will appear here.' : 'Upload your first project document to populate the list view.'}</p>
         </div>
       )}
 

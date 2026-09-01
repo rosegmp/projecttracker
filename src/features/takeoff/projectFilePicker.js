@@ -1,5 +1,6 @@
 import { downloadProjectFileFromStorage } from '../../services/trackerData.js';
 import { dataUrlToBlob } from '../../utils/fileUi.js';
+import { isProjectFileArchived } from '../../utils/projectFiles.js';
 
 export function projectFileDisplayName(file) {
   return String(file?.originalName || file?.name || 'Project drawing.pdf');
@@ -15,7 +16,7 @@ export function listProjectPdfFiles(project) {
   const folders = Array.isArray(project?.files?.folders) ? project.files.folders : [];
   return folders.flatMap((folder) => (
     Array.isArray(folder?.files) ? folder.files : []
-  ).filter(isProjectPdf).map((file) => ({
+  ).filter((file) => !isProjectFileArchived(file) && isProjectPdf(file)).map((file) => ({
     ...file,
     folderId: folder.id,
     folderName: folder.name || 'Project Files',

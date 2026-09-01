@@ -16,6 +16,7 @@ import {
   subcontractorLabel,
 } from '../utils/certificateStatus.js';
 import { reportError } from '../services/observability.js';
+import { createDigitalApprovalRequest } from '../services/digitalApprovals.js';
 import { updatePerson } from '../services/trackerData.js';
 import {
   classifyComplianceDocument,
@@ -573,6 +574,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const [subcontractorSavingId, setSubcontractorSavingId] = useState('');
   const [renewalSavingId, setRenewalSavingId] = useState('');
   const [complianceEmailSendingId, setComplianceEmailSendingId] = useState('');
+  const [agreementSignatureSendingId, setAgreementSignatureSendingId] = useState('');
   const [complianceEmailSavingId, setComplianceEmailSavingId] = useState('');
   const [complianceEmailDrafts, setComplianceEmailDrafts] = useState({});
   const [complianceSavingKey, setComplianceSavingKey] = useState('');
@@ -1168,6 +1170,38 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     }
   }
 
+  async function requestSubcontractorAgreementSignature(subcontractor) {
+    const email = String(subcontractor.email || '').trim();
+    if (!email) {
+      await showAppAlert('Add a valid subcontractor email before requesting a signature.', 'Email required');
+      return;
+    }
+    const confirmed = await showAppConfirm(
+      `Email ${email} a secure link to review and sign the subcontractor agreement?`,
+      { title: 'Request agreement signature', confirmLabel: 'Send request' },
+    );
+    if (!confirmed) return;
+    setAgreementSignatureSendingId(subcontractor.id);
+    try {
+      const result = await createDigitalApprovalRequest({
+        sourceType: 'subcontractor_agreement',
+        sourceId: subcontractor.id,
+        sourceVersion: Number(subcontractor._version) || 0,
+      });
+      await showAppAlert(
+        result.emailStatus === 'sent'
+          ? `Secure agreement request sent to ${result.testMode ? activeUser?.email : email}.`
+          : 'The agreement request was prepared, but its email was not delivered.',
+        result.emailStatus === 'sent' ? 'Signature request sent' : 'Email not sent',
+      );
+    } catch (error) {
+      reportError(error, { operation: 'compliance.agreement-signature-request', workspace: 'compliance' });
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to send the agreement request.', 'Send failed');
+    } finally {
+      setAgreementSignatureSendingId('');
+    }
+  }
+
   async function advanceCertificateRenewal(renewal) {
     const nextStatus = RENEWAL_NEXT_STATUS[renewal.status];
     if (!nextStatus) return;
@@ -1744,6 +1778,11 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                                   </label>
                                 ) : null}
                                 <div className="compliance-document-actions">
+                                  {canEdit && documentType === 'subcontractor_agreement' ? (
+                                    <button className="button secondary" type="button" disabled={agreementSignatureSendingId === subcontractor.id} onClick={() => void requestSubcontractorAgreementSignature(subcontractor)}>
+                                      {agreementSignatureSendingId === subcontractor.id ? 'Sending...' : document ? 'Request new signature' : 'Request signature'}
+                                    </button>
+                                  ) : null}
                                   {canEdit && documentType === 'w9' && document && complianceTaxIdDrafts[key] ? (
                                     <button className="button secondary" type="button" disabled={savingDocument} onClick={() => void saveManualTaxId(subcontractor)}>
                                       Save tax ID

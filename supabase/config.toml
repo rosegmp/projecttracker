@@ -13,3 +13,10 @@ static_files = [ "./functions/send-compliance-reminders/attachments/*.pdf" ]
 
 [functions.manage-subcontractor-tax-id]
 verify_jwt = true
+
+[functions.manage-digital-approval]
+verify_jwt = false
+static_files = [ "./functions/manage-digital-approval/attachments/*.pdf" ]
+
+[functions.manage-vendor-1099]
+verify_jwt = true

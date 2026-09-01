@@ -142,7 +142,7 @@ export function buildGlobalSearchItems({
     }
     if (includeFiles) {
       (project.files?.folders || []).forEach((folder) => {
-        (folder.files || []).forEach((file) => {
+        (folder.files || []).filter((file) => !file?.archivedAt && file?.archived !== true).forEach((file) => {
           const fileId = clean(file.id);
           if (!fileId) return;
           const label = clean(file.originalName || file.name) || 'Untitled file';

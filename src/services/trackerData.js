@@ -5,6 +5,7 @@ import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '..
 import { DEFAULT_VISIBLE_PROJECT_TABS, normalizeVisibleProjectTabs } from '../utils/projectTabs.js';
 import { is1099ReportingCompanyType, normalizeCompanyType } from '../utils/companyType.js';
 import { normalizeProjectTemplates } from '../utils/projectTemplates.js';
+import { normalizeInspectionAttemptHistory } from '../utils/inspectionAttempts.js';
 import {
   attachRequestId,
   createRequestId,
@@ -489,6 +490,7 @@ function normalizeProjectFile(file, index = 0) {
     storageBucket: String(file?.storageBucket || SUPABASE_FILES_BUCKET || ''),
     storagePath: String(file?.storagePath || ''),
     dataUrl: String(file?.dataUrl || ''),
+    archivedAt: String(file?.archivedAt || ''),
   };
 }
 
@@ -598,6 +600,10 @@ function normalizeProjectInspection(inspection, index = 0) {
     notes: String(inspection?.notes || '').trim(),
     stickerFile: inspection?.stickerFile ? normalizeProjectFile(inspection.stickerFile, index) : null,
     reportFile: inspection?.reportFile ? normalizeProjectFile(inspection.reportFile, index + 1000) : null,
+    attemptHistory: normalizeInspectionAttemptHistory(
+      inspection?.attemptHistory,
+      (file, fileIndex) => normalizeProjectFile(file, 10000 + index * 2000 + fileIndex),
+    ),
   };
 }
 

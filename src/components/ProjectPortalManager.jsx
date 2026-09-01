@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { createDigitalApprovalRequest } from '../services/digitalApprovals.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import FluentIcon from './FluentIcon.jsx';
 
@@ -39,6 +40,7 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [localMode, setLocalMode] = useState(false);
+  const [secureLinkSavingId, setSecureLinkSavingId] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -72,13 +74,36 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
     setSaving(true);
     setMessage('');
     try {
+      const isNewApproval = !draft.id && draft.itemType === 'approval';
       const result = await service.save('portalItems', { ...draft, title: draft.title.trim(), message: draft.message.trim() });
       setRecords((current) => [result.record, ...current.filter((record) => record.id !== result.record.id)]);
       setLocalMode(!!result.local);
       setDraft(null);
+      if (isNewApproval && !result.local) await sendSecureApproval(result.record);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to save portal item.');
     } finally { setSaving(false); }
+  }
+
+  async function sendSecureApproval(record) {
+    if (!record?.id || secureLinkSavingId) return;
+    if (record.itemType !== 'approval') return;
+    setSecureLinkSavingId(record.id);
+    setMessage('');
+    try {
+      const delivery = await createDigitalApprovalRequest({
+        sourceType: 'portal_item',
+        sourceId: record.id,
+        sourceVersion: record.version,
+      });
+      setMessage(delivery.emailStatus === 'sent'
+        ? `Secure approval link sent for ${record.number}.`
+        : `${record.number} was saved, but its secure approval email was not delivered.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to send the secure approval link.');
+    } finally {
+      setSecureLinkSavingId('');
+    }
   }
 
   async function removeRecord(record) {
@@ -155,7 +180,7 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
               <article className="project-workflow-card project-portal-card" key={record.id}>
                 <div className="project-workflow-card-heading">
                   <div><span className="project-workflow-number">{record.number}</span><h3>{record.title}</h3><p>{record.itemType === 'approval' ? 'Approval request' : record.itemType === 'request' ? 'Information request' : 'Project update'} · {record.audience === 'all' ? 'All portal users' : `${record.audience[0].toUpperCase()}${record.audience.slice(1)}s`}</p></div>
-                  <div className="project-workflow-card-actions"><span className={`status-pill status-${record.status}`}>{STATUS_LABELS[record.status] || record.status}</span>{canEdit ? <><button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button><button className="button danger gantt-icon-button" type="button" onClick={() => void removeRecord(record)} aria-label={`Delete ${record.number}`}><FluentIcon name="delete" /></button></> : null}</div>
+                  <div className="project-workflow-card-actions"><span className={`status-pill status-${record.status}`}>{STATUS_LABELS[record.status] || record.status}</span>{canEdit ? <>{record.itemType === 'approval' && !['approved', 'declined', 'closed'].includes(record.status) ? <button className="button secondary" type="button" disabled={Boolean(secureLinkSavingId)} onClick={() => void sendSecureApproval(record)}>{secureLinkSavingId === record.id ? 'Sending…' : 'Send secure link'}</button> : null}<button className="button secondary gantt-icon-button" type="button" onClick={() => setDraft({ ...record })} aria-label={`Edit ${record.number}`}><FluentIcon name="edit" /></button><button className="button danger gantt-icon-button" type="button" onClick={() => void removeRecord(record)} aria-label={`Delete ${record.number}`}><FluentIcon name="delete" /></button></> : null}</div>
                 </div>
                 <p className="project-portal-message">{record.message}</p>
                 {changeOrderSnapshot ? <section className="change-order-approval-snapshot" aria-label={`Issued terms for ${changeOrderSnapshot.number || 'change order'}`}><div className="change-order-approval-snapshot-heading"><strong>{changeOrderSnapshot.number || 'Change order'} · {changeOrderSnapshot.title || 'Untitled change order'}</strong><span>Issued terms · Version {record.changeOrderVersion}</span></div><dl className="project-workflow-summary"><div><dt>Cost impact</dt><dd>{money(changeOrderSnapshot.costImpact)}</dd></div><div><dt>Schedule impact</dt><dd>{changeOrderSnapshot.scheduleDays ? `${changeOrderSnapshot.scheduleDays} days` : 'None'}</dd></div><div><dt>Response due</dt><dd>{changeOrderSnapshot.dueDate ? formatShortDate(changeOrderSnapshot.dueDate) : 'Not set'}</dd></div></dl>{changeOrderSnapshot.description ? <div><strong>Scope</strong><p>{changeOrderSnapshot.description}</p></div> : null}{changeOrderSnapshot.reason ? <div><strong>Reason</strong><p>{changeOrderSnapshot.reason}</p></div> : null}{changeOrderSnapshot.notes ? <div><strong>Notes</strong><p>{changeOrderSnapshot.notes}</p></div> : null}{changeOrderSnapshot.attachmentNames?.length ? <div><strong>Referenced attachments</strong><p>{changeOrderSnapshot.attachmentNames.join(', ')}</p></div> : null}</section> : null}
