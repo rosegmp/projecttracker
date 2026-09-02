@@ -9,9 +9,9 @@ This runbook activates milestone 3.2 only after the Backblaze B2 bucket exists. 
 - Region: `us-east-005`
 - Access: private
 - Object Lock: enabled
-- Initial retention: 30 days, governance mode applied to every uploaded recovery point
+- Retention: newest two verified recovery points; each new point receives one day of governance protection before ordinary pruning
 
-The automation key must be restricted to this bucket. Do not use the B2 master application key. The key must be able to list, read, and write files and read/write file-retention settings. It should not have `bypassGovernance`.
+The automation key must be restricted to this bucket. Do not use the B2 master application key. The key must be able to list, read, write, and delete files and read/write file-retention settings. Routine pruning does not bypass Governance. A one-time cleanup of the legacy 30-day-locked objects additionally requires `bypassGovernance`; remove that capability or replace the key after the cleanup succeeds.
 
 ## GitHub environment and secrets
 
@@ -43,7 +43,7 @@ The workflow rejects a Supabase URL or database URL that does not contain the ap
    - downloaded B2 checksum matched;
    - Object Lock mode is `GOVERNANCE`.
 4. In B2 **Browse Files**, verify one new `.tar.gz.gpg` object beneath `project-tracker/YYYY/MM/DD/`.
-5. Inspect the object's details and confirm a retention date approximately 30 days in the future.
+5. Inspect the object's details and confirm a retention date approximately one day in the future.
 
 Do not download or decrypt the object on an unmanaged device.
 
@@ -55,7 +55,11 @@ After the first manual run passes, create the repository variable:
 
 The scheduled job runs daily at 07:17 UTC. A skipped scheduled run means the variable is absent or not exactly `true`. A failed run must be treated as a missed recovery point and investigated without placing SQL, object names, credentials, or provider response bodies in an issue.
 
-Do not configure lifecycle deletion until at least two scheduled recovery points and the isolated restore drill have passed. Object Lock protects each uploaded recovery point for 30 days; later retention cleanup must never delete the newest verified copy.
+After every successful upload, download verification, and lock verification, the runner keeps the newest two recovery points and deletes older versions. Pruning never runs before the new copy is verified. A normal failed backup therefore does not delete an existing recovery point.
+
+## One-time legacy cleanup
+
+The original recovery points were each locked for 30 days. To clear them early after a storage-cap incident, temporarily grant the bucket-restricted automation key `deleteFiles` and `bypassGovernance`, then manually run this workflow with **clear-existing-and-backup**. The workflow first completes the database/Storage export, creates the encrypted replacement archive on its restricted runner, and only then clears the legacy objects immediately before uploading and verifying the replacement. Cleanup is hard-limited to encrypted `.tar.gz.gpg` objects under `project-tracker/` and never logs an object name. After it succeeds, remove `bypassGovernance` (preferably by replacing the application key and updating the two GitHub secrets). Routine two-copy pruning needs `deleteFiles` but not bypass permission.
 
 ## Activation evidence
 

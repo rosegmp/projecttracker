@@ -151,7 +151,7 @@ The repository owner selected **Backblaze B2** on 2026-07-27 as the independent 
 Required destination configuration:
 
 - Enable Object Lock when the bucket is created.
-- Begin with a 30-day default retention period in governance mode while backup and restore automation is validated. Consider compliance mode only after the first isolated restore drill passes because compliance retention cannot be shortened or bypassed before expiry.
+- The initial validation used 30-day Governance retention. After the Backblaze storage cap was reached, the owner reduced operational retention to the newest two verified recovery points, with one day of Governance protection on each new object and pruning only after upload/download checksum verification.
 - Do not enable public file listing or public object access.
 - Create a dedicated application key restricted to this bucket. Do not use the B2 account master application key.
 - Store the key id, application key, S3 endpoint, bucket name, region, and backup encryption secret only in the approved automation secret store and owner-controlled recovery record.
@@ -187,7 +187,7 @@ The repository now contains a manual-first `Production recovery backup` GitHub w
 - The runner follows Supabase's supported roles, schema, data, and migration-history dump sequence.
 - It recursively downloads `project-files`, `takeoff-files`, and `certificate-files` through the authenticated Storage API.
 - The plaintext working set exists only in a restricted temporary runner directory and is encrypted with GnuPG AES-256 before transfer.
-- Each B2 object receives an explicit 30-day governance retention timestamp. The restricted automation key must not have `bypassGovernance`.
+- Each new B2 object receives an explicit one-day Governance retention timestamp. The runner retains exactly the newest two verified recovery points and prunes older versions after successful verification. Routine pruning does not bypass Governance; a one-time removal of the legacy 30-day-locked copies requires temporary bucket-scoped `bypassGovernance` authority.
 - The runner downloads the encrypted B2 object and verifies its SHA-256 checksum, then verifies the retained object's Object Lock mode.
 - The encrypted manifest contains fixed SQL artifact hashes, aggregate COPY section/row counts, aggregate per-bucket object/byte counts, tool versions, and workflow identifiers. It contains no database values or object names.
 - The scheduled trigger remains disabled unless repository variable `PRODUCTION_BACKUPS_ENABLED` is exactly `true`; manual dispatch is available for the first validation.

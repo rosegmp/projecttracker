@@ -7,7 +7,7 @@ EXPECTED_SUPABASE_URL="https://${EXPECTED_PROJECT_REF}.supabase.co"
 EXPECTED_B2_BUCKET="dph-recovery-2458"
 EXPECTED_B2_ENDPOINT="https://s3.us-east-005.backblazeb2.com"
 EXPECTED_B2_REGION="us-east-005"
-RETENTION_DAYS=30
+RETENTION_DAYS=1
 
 fail() {
   echo "::error::$1"
@@ -42,6 +42,8 @@ done
 [ "${B2_BUCKET:-}" = "$EXPECTED_B2_BUCKET" ] || fail "Unexpected B2 bucket"
 [ "${B2_ENDPOINT:-}" = "$EXPECTED_B2_ENDPOINT" ] || fail "Unexpected B2 endpoint"
 [ "${B2_REGION:-}" = "$EXPECTED_B2_REGION" ] || fail "Unexpected B2 region"
+[ "${CLEAR_EXISTING_BACKUPS:-false}" = "true" ] || [ "${CLEAR_EXISTING_BACKUPS:-false}" = "false" ] \
+  || fail "Invalid existing-backup cleanup setting"
 
 for command in supabase node tar gpg aws sha256sum; do
   command -v "$command" >/dev/null 2>&1 || fail "Required tool ${command} is unavailable"
@@ -117,6 +119,11 @@ shred -u "$archive"
 local_sha256="$(sha256sum "$encrypted_archive" | cut -d' ' -f1)"
 local_bytes="$(stat -c '%s' "$encrypted_archive")"
 
+if [ "${CLEAR_EXISTING_BACKUPS:-false}" = "true" ]; then
+  echo "Clearing legacy Project Tracker recovery points after preparing the replacement archive."
+  bash scripts/prune-production-backups.sh 0 true
+fi
+
 echo "Uploading encrypted recovery point to B2."
 AWS_ACCESS_KEY_ID="$B2_KEY_ID" \
 AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY" \
@@ -157,5 +164,9 @@ retention_mode="$(
     --output text
 )"
 [ "$retention_mode" = "GOVERNANCE" ] || fail "B2 Object Lock verification failed"
+
+# Each recovery point has a unique key. Retain the newest two verified copies
+# and remove older versions only after the new upload and checksum validation.
+bash scripts/prune-production-backups.sh 2 false
 
 echo "Backup verified: encrypted_bytes=${local_bytes}, retention_days=${RETENTION_DAYS}."
