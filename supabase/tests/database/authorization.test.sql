@@ -535,7 +535,7 @@ set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000002",
 select is(
   public.create_digital_approval_request(
     'subcontractor_agreement', 'auth-sub-a',
-    (select version from public.subs where id = 'auth-sub-a'),
+    1,
     'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
     now() + interval '14 days'
   )->>'sourceType',
