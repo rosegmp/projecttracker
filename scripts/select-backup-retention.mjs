@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const SAFE_PREFIX = 'project-tracker/';
 const SAFE_SUFFIX = '.tar.gz.gpg';
@@ -7,13 +7,13 @@ function fail(message) {
   throw new Error(message);
 }
 
-async function main() {
+function main() {
   const [inventoryPath, deletionPath, summaryPath, keepValue] = process.argv.slice(2);
   const keep = Number(keepValue);
   if (!inventoryPath || !deletionPath || !summaryPath || !Number.isInteger(keep) || keep < 0 || keep > 2) {
     fail('Usage: select-backup-retention.mjs <inventory> <deletion> <summary> <keep:0-2>');
   }
-  const inventory = JSON.parse(await readFile(inventoryPath, 'utf8'));
+  const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
   const versions = [...(inventory.Versions || [])];
   const deleteMarkers = [...(inventory.DeleteMarkers || [])];
   for (const item of [...versions, ...deleteMarkers]) {
@@ -34,11 +34,11 @@ async function main() {
   }
   const retained = versions.slice(0, keep);
   const deleted = [...versions.slice(keep), ...deleteMarkers];
-  await writeFile(deletionPath, JSON.stringify({
+  writeFileSync(deletionPath, JSON.stringify({
     Objects: deleted.map((item) => ({ Key: item.Key, VersionId: item.VersionId })),
     Quiet: true,
   }));
-  await writeFile(summaryPath, JSON.stringify({
+  writeFileSync(summaryPath, JSON.stringify({
     retainedCopies: retained.length,
     retainedBytes: retained.reduce((total, item) => total + (Number(item.Size) || 0), 0),
     deletedVersions: deleted.length,
@@ -46,7 +46,9 @@ async function main() {
   }));
 }
 
-main().catch(() => {
+try {
+  main();
+} catch {
   console.error('Backup-retention selection failed. Object names were suppressed.');
   process.exitCode = 1;
-});
+}

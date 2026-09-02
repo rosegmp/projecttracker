@@ -45,6 +45,8 @@ aws s3api list-object-versions \
   --output json > "$inventory"
 
 node scripts/select-backup-retention.mjs "$inventory" "$deletion" "$summary" "$KEEP_BACKUPS"
+[ -s "$deletion" ] || fail "Backup deletion manifest was not written"
+[ -s "$summary" ] || fail "Backup retention summary was not written"
 delete_count="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1])).Objects.length" "$deletion")"
 [ "$delete_count" -le 1000 ] || fail "Too many backup versions for one bounded cleanup run"
 if [ "$delete_count" -gt 0 ]; then
