@@ -186,3 +186,59 @@ test('Manifest reports aggregate COPY counts and hashes without row content', as
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test('Backup retention keeps only the two newest encrypted recovery points', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-retention-test-'));
+  try {
+    const inventoryPath = path.join(temporaryRoot, 'inventory.json');
+    const deletionPath = path.join(temporaryRoot, 'deletion.json');
+    const summaryPath = path.join(temporaryRoot, 'summary.json');
+    await writeFile(inventoryPath, JSON.stringify({
+      Versions: [
+        { Key: 'project-tracker/2026/09/01/older.tar.gz.gpg', VersionId: 'v1', LastModified: '2026-09-01T07:20:00Z', Size: 100 },
+        { Key: 'project-tracker/2026/09/03/newest.tar.gz.gpg', VersionId: 'v3', LastModified: '2026-09-03T07:20:00Z', Size: 300 },
+        { Key: 'project-tracker/2026/09/02/current.tar.gz.gpg', VersionId: 'v2', LastModified: '2026-09-02T07:20:00Z', Size: 200 },
+      ],
+      DeleteMarkers: [
+        { Key: 'project-tracker/2026/08/31/hidden.tar.gz.gpg', VersionId: 'marker', LastModified: '2026-09-01T08:00:00Z' },
+      ],
+    }));
+    const result = await runNode(
+      'scripts/select-backup-retention.mjs',
+      [inventoryPath, deletionPath, summaryPath, '2'],
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const deletion = JSON.parse(await readFile(deletionPath, 'utf8'));
+    assert.deepEqual(deletion.Objects, [
+      { Key: 'project-tracker/2026/09/01/older.tar.gz.gpg', VersionId: 'v1' },
+      { Key: 'project-tracker/2026/08/31/hidden.tar.gz.gpg', VersionId: 'marker' },
+    ]);
+    assert.deepEqual(JSON.parse(await readFile(summaryPath, 'utf8')), {
+      retainedCopies: 2,
+      retainedBytes: 500,
+      deletedVersions: 2,
+      deletedBytes: 100,
+    });
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('Backup retention refuses objects outside the approved encrypted prefix', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-retention-safety-test-'));
+  try {
+    const inventoryPath = path.join(temporaryRoot, 'inventory.json');
+    await writeFile(inventoryPath, JSON.stringify({
+      Versions: [{ Key: 'unrelated/do-not-delete.txt', VersionId: 'v1', LastModified: '2026-09-01T07:20:00Z', Size: 1 }],
+    }));
+    const result = await runNode(
+      'scripts/select-backup-retention.mjs',
+      [inventoryPath, path.join(temporaryRoot, 'deletion.json'), path.join(temporaryRoot, 'summary.json'), '0'],
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Object names were suppressed/);
+    assert.doesNotMatch(result.stdout + result.stderr, /do-not-delete/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});

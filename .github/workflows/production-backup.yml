@@ -2,6 +2,15 @@ name: Production recovery backup
 
 on:
   workflow_dispatch:
+    inputs:
+      maintenance_action:
+        description: Backup normally, or clear the locked Project Tracker prefix before creating a fresh recovery point
+        required: true
+        default: backup
+        type: choice
+        options:
+          - backup
+          - clear-existing-and-backup
   schedule:
     - cron: '17 7 * * *'
 
@@ -55,4 +64,6 @@ jobs:
 
       - name: Create and verify encrypted recovery point
         shell: bash
+        env:
+          CLEAR_EXISTING_BACKUPS: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_action == 'clear-existing-and-backup' }}
         run: bash scripts/run-production-backup.sh
