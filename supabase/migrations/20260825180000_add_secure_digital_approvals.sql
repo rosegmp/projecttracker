@@ -142,8 +142,11 @@ begin
     if not public.app_user_can_edit() then
       raise exception 'You do not have permission to request subcontractor signatures.' using errcode = '42501';
     end if;
-    select * into subcontractor_row from public.subs where id = v_source_id and version = p_source_version for update;
+    select * into subcontractor_row from public.subs where id = v_source_id for update;
     if not found then
+      raise exception 'The subcontractor was not found.' using errcode = '23503';
+    end if;
+    if subcontractor_row.version is distinct from p_source_version then
       raise exception 'This subcontractor changed elsewhere. Refresh before sending.' using errcode = '40001';
     end if;
     recipient_emails := array[lower(trim(coalesce(subcontractor_row.data->>'email', '')))];

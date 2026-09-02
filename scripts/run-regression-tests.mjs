@@ -5668,7 +5668,7 @@ const tests = [
   {
     name: 'digital approvals use private expiring links and produce version-bound signed PDFs',
     async run() {
-      const [appSource, pageSource, serviceSource, workflowSource, selectionSource, portalSource, complianceSource, migrationSource, functionSource, configSource] = await Promise.all([
+      const [appSource, pageSource, serviceSource, workflowSource, selectionSource, portalSource, complianceSource, migrationSource, versionLockFixSource, functionSource, configSource] = await Promise.all([
         readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/DigitalApprovalPage.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/digitalApprovals.js', import.meta.url), 'utf8'),
@@ -5677,6 +5677,7 @@ const tests = [
         readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260825180000_add_secure_digital_approvals.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260901130000_fix_digital_approval_subcontractor_version_lock.sql', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/functions/manage-digital-approval/index.ts', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
       ]);
@@ -5694,6 +5695,9 @@ const tests = [
       assert.match(migrationSource, /if auth\.role\(\) <> 'service_role'/);
       assert.match(migrationSource, /version = linked_version/);
       assert.match(migrationSource, /subcontractor_compliance_documents/);
+      assert.match(versionLockFixSource, /where id = v_source_id for update/);
+      assert.match(versionLockFixSource, /subcontractor_row\.version is distinct from p_source_version/);
+      assert.doesNotMatch(versionLockFixSource, /where id = v_source_id and version = p_source_version for update/);
       assert.match(functionSource, /crypto\.getRandomValues\(new Uint8Array\(32\)\)/);
       assert.match(functionSource, /DIGITAL APPROVAL CERTIFICATE/);
       assert.match(functionSource, /createSignedUrl/);
