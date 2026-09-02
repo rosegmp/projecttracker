@@ -156,3 +156,20 @@ $$;
 
 revoke all on function public.create_digital_approval_request(text, text, bigint, text, timestamptz) from public, anon;
 grant execute on function public.create_digital_approval_request(text, text, bigint, text, timestamptz) to authenticated;
+
+-- Audit rows use an empty project id for portfolio-level entities. Agreement
+-- approvals are attached to a subcontractor rather than a project.
+create or replace function public.record_digital_approval_audit_event()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.audit_events (
+    actor_user_id, actor_email, entity_type, entity_id, project_id, action, before_data, after_data
+  ) values (
+    auth.uid(), coalesce(auth.jwt()->>'email', ''), 'digital_approval', new.id::text,
+    coalesce(new.project_id, ''), lower(tg_op),
+    case when tg_op = 'INSERT' then null else jsonb_build_object('status', old.status, 'version', old.version) end,
+    jsonb_build_object('status', new.status, 'sourceType', new.source_type, 'sourceId', new.source_id, 'version', new.version)
+  );
+  return new;
+end;
+$$;

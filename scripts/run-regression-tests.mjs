@@ -5698,6 +5698,7 @@ const tests = [
       assert.match(versionLockFixSource, /where id = v_source_id for update/);
       assert.match(versionLockFixSource, /subcontractor_row\.version is distinct from p_source_version/);
       assert.doesNotMatch(versionLockFixSource, /where id = v_source_id and version = p_source_version for update/);
+      assert.match(versionLockFixSource, /coalesce\(new\.project_id, ''\), lower\(tg_op\)/);
       assert.match(functionSource, /crypto\.getRandomValues\(new Uint8Array\(32\)\)/);
       assert.match(functionSource, /DIGITAL APPROVAL CERTIFICATE/);
       assert.match(functionSource, /createSignedUrl/);

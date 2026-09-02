@@ -383,7 +383,7 @@ begin
     actor_user_id, actor_email, entity_type, entity_id, project_id, action, before_data, after_data
   ) values (
     auth.uid(), coalesce(auth.jwt()->>'email', ''), 'digital_approval', new.id::text,
-    new.project_id, lower(tg_op),
+    coalesce(new.project_id, ''), lower(tg_op),
     case when tg_op = 'INSERT' then null else jsonb_build_object('status', old.status, 'version', old.version) end,
     jsonb_build_object('status', new.status, 'sourceType', new.source_type, 'sourceId', new.source_id, 'version', new.version)
   );
