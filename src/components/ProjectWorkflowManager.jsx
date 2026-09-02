@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { createDigitalApprovalRequest } from '../services/digitalApprovals.js';
 import { createPerson, deleteProjectFileFromStorage, downloadProjectFileFromStorage, getStoredAuthSession, uploadProjectFileToStorage } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
@@ -486,7 +487,22 @@ export default function ProjectWorkflowManager({
     try {
       const result = await service.requestChangeOrderApproval(record);
       setPortalItems((current) => [result.record, ...current.filter((item) => item.id !== result.record.id)]);
-      setApprovalNotice(`${record.number} is available in the assigned customer portal for approval.`);
+      if (result.local) {
+        setApprovalNotice(`${record.number} was saved on this device. The secure approval email will be sent after it syncs.`);
+      } else {
+        try {
+          const delivery = await createDigitalApprovalRequest({
+            sourceType: 'portal_item',
+            sourceId: result.record.id,
+            sourceVersion: result.record.version,
+          });
+          setApprovalNotice(delivery.emailStatus === 'sent'
+            ? `${record.number} was emailed to the assigned customer with a secure approval link.`
+            : `${record.number} is available in the customer portal, but the secure approval email was not delivered.`);
+        } catch {
+          setApprovalNotice(`${record.number} is available in the customer portal, but its secure email link could not be prepared.`);
+        }
+      }
     } catch (error) {
       await showAppAlert(
         error instanceof Error ? error.message : 'Unable to request customer approval.',

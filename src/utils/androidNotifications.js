@@ -178,7 +178,7 @@ export function buildAndroidReminderNotifications({ data, activeUser, preference
   if (normalizedPreferences.inspections || normalizedPreferences.overdueWork) {
     visibleProjects.forEach((project) => {
       (project.inspections || []).forEach((inspection) => {
-        if (!inspection.date || inspection.status === 'passed') return;
+        if (!inspection.date || ['passed', 'cancelled'].includes(inspection.status)) return;
         const inspectionDate = parseLocalDate(inspection.date);
         if (!inspectionDate) return;
         if (inspectionDate < today) overdueInspections.push({ inspection, project });

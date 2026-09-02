@@ -3,8 +3,9 @@ import { renderModalPortal } from './AppDialogs.jsx';
 import AssigneeMultiSelect from './AssigneeMultiSelect.jsx';
 import { isNativeAndroidApp } from '../platform/platformAdapter.js';
 import TaskLocationField from './TaskLocationField.jsx';
+import { canAddReinspection } from '../utils/inspectionAttempts.js';
 
-const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up'];
+const INSPECTION_STATUS_OPTIONS = ['requested', 'scheduled', 'passed', 'failed', 'follow-up', 'cancelled'];
 
 export function TaskModal({ draft, projects, locationOptions, assigneeOptions, complianceWarnings, saving, onChange, onAddPerson, onAddLocation, onClose, onSave, onDelete }) {
   if (!draft) return null;
@@ -90,7 +91,7 @@ export function TaskModal({ draft, projects, locationOptions, assigneeOptions, c
   );
 }
 
-export function InspectionModal({ draft, project, projects, subcodes, saving, onChange, onAddSubcode, onClose, onSave, onDelete }) {
+export function InspectionModal({ draft, project, projects, subcodes, saving, onChange, onAddSubcode, onAddReinspection, onClose, onSave, onDelete }) {
   if (!draft) return null;
   const isEditing = draft.mode === 'edit';
   const showReportField = ['failed', 'follow-up'].includes(draft.status);
@@ -104,7 +105,7 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
             <p className="eyebrow">Inspection</p>
             <h2 id="inspection-modal-title">{isEditing ? 'Edit inspection' : 'Add inspection'}</h2>
             <p className="panel-copy">
-              {project?.name || 'Project'}
+              {project?.name || 'Project'}{draft.attemptHistory?.length ? ` · Attempt ${draft.attemptHistory.length + 1}` : ''}
             </p>
           </div>
         </div>
@@ -204,9 +205,29 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
               ) : null}
             </>
           ) : null}
+          {draft.attemptHistory?.length ? (
+            <div className="inspection-form-span inspection-attempt-history">
+              <h3>Previous attempts</h3>
+              {draft.attemptHistory.map((attempt, index) => (
+                <div className="inspection-attempt-row" key={attempt.id || index}>
+                  <strong>Attempt {index + 1} · {attempt.status}</strong>
+                  <span>{attempt.date || 'Date not set'}{attempt.agency ? ` · ${attempt.agency}` : ''}</span>
+                  {attempt.notes ? <p>{attempt.notes}</p> : null}
+                  {attempt.stickerFile?.originalName || attempt.reportFile?.originalName ? (
+                    <small>{[attempt.stickerFile?.originalName, attempt.reportFile?.originalName].filter(Boolean).join(' · ')}</small>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="panel-actions">
+          {isEditing && canAddReinspection(draft) ? (
+            <button className="button secondary" type="button" onClick={onAddReinspection} disabled={saving}>
+              Add re-inspection
+            </button>
+          ) : null}
           <button className="button secondary" type="button" onClick={onClose}>
             Cancel
           </button>

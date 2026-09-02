@@ -358,7 +358,10 @@ export default function ProjectDetailView({
     0,
   );
   const scheduleCompletion = totalSteps ? Math.round((completedSteps / totalSteps) * 100) : 0;
-  const projectFileCount = (project.files?.folders || []).reduce((total, folder) => total + (folder.files || []).length, 0);
+  const projectFileCount = (project.files?.folders || []).reduce(
+    (total, folder) => total + (folder.files || []).filter((file) => !file?.archivedAt && file?.archived !== true).length,
+    0,
+  );
   const scheduleItems = (project.phases || []).flatMap((phase) => (phase.steps || []).map((step) => ({ ...step, phaseName: phase.name || 'Schedule' })));
   const unfinishedScheduleItems = scheduleItems.filter((step) => !step.done);
   const upcomingScheduleItems = unfinishedScheduleItems.filter((step) => (step.end || step.start || '') >= todayKey);

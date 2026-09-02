@@ -33,6 +33,7 @@ import {
   maintenanceDisplayMessage,
 } from './services/runtimeStatus.js';
 import * as trackerDataModule from './services/trackerData.js';
+import { consumeDigitalApprovalToken } from './services/digitalApprovals.js';
 
 function applyQueuedFieldOperations(state, operations) {
   return applyQueuedTaskOperations(applyQueuedInspectionOperations(state, operations), operations);
@@ -46,6 +47,7 @@ const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'))
 const NativeCertificatesView = lazy(() => import('./components/NativeCertificatesView.jsx'));
 const NativeSettingsView = lazy(() => import('./components/NativeSettingsView.jsx'));
 const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
+const DigitalApprovalPage = lazy(() => import('./components/DigitalApprovalPage.jsx'));
 const NativeFilesView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativeFilesView })),
 );
@@ -247,6 +249,7 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
 
 export default function App() {
   const nativeAndroid = isNativeAndroidApp();
+  const [digitalApprovalToken] = useState(() => consumeDigitalApprovalToken());
   const [activeTab, setActiveTab] = useState(() => nativeAndroid ? 'home' : getTabFromLocation());
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
@@ -1592,6 +1595,10 @@ export default function App() {
       status: result.ok ? 'success' : 'error',
       message: result.message,
     });
+  }
+
+  if (digitalApprovalToken) {
+    return <Suspense fallback={<WorkspaceSplash message="Loading secure approval" />}><DigitalApprovalPage token={digitalApprovalToken} /></Suspense>;
   }
 
   if (authLoading) {

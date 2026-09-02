@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
 import { loadVendor1099Import, replaceVendor1099Import, setVendor1099ImportMatch } from '../services/vendor1099Imports.js';
+import { createVendor1099FilingBatch, loadVendor1099FilingWorkspace, saveVendor1099PayerProfile } from '../services/vendor1099Filing.js';
 import { buildVendor1099Review } from '../utils/vendorReporting.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -39,6 +40,10 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
   const [importBusy, setImportBusy] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [message, setMessage] = useState('');
+  const [filingWorkspace, setFilingWorkspace] = useState({ payer: null, batches: [] });
+  const [filingBusy, setFilingBusy] = useState(false);
+  const [payerOpen, setPayerOpen] = useState(false);
+  const [payerDraft, setPayerDraft] = useState({ legalName: '', businessName: '', mailingAddress: '', phone: '', contactEmail: '', taxId: '' });
   const fileInputRef = useRef(null);
   const projectIds = useMemo(() => (data?.projects || []).map((project) => project.id).filter(Boolean), [data?.projects]);
   const canManageImports = activeUser?.role === 'Admin';
@@ -61,6 +66,21 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
   }
 
   useEffect(() => { void loadYearData(year); }, [projectIds, year, canManageImports]);
+
+  useEffect(() => {
+    if (!canManageImports) return;
+    let active = true;
+    loadVendor1099FilingWorkspace().then((workspace) => {
+      if (!active) return;
+      setFilingWorkspace({ payer: workspace.payer || null, batches: workspace.batches || [] });
+      setPayerDraft((current) => ({ ...current,
+        legalName: workspace.payer?.legalName || '', businessName: workspace.payer?.businessName || '',
+        mailingAddress: workspace.payer?.mailingAddress || '', phone: workspace.payer?.phone || '',
+        contactEmail: workspace.payer?.contactEmail || '', taxId: '',
+      }));
+    }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : 'Unable to load filing setup.'); });
+    return () => { active = false; };
+  }, [canManageImports]);
 
   async function selectSpreadsheet(file) {
     if (!file) return;
@@ -113,6 +133,23 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
     }
   }
 
+  async function savePayerProfile(event) {
+    event.preventDefault();
+    setFilingBusy(true);
+    setMessage('');
+    try {
+      const result = await saveVendor1099PayerProfile(payerDraft);
+      setFilingWorkspace((current) => ({ ...current, payer: result.payer }));
+      setPayerDraft((current) => ({ ...current, taxId: '' }));
+      setPayerOpen(false);
+      setMessage('Payer filing profile saved. The complete EIN remains encrypted and is never returned to this page.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save the payer profile.');
+    } finally {
+      setFilingBusy(false);
+    }
+  }
+
   const spreadsheetVendors = useMemo(() => importedRows.map(toReviewVendor), [importedRows]);
   const review = useMemo(() => buildVendor1099Review({
     subcontractors, documents, taxIdStatuses, commitments, importedVendors: spreadsheetVendors,
@@ -125,6 +162,24 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
     unallocated: result.unallocated + row.unallocatedTotal,
   }), { total: 0, ready: 0, attention: 0, unallocated: 0 }), [review.rows]);
   const importMeta = importedRows[0] || null;
+  const readyRows = review.rows.filter((row) => row.status === 'ready');
+  const currentBatches = (filingWorkspace.batches || []).filter((batch) => Number(batch.taxYear) === Number(year));
+
+  async function createFilingBatch() {
+    if (!readyRows.length) return;
+    if (!await showAppConfirm(`Create an immutable ${year} filing batch for ${readyRows.length} ready vendor${readyRows.length === 1 ? '' : 's'}? Vendor names, addresses, compensation, and encrypted tax IDs will be snapshotted for filing.`, { title: `Create ${year} filing batch?`, confirmLabel: 'Create batch' })) return;
+    setFilingBusy(true);
+    setMessage('');
+    try {
+      const result = await createVendor1099FilingBatch(year, readyRows);
+      setFilingWorkspace((current) => ({ ...current, batches: [result.batch, ...(current.batches || [])] }));
+      setMessage(`Created the ${year} filing batch for ${result.batch.formCount} vendor${result.batch.formCount === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to create the filing batch.');
+    } finally {
+      setFilingBusy(false);
+    }
+  }
 
   return (
     <div className="vendor-1099-review">
@@ -168,6 +223,22 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
           <div className="quickbooks-vendor-match-row" key={row.id}><div><strong>{row.vendorName}</strong><span>{money(row.reportableTotal)} · {row.taxIdLastFour ? `Tax ID •••• ${row.taxIdLastFour}` : 'Tax ID unavailable'}</span></div><select aria-label={`Match ${row.vendorName}`} defaultValue="" onChange={(event) => { if (event.target.value) void saveVendorMatch(row, event.target.value); }} disabled={importBusy}><option value="">Select subcontractor</option>{subcontractors.map((subcontractor) => <option value={subcontractor.id} key={subcontractor.id}>{subcontractorName(subcontractor)}</option>)}</select></div>
         ))}</section>
       ) : null}
+
+      {canManageImports ? <section className="vendor-1099-filing" aria-label="1099 filing and delivery">
+        <div className="vendor-1099-filing-header"><div><h3>Filing &amp; vendor delivery</h3><p>Create a locked filing snapshot before preparing IRS, New Jersey, or recipient copies.</p></div><div className="vendor-1099-filing-actions"><button className="button secondary" type="button" onClick={() => setPayerOpen((value) => !value)}>{filingWorkspace.payer?.configured ? 'Edit payer profile' : 'Set up payer profile'}</button><button className="button primary" type="button" disabled={filingBusy || !filingWorkspace.payer?.configured || !readyRows.length} onClick={() => void createFilingBatch()}>Create filing batch</button></div></div>
+        <div className="vendor-1099-filing-status"><div><span>Payer</span><strong>{filingWorkspace.payer?.configured ? `${filingWorkspace.payer.legalName} · EIN •••• ${filingWorkspace.payer.taxIdLastFour}` : 'Setup required'}</strong></div><div><span>Ready vendors</span><strong>{readyRows.length}</strong></div><div><span>{year} batches</span><strong>{currentBatches.length}</strong></div></div>
+        {payerOpen ? <form className="vendor-1099-payer-form" onSubmit={savePayerProfile}>
+          <label><span>Legal payer name</span><input required value={payerDraft.legalName} onChange={(event) => setPayerDraft((current) => ({ ...current, legalName: event.target.value }))} /></label>
+          <label><span>Business name (optional)</span><input value={payerDraft.businessName} onChange={(event) => setPayerDraft((current) => ({ ...current, businessName: event.target.value }))} /></label>
+          <label className="wide"><span>Mailing address</span><input required value={payerDraft.mailingAddress} onChange={(event) => setPayerDraft((current) => ({ ...current, mailingAddress: event.target.value }))} /></label>
+          <label><span>Phone</span><input type="tel" value={payerDraft.phone} onChange={(event) => setPayerDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+          <label><span>Contact email</span><input required type="email" value={payerDraft.contactEmail} onChange={(event) => setPayerDraft((current) => ({ ...current, contactEmail: event.target.value }))} /></label>
+          <label><span>{filingWorkspace.payer?.taxIdLastFour ? `New EIN (currently •••• ${filingWorkspace.payer.taxIdLastFour})` : 'Payer EIN'}</span><input required={!filingWorkspace.payer?.taxIdLastFour} inputMode="numeric" autoComplete="off" value={payerDraft.taxId} onChange={(event) => setPayerDraft((current) => ({ ...current, taxId: event.target.value }))} placeholder={filingWorkspace.payer?.taxIdLastFour ? 'Leave blank to keep current EIN' : '9 digits'} /></label>
+          <div className="modal-actions wide"><button className="button secondary" type="button" onClick={() => setPayerOpen(false)}>Cancel</button><button className="button primary" type="submit" disabled={filingBusy}>{filingBusy ? 'Saving…' : 'Save payer profile'}</button></div>
+        </form> : null}
+        {currentBatches.length ? <div className="vendor-1099-batches">{currentBatches.map((batch) => <div key={batch.id}><div><strong>{batch.formCount} form{batch.formCount === 1 ? '' : 's'} · {money(batch.totalCompensation)}</strong><span>Created {new Date(batch.createdAt).toLocaleString()}</span></div><span className={`status-pill status-${batch.status === 'accepted' ? 'ready' : 'review'}`}>{batch.status}</span></div>)}</div> : <p className="vendor-1099-import-meta">No filing batch has been created for {year}.</p>}
+        <div className="vendor-1099-guidance"><FluentIcon name="lock" size={18} /><span>Federal filing, New Jersey filing, and recipient delivery are tracked independently. Full tax IDs remain server-only. Secure electronic delivery will require each vendor’s affirmative consent; vendors without consent remain marked for paper delivery.</span></div>
+      </section> : null}
 
       {loading ? <div className="empty-state compact"><p>Loading vendor payments…</p></div> : review.rows.length ? (
         <div className="vendor-1099-table-wrap"><table className="vendor-1099-table"><thead><tr><th>Vendor</th><th>Company type</th><th>W-9 / Tax ID</th><th>Mailing address</th><th>{importedRows.length ? 'QuickBooks 1099' : 'Eligible direct'}</th><th>Card / network</th><th>Status</th></tr></thead><tbody>{review.rows.map((row) => (

@@ -32,6 +32,7 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { formatAssignees, getScheduleAssignees, getTaskAssignees, scheduleAssigneeFields, taskAssigneeFields } from '../utils/assignees.js';
 import { normalizeStepStatus } from '../utils/stepStatus.js';
+import { beginReinspectionDraft, inspectionAttemptAttachments } from '../utils/inspectionAttempts.js';
 
 const ScheduleItemModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.ScheduleItemModal })));
 const StepStatusModal = lazy(() => import('./ScheduleDialogs.jsx').then((module) => ({ default: module.StepStatusModal })));
@@ -1211,11 +1212,16 @@ export default function NativeScheduleView({
       reportFile: inspectionLike.reportFile || null,
       stickerPendingFile: null,
       reportPendingFile: null,
+      attemptHistory: inspectionLike.attemptHistory || [],
     });
   }
 
   function updateInspectionDraft(field, value) {
     setInspectionDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function addScheduleReinspection() {
+    setInspectionDraft((current) => beginReinspectionDraft(current));
   }
 
   async function handleAddInspectionSubcodeFromSchedule() {
@@ -1337,6 +1343,7 @@ export default function NativeScheduleView({
         notes: inspectionDraft.notes.trim(),
         stickerFile,
         reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? reportFile : null,
+        attemptHistory: inspectionDraft.attemptHistory || [],
       };
       let nextState = data;
       if (sourceProject && sourceProject.id !== project.id) {
@@ -1394,7 +1401,7 @@ export default function NativeScheduleView({
       const nextState = await updateProjectsAndTasks(data, [nextProject], nextTasks);
       onStateChange(nextState);
       await Promise.allSettled(
-        [existing?.stickerFile, existing?.reportFile]
+        inspectionAttemptAttachments(existing)
           .filter((file) => file?.storagePath)
           .map((file) => deleteProjectFileFromStorage(file)),
       );
@@ -3109,6 +3116,7 @@ export default function NativeScheduleView({
         saving={inspectionSaving}
         onChange={updateInspectionDraft}
         onAddSubcode={handleAddInspectionSubcodeFromSchedule}
+        onAddReinspection={addScheduleReinspection}
         onClose={() => setInspectionDraft(null)}
         onSave={handleSaveInspectionDraft}
         onDelete={handleDeleteInspectionDraft}

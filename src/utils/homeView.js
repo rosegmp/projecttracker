@@ -38,7 +38,7 @@ function intersectsRange(start, end, rangeStart, rangeEnd) {
 }
 
 function isCompleteStatus(value) {
-  return ['done', 'complete', 'completed', 'passed', 'approved'].includes(String(value || '').trim().toLowerCase());
+  return ['done', 'complete', 'completed', 'passed', 'approved', 'cancelled'].includes(String(value || '').trim().toLowerCase());
 }
 
 function isStepComplete(step) {

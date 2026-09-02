@@ -146,6 +146,7 @@ export function buildVendor1099Review({ subcontractors = [], documents = [], tax
       hasW9: w9Ids.has(vendorId),
       taxIdLastFour: String(taxStatus?.taxIdLastFour || ''),
       mailingAddress: String(taxStatus?.mailingAddress || '').trim(),
+      email: String(vendor.email || '').trim().toLowerCase(),
       directTotal: totals.directTotal,
       excludedMethodTotal: totals.excludedMethodTotal,
       unallocatedTotal: totals.unallocatedTotal,

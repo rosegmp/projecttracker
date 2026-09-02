@@ -28,6 +28,13 @@ import {
 } from '../src/utils/accessUi.js';
 import { buildAndroidReminderNotifications } from '../src/utils/androidNotifications.js';
 import { applyProjectTemplate, buildProjectTemplate, normalizeProjectTemplates } from '../src/utils/projectTemplates.js';
+import {
+  beginReinspectionDraft,
+  canAddReinspection,
+  inspectionAttemptAttachments,
+  normalizeInspectionAttemptHistory,
+} from '../src/utils/inspectionAttempts.js';
+import { groupInspections, sortInspections } from '../src/utils/inspectionView.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import {
   buildHomeActionCenterItems,
@@ -84,6 +91,12 @@ import {
   projectFileDisplayName,
 } from '../src/features/takeoff/projectFilePicker.js';
 import { buildProjectPhotoGallery, groupProjectPhotosBySource } from '../src/utils/projectPhotoGallery.js';
+import {
+  archiveProjectFile,
+  filterProjectFileFolders,
+  isProjectFileArchived,
+  restoreProjectFile,
+} from '../src/utils/projectFiles.js';
 import { buildChangeOrderApprovalPdf, getChangeOrderApprovalPdfFileName } from '../src/utils/changeOrderPdf.js';
 import {
   buildScheduledComplianceFollowupCandidates,
@@ -952,9 +965,15 @@ const tests = [
       const project = {
         id: 'project-1',
         photos: [image('project-photo')],
-        files: { folders: [{ id: 'folder-1', name: 'Plans', files: [image('file-photo'), { id: 'pdf', name: 'plan.pdf', type: 'application/pdf' }] }] },
+        files: { folders: [{ id: 'folder-1', name: 'Plans', files: [image('file-photo'), { ...image('archived-file-photo'), archivedAt: '2026-08-27T12:00:00.000Z' }, { id: 'pdf', name: 'plan.pdf', type: 'application/pdf' }] }] },
         selections: [{ id: 'selection-1', itemName: 'Tile', photos: [image('selection-photo')], attachments: [image('selection-attachment')] }],
-        inspections: [{ id: 'inspection-1', inspectionType: 'Rough', stickerFile: image('sticker'), reportFile: image('report') }],
+        inspections: [{
+          id: 'inspection-1',
+          inspectionType: 'Rough',
+          stickerFile: image('sticker'),
+          reportFile: image('report'),
+          attemptHistory: [{ status: 'failed', reportFile: image('prior-report') }],
+        }],
       };
       const tasks = [
         { id: 'task-1', projectId: 'project-1', label: 'Framing', attachments: [image('task-photo')] },
@@ -971,8 +990,9 @@ const tests = [
       ];
 
       const gallery = buildProjectPhotoGallery({ project, tasks, workflowRecords });
-      assert.equal(gallery.length, 15);
+      assert.equal(gallery.length, 16);
       assert.equal(gallery.some((photo) => photo.id === 'pdf'), false);
+      assert.equal(gallery.some((photo) => photo.id === 'archived-file-photo'), false);
       assert.equal(gallery.some((photo) => photo.id === 'other-photo'), false);
       assert.deepEqual(
         new Set(gallery.map((photo) => photo.gallerySourceType)),
@@ -991,6 +1011,7 @@ const tests = [
       );
       assert.deepEqual(groups.find((group) => group.key === 'selections').photos.map((photo) => photo.gallerySourceItem), ['Tile', 'Tile']);
       assert.deepEqual(groups.find((group) => group.key === 'commitments').photos.map((photo) => photo.gallerySourceItem), ['COM-1', 'COM-1 · Invoices']);
+      assert.equal(groups.find((group) => group.key === 'inspections').photos.at(-1).gallerySourceItem, 'Rough · Attempt 1');
     },
   },
   {
@@ -1954,8 +1975,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 8/);
-      assert.match(buildSource, /versionName "1\.7\.0"/);
+      assert.match(buildSource, /versionCode 9/);
+      assert.match(buildSource, /versionName "1\.8\.0"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
@@ -4586,6 +4607,31 @@ const tests = [
     },
   },
   {
+    name: 'project file archiving is reversible and excluded from active file workflows',
+    async run() {
+      const activeFile = { id: 'active', name: 'Current plan.pdf', type: 'application/pdf' };
+      const archivedFile = archiveProjectFile({ id: 'archived', name: 'Old plan.pdf', type: 'application/pdf' }, '2026-08-27T12:00:00.000Z');
+      const folders = [{ id: 'plans', name: 'Plans', files: [activeFile, archivedFile] }];
+
+      assert.equal(isProjectFileArchived(activeFile), false);
+      assert.equal(isProjectFileArchived(archivedFile), true);
+      assert.deepEqual(filterProjectFileFolders(folders, 'active')[0].files.map((file) => file.id), ['active']);
+      assert.deepEqual(filterProjectFileFolders(folders, 'archived')[0].files.map((file) => file.id), ['archived']);
+      assert.deepEqual(filterProjectFileFolders(folders, 'all')[0].files.map((file) => file.id), ['active', 'archived']);
+      assert.deepEqual(restoreProjectFile(archivedFile), { id: 'archived', name: 'Old plan.pdf', type: 'application/pdf' });
+      assert.deepEqual(listProjectPdfFiles({ files: { folders } }).map((file) => file.id), ['active']);
+
+      const [managerSource, migrationSource] = await Promise.all([
+        readFile(new URL('../src/components/ProjectFilesManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260827120000_add_project_file_archiving.sql', import.meta.url), 'utf8'),
+      ]);
+      assert.match(managerSource, /File archive status/);
+      assert.match(managerSource, /setProjectFileArchived/);
+      assert.match(migrationSource, /coalesce\(file_row\.data->>'archivedAt', ''\) = ''/);
+      assert.match(migrationSource, /get_project_portal_bootstrap_unfiltered_20260827/);
+    },
+  },
+  {
     name: 'Takeoff project file picker lists PDFs from the current project',
     run() {
       const project = {
@@ -4597,6 +4643,7 @@ const tests = [
               files: [
                 { id: 'pdf-by-type', name: 'Drawing', type: 'application/pdf' },
                 { id: 'pdf-by-name', originalName: 'Details.PDF', type: 'application/octet-stream' },
+                { id: 'archived-pdf', name: 'Superseded.pdf', type: 'application/pdf', archivedAt: '2026-08-27T12:00:00.000Z' },
                 { id: 'image', name: 'Elevation.jpg', type: 'image/jpeg' },
               ],
             },
@@ -4606,7 +4653,8 @@ const tests = [
 
       assert.equal(isProjectPdf(project.files.folders[0].files[0]), true);
       assert.equal(isProjectPdf(project.files.folders[0].files[1]), true);
-      assert.equal(isProjectPdf(project.files.folders[0].files[2]), false);
+      assert.equal(isProjectPdf(project.files.folders[0].files[2]), true);
+      assert.equal(isProjectPdf(project.files.folders[0].files[3]), false);
       assert.equal(projectFileDisplayName(project.files.folders[0].files[1]), 'Details.PDF');
       assert.deepEqual(listProjectPdfFiles(project).map((file) => ({ id: file.id, folderName: file.folderName })), [
         { id: 'pdf-by-type', folderName: 'Plans' },
@@ -5618,6 +5666,47 @@ const tests = [
     },
   },
   {
+    name: 'digital approvals use private expiring links and produce version-bound signed PDFs',
+    async run() {
+      const [appSource, pageSource, serviceSource, workflowSource, selectionSource, portalSource, complianceSource, migrationSource, versionLockFixSource, functionSource, configSource] = await Promise.all([
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/DigitalApprovalPage.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/digitalApprovals.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectSelectionsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectPortalManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260825180000_add_secure_digital_approvals.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260901130000_fix_digital_approval_subcontractor_version_lock.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/manage-digital-approval/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
+      ]);
+      assert.match(appSource, /digitalApprovalToken[\s\S]*<DigitalApprovalPage/);
+      assert.match(serviceSource, /#approval=/);
+      assert.match(serviceSource, /window\.history\.replaceState/);
+      assert.match(pageSource, /Email that received this request/);
+      assert.match(pageSource, /Download signed PDF/);
+      assert.match(workflowSource, /createDigitalApprovalRequest/);
+      assert.match(selectionSource, /createDigitalApprovalRequest/);
+      assert.match(portalSource, /Send secure link/);
+      assert.match(complianceSource, /Request agreement signature/);
+      assert.match(migrationSource, /token_hash text not null unique/);
+      assert.match(migrationSource, /revoke all on public\.digital_approval_requests from public, anon, authenticated/);
+      assert.match(migrationSource, /if auth\.role\(\) <> 'service_role'/);
+      assert.match(migrationSource, /version = linked_version/);
+      assert.match(migrationSource, /subcontractor_compliance_documents/);
+      assert.match(versionLockFixSource, /where id = v_source_id for update/);
+      assert.match(versionLockFixSource, /subcontractor_row\.version is distinct from p_source_version/);
+      assert.doesNotMatch(versionLockFixSource, /where id = v_source_id and version = p_source_version for update/);
+      assert.match(versionLockFixSource, /coalesce\(new\.project_id, ''\), lower\(tg_op\)/);
+      assert.match(functionSource, /crypto\.getRandomValues\(new Uint8Array\(32\)\)/);
+      assert.match(functionSource, /DIGITAL APPROVAL CERTIFICATE/);
+      assert.match(functionSource, /createSignedUrl/);
+      assert.match(functionSource, /Idempotency-Key/);
+      assert.match(configSource, /\[functions\.manage-digital-approval\][\s\S]*verify_jwt = false/);
+    },
+  },
+  {
     name: 'certificate renewals use server-authoritative history and fixed-purpose email delivery',
     async run() {
       const [migrationSource, serviceSource, componentSource, settingsSource, trackerSource, functionSource, configSource] = await Promise.all([
@@ -6007,13 +6096,16 @@ const tests = [
   {
     name: '1099 workspace keeps tax IDs masked and exposes dated payment controls',
     async run() {
-      const [reviewSource, commitmentsSource, complianceSource, importService, importParser, importMigration] = await Promise.all([
+      const [reviewSource, commitmentsSource, complianceSource, importService, importParser, importMigration, filingService, filingFunction, filingMigration] = await Promise.all([
         readFile(new URL('../src/components/Vendor1099Review.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/services/vendor1099Imports.js', import.meta.url), 'utf8'),
         readFile(new URL('../src/utils/vendor1099Spreadsheet.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260818120000_add_vendor_1099_imports.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/vendor1099Filing.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/manage-vendor-1099/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260826140000_add_vendor_1099_filing_workspace.sql', import.meta.url), 'utf8'),
       ]);
       assert.match(reviewSource, /Tax ID •••• \$\{row\.taxIdLastFour\}/);
       assert.doesNotMatch(reviewSource, /encryptedTaxId|encrypted_tax_id|fullTaxId/);
@@ -6031,6 +6123,16 @@ const tests = [
       assert.match(importMigration, /Only the tax ID last four digits are retained/);
       assert.match(importMigration, /revoke all on public\.vendor_1099_import_rows from public, anon, authenticated/);
       assert.match(complianceSource, /activeUser\?\.role === 'Admin'/);
+      assert.match(reviewSource, /Filing &amp; vendor delivery/);
+      assert.match(reviewSource, /affirmative consent/);
+      assert.match(filingService, /\/functions\/v1\/manage-vendor-1099/);
+      assert.doesNotMatch(filingService, /encryptedTaxId|encrypted_tax_id|fullTaxId/);
+      assert.match(filingFunction, /String\(appUser\?\.data\?\.role \|\| ''\) !== 'Admin'/);
+      assert.match(filingFunction, /decryptValue\(String\(identifier\.encrypted_tax_id\)/);
+      assert.match(filingFunction, /encryptValue\(taxId, `1099-form:\$\{formId\}`\)/);
+      assert.doesNotMatch(filingFunction, /return respond\([^)]*taxId[^L]/s);
+      assert.match(filingMigration, /revoke all on public\.vendor_1099_forms from public, anon, authenticated/);
+      assert.match(filingMigration, /Full tax IDs remain server-only|complete EIN is encrypted/i);
     },
   },
   {
@@ -6148,6 +6250,80 @@ const tests = [
       assert.match(migrationSource, /perform public\.sync_explicit_project_sections/);
       assert.match(migrationSource, /perform public\.sync_explicit_task_sections/);
       assert.match(migrationSource, /revoke all on function public\.create_project_from_template\(jsonb, jsonb, jsonb\) from public, anon/);
+    },
+  },
+  {
+    name: 'inspections support stable grouping and sorting across portfolio and project views',
+    async run() {
+      const inspections = [
+        { id: 'passed', inspectionType: 'Final', status: 'passed', date: '2026-09-03', projectName: 'Beta', agency: 'Township' },
+        { id: 'requested', inspectionType: 'Footing', status: 'requested', date: '2026-09-01', projectName: 'Alpha', agency: '' },
+        { id: 'scheduled', inspectionType: 'Framing', status: 'scheduled', date: '', projectName: 'Alpha', agency: 'County' },
+      ];
+
+      assert.deepEqual(sortInspections(inspections, 'date-asc').map((item) => item.id), ['requested', 'passed', 'scheduled']);
+      assert.deepEqual(sortInspections(inspections, 'date-desc').map((item) => item.id), ['passed', 'requested', 'scheduled']);
+      assert.deepEqual(sortInspections(inspections).map((item) => item.id), ['passed', 'requested', 'scheduled']);
+      assert.deepEqual(sortInspections(inspections, 'type').map((item) => item.id), ['passed', 'requested', 'scheduled']);
+      assert.deepEqual(sortInspections(inspections, 'status').map((item) => item.id), ['requested', 'scheduled', 'passed']);
+      assert.deepEqual(sortInspections(inspections, 'project').map((item) => item.id), ['requested', 'scheduled', 'passed']);
+      assert.deepEqual(sortInspections(inspections, 'agency').map((item) => item.id), ['scheduled', 'passed', 'requested']);
+      assert.deepEqual(
+        groupInspections(sortInspections(inspections, 'date-asc'), 'project').map((group) => ({
+          label: group.label,
+          ids: group.inspections.map((item) => item.id),
+        })),
+        [
+          { label: 'Alpha', ids: ['requested', 'scheduled'] },
+          { label: 'Beta', ids: ['passed'] },
+        ],
+      );
+      assert.deepEqual(groupInspections(inspections, 'status').map((group) => group.label), ['Requested', 'Scheduled', 'Passed']);
+
+      const viewSource = await readFile(new URL('../src/components/NativeInspectionsView.jsx', import.meta.url), 'utf8');
+      assert.match(viewSource, />Group by</);
+      assert.match(viewSource, />Sort by</);
+      assert.match(viewSource, /groupInspections\(inspections, groupBy\)/);
+      assert.match(viewSource, /sortInspections\(source, sortBy\)/);
+    },
+  },
+  {
+    name: 're-inspections preserve prior attempts under one inspection record',
+    run() {
+      const failedReport = { id: 'report-1', storagePath: 'project/inspection-report/report-1.pdf', originalName: 'failed.pdf' };
+      const failedSticker = { id: 'sticker-1', storagePath: 'project/inspection-sticker/sticker-1.jpg', originalName: 'sticker.jpg' };
+      const original = {
+        mode: 'edit',
+        id: 'inspection-1',
+        subcode: 'FRAME-220',
+        inspectionType: 'Framing',
+        status: 'failed',
+        date: '2026-08-20',
+        agency: 'Township',
+        notes: 'Add fire blocking.',
+        stickerFile: failedSticker,
+        reportFile: failedReport,
+        attemptHistory: [],
+      };
+      assert.equal(canAddReinspection(original), true);
+      assert.equal(canAddReinspection({ status: 'cancelled' }), true);
+      assert.equal(canAddReinspection({ status: 'passed' }), false);
+
+      const next = beginReinspectionDraft(original);
+      assert.equal(next.id, original.id);
+      assert.equal(next.status, 'requested');
+      assert.equal(next.date, '');
+      assert.equal(next.notes, '');
+      assert.equal(next.agency, 'Township');
+      assert.equal(next.reportFile, null);
+      assert.equal(next.attemptHistory.length, 1);
+      assert.equal(next.attemptHistory[0].status, 'failed');
+      assert.equal(next.attemptHistory[0].reportFile.storagePath, failedReport.storagePath);
+      assert.equal(normalizeInspectionAttemptHistory(next.attemptHistory).length, 1);
+      assert.deepEqual(
+        inspectionAttemptAttachments(next).map((file) => file.id),
+        ['sticker-1', 'report-1'],
+      );
     },
   },
 ];

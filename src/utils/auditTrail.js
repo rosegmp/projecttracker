@@ -70,8 +70,11 @@ function compareFileLists(changes, beforeFiles, afterFiles, context) {
   ids.forEach((id) => {
     const before = beforeMap.get(id);
     const after = afterMap.get(id);
-    const beforeValue = before ? { name: before.name || before.originalName || 'File', location: before.location || 'Attachments' } : null;
-    const afterValue = after ? { name: after.name || after.originalName || 'File', location: after.location || 'Attachments' } : null;
+    const beforeArchived = Boolean(before?.archivedAt || before?.archived === true);
+    const afterArchived = Boolean(after?.archivedAt || after?.archived === true);
+    const archiveChanged = Boolean(before && after && beforeArchived !== afterArchived);
+    const beforeValue = before ? { name: before.name || before.originalName || 'File', location: before.location || 'Attachments', archived: beforeArchived } : null;
+    const afterValue = after ? { name: after.name || after.originalName || 'File', location: after.location || 'Attachments', archived: afterArchived } : null;
     pushChange(changes, {
       ...context,
       category: 'files',
@@ -79,7 +82,7 @@ function compareFileLists(changes, beforeFiles, afterFiles, context) {
       entityId: id,
       entityName: afterValue?.name || beforeValue?.name || 'File',
       field: 'file',
-      label: !before ? 'File added' : !after ? 'File removed' : 'File updated',
+      label: !before ? 'File added' : !after ? 'File removed' : archiveChanged ? afterArchived ? 'File archived' : 'File restored' : 'File updated',
       before: beforeValue,
       after: afterValue,
     });

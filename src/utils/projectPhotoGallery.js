@@ -1,4 +1,5 @@
 import { isImageFile } from './fileUi.js';
+import { isProjectFileArchived } from './projectFiles.js';
 
 const WORKFLOW_LABELS = {
   dailyLogs: 'Daily Logs',
@@ -37,7 +38,9 @@ export function buildProjectPhotoGallery({ project, tasks = [], workflowRecords 
   (project?.photos || []).forEach((photo) => appendImage(gallery, photo, 'project', 'Project Photos', project?.id));
 
   (project?.files?.folders || []).forEach((folder) => {
-    (folder.files || []).forEach((file) => appendImage(gallery, file, 'files', `Files · ${folder.name || 'Folder'}`, folder.id));
+    (folder.files || [])
+      .filter((file) => !isProjectFileArchived(file))
+      .forEach((file) => appendImage(gallery, file, 'files', `Files · ${folder.name || 'Folder'}`, folder.id));
   });
 
   (project?.selections || []).forEach((selection) => {
@@ -50,6 +53,11 @@ export function buildProjectPhotoGallery({ project, tasks = [], workflowRecords 
     const source = `Inspections · ${inspection.inspectionType || inspection.subcode || 'Inspection'}`;
     appendImage(gallery, inspection.stickerFile, 'inspections', source, `${inspection.id}:sticker`);
     appendImage(gallery, inspection.reportFile, 'inspections', source, `${inspection.id}:report`);
+    (inspection.attemptHistory || []).forEach((attempt, index) => {
+      const attemptSource = `${source} · Attempt ${index + 1}`;
+      appendImage(gallery, attempt.stickerFile, 'inspections', attemptSource, `${inspection.id}:attempt-${index + 1}:sticker`);
+      appendImage(gallery, attempt.reportFile, 'inspections', attemptSource, `${inspection.id}:attempt-${index + 1}:report`);
+    });
   });
 
   (tasks || []).filter((task) => task.projectId === project?.id).forEach((task) => {

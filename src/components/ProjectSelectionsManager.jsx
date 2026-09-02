@@ -5,6 +5,7 @@ import {
   isSupabaseStorageConfigured, updateProject, updateProjectSelectionVisibility, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { createDigitalApprovalRequest } from '../services/digitalApprovals.js';
 import { sendProjectPushNotification } from '../utils/androidPushNotifications.js';
 import { formatTooltipDate } from '../utils/calendarUi.js';
 import { isImageFile } from '../utils/fileUi.js';
@@ -506,6 +507,17 @@ export default function ProjectSelectionsManager({
         setApprovalNotice('The request was saved only on this device and was not delivered to the customer.');
         return;
       }
+      let secureEmailSent = false;
+      try {
+        const delivery = await createDigitalApprovalRequest({
+          sourceType: 'portal_item',
+          sourceId: result.record.id,
+          sourceVersion: result.record.version,
+        });
+        secureEmailSent = delivery.emailStatus === 'sent';
+      } catch {
+        secureEmailSent = false;
+      }
       try {
         await sendProjectPushNotification({
           projectId: project.id,
@@ -517,9 +529,13 @@ export default function ProjectSelectionsManager({
           detailTab: 'selections',
           recipientAppUserIds,
         });
-        setApprovalNotice('Approval request sent to the assigned customer user(s).');
+        setApprovalNotice(secureEmailSent
+          ? 'Approval request sent by secure email and project notification.'
+          : 'The approval request was saved and a project notification was sent, but secure email delivery was unavailable.');
       } catch {
-        setApprovalNotice('The approval request was saved. Live notification delivery was unavailable.');
+        setApprovalNotice(secureEmailSent
+          ? 'The secure approval email was sent. Live project notification delivery was unavailable.'
+          : 'The approval request was saved. Email and live notification delivery were unavailable.');
       }
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Unable to send this selection for approval.', 'Send failed');

@@ -1964,6 +1964,104 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+.digital-approval-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--surface-alt);
+}
+
+.digital-approval-card {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 20px;
+  padding: clamp(20px, 5vw, 42px);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.digital-approval-card header h1,
+.digital-approval-card header p,
+.digital-approval-card footer,
+.digital-approval-result h2,
+.digital-approval-result p {
+  margin: 0;
+}
+
+.digital-approval-card header {
+  display: grid;
+  gap: 8px;
+}
+
+.digital-approval-details,
+.digital-approval-form,
+.digital-approval-result {
+  display: grid;
+  gap: 14px;
+}
+
+.digital-approval-details {
+  margin: 0;
+}
+
+.digital-approval-details div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) 1fr;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.digital-approval-details dt {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.digital-approval-details dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.digital-approval-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.digital-approval-form input,
+.digital-approval-form textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font: inherit;
+}
+
+.digital-approval-form > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.digital-approval-result {
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--surface-alt);
+}
+
+.digital-approval-result.approved { border-left: 4px solid var(--success); }
+.digital-approval-result.declined { border-left: 4px solid var(--danger); }
+
+@media (max-width: 600px) {
+  .digital-approval-page { padding: 0; place-items: stretch; }
+  .digital-approval-card { min-height: 100vh; border: 0; border-radius: 0; }
+  .digital-approval-details div { grid-template-columns: 1fr; gap: 4px; }
+  .digital-approval-form .button { min-height: 48px; flex: 1; }
+}
 .top-level-certificates-page { gap: 18px; }
 
 .compliance-workspace-switch { align-self: flex-start; margin-bottom: 0; }
@@ -2018,6 +2116,24 @@ a {
 .vendor-1099-warning { color: #b42318; }
 .vendor-1099-guidance { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; border-left: 3px solid var(--brand); background: var(--surface-subtle); color: var(--muted); font-size: .88rem; line-height: 1.45; }
 .vendor-1099-guidance.warning { border-left-color: #b42318; }
+.vendor-1099-filing { display: grid; gap: 14px; padding-block: 4px 18px; border-bottom: 1px solid var(--border); }
+.vendor-1099-filing-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.vendor-1099-filing-header h3,
+.vendor-1099-filing-header p { margin: 0; }
+.vendor-1099-filing-header p { margin-top: 4px; color: var(--muted); font-size: .86rem; }
+.vendor-1099-filing-actions { display: flex; gap: 8px; flex: none; }
+.vendor-1099-filing-status { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(110px, 1fr)); border-block: 1px solid var(--border); }
+.vendor-1099-filing-status > div { display: grid; gap: 3px; padding: 11px 14px; border-right: 1px solid var(--border); }
+.vendor-1099-filing-status > div:last-child { border-right: 0; }
+.vendor-1099-filing-status span { color: var(--muted); font-size: .76rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.vendor-1099-payer-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border); }
+.vendor-1099-payer-form label { display: grid; gap: 5px; color: var(--muted); font-size: .82rem; font-weight: 700; }
+.vendor-1099-payer-form .wide { grid-column: 1 / -1; }
+.vendor-1099-batches { display: grid; border-block: 1px solid var(--border); }
+.vendor-1099-batches > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.vendor-1099-batches > div:last-child { border-bottom: 0; }
+.vendor-1099-batches > div > div { display: grid; gap: 2px; }
+.vendor-1099-batches > div > div span { color: var(--muted); font-size: .8rem; }
 .vendor-1099-table-wrap { overflow: auto; max-height: min(62vh, 720px); border: 1px solid var(--border); }
 .vendor-1099-table { width: 100%; min-width: 1080px; border-collapse: collapse; font-size: .88rem; }
 .vendor-1099-table th { position: sticky; top: 0; z-index: 1; padding: 10px 12px; background: var(--surface); border-bottom: 1px solid var(--border); color: var(--muted); text-align: left; white-space: nowrap; }
@@ -2039,6 +2155,13 @@ a {
 
 @media (max-width: 900px) {
   .vendor-1099-header { display: grid; }
+  .vendor-1099-filing-header { display: grid; }
+  .vendor-1099-filing-actions { flex-wrap: wrap; }
+  .vendor-1099-filing-status { grid-template-columns: 1fr; }
+  .vendor-1099-filing-status > div { border-right: 0; border-bottom: 1px solid var(--border); }
+  .vendor-1099-filing-status > div:last-child { border-bottom: 0; }
+  .vendor-1099-payer-form { grid-template-columns: 1fr; }
+  .vendor-1099-payer-form .wide { grid-column: auto; }
   .vendor-1099-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vendor-1099-summary > div:nth-child(2) { border-right: 0; }
   .vendor-payment-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -4343,6 +4466,10 @@ button.calendar-chip {
   flex-wrap: wrap;
 }
 
+.files-archive-filter {
+  flex-shrink: 0;
+}
+
 .project-upload-drop-zone {
   display: flex;
   align-items: center;
@@ -5455,6 +5582,12 @@ button.calendar-chip {
   opacity: 0.7;
 }
 
+.files-list-row.is-archived,
+.files-hierarchy-file-row.is-archived {
+  background: rgba(78, 89, 110, 0.055);
+  color: var(--muted);
+}
+
 .files-folder-card.is-upload-target,
 .files-hierarchy-folder.is-upload-target {
   box-shadow: none;
@@ -5595,6 +5728,59 @@ button.calendar-chip {
   gap: 12px;
 }
 
+.inspection-view-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.inspection-view-controls {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inspection-view-controls .task-filter {
+  min-width: min(220px, 100%);
+}
+
+.inspection-groups,
+.inspection-group {
+  display: grid;
+  gap: 14px;
+}
+
+.inspection-group + .inspection-group {
+  padding-top: 4px;
+}
+
+.inspection-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspection-group-header h3,
+.inspection-group-header span {
+  margin: 0;
+}
+
+.inspection-group-header h3 {
+  font-size: 15px;
+}
+
+.inspection-group-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .inspection-card {
   display: grid;
   gap: 10px;
@@ -5614,6 +5800,11 @@ button.calendar-chip {
 .inspection-card.inspection-follow-up {
   border-color: rgba(176, 59, 59, 0.24);
   background: linear-gradient(180deg, rgba(176, 59, 59, 0.05), #fff);
+}
+
+.inspection-card.inspection-cancelled {
+  border-color: rgba(100, 108, 125, 0.28);
+  background: linear-gradient(180deg, rgba(100, 108, 125, 0.06), #fff);
 }
 
 .inspection-card-header {
@@ -5746,6 +5937,47 @@ button.calendar-chip {
 
 .inspection-form-span {
   grid-column: 1 / -1;
+}
+
+.inspection-attempt-history {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-alt);
+}
+
+.inspection-attempt-history h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.inspection-attempt-row {
+  display: grid;
+  gap: 3px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(61, 66, 120, 0.12);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inspection-attempt-row p {
+  margin: 2px 0 0;
+  color: var(--text);
+}
+
+.inspection-card-history {
+  border-top: 1px solid rgba(61, 66, 120, 0.12);
+  padding-top: 10px;
+}
+
+.inspection-card-history summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .inspection-image-editor-modal {
@@ -10543,6 +10775,20 @@ textarea:focus-visible {
   .workspace-brand,
   .workspace-scope-bar {
     align-items: start;
+  }
+
+  .inspection-view-toolbar,
+  .inspection-view-controls {
+    align-items: stretch;
+  }
+
+  .inspection-view-controls {
+    width: 100%;
+  }
+
+  .inspection-view-controls .task-filter {
+    flex: 1 1 170px;
+    min-width: 0;
   }
 
   .workspace-brand {

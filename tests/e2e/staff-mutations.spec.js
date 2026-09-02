@@ -259,6 +259,63 @@ test('task deep link opens the authorized project task and highlights it', async
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
 
+test('failed inspection can add a re-inspection without creating a second inspection', async ({ page }) => {
+  const appUserId = 'reinspection-admin';
+  const projectId = 'reinspection-project';
+  const inspectionId = 'reinspection-record';
+  let savedInspection = null;
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'reinspection-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000078',
+    projects: [projectRow(projectId, appUserId)],
+    inspectionRows: [{
+      project_id: projectId,
+      id: inspectionId,
+      position: 0,
+      data: {
+        subcode: 'FRAME-220',
+        inspectionType: 'Framing inspection',
+        status: 'failed',
+        date: '2026-08-20',
+        agency: 'Township',
+        notes: 'Add fire blocking.',
+      },
+      version: 1,
+    }],
+    handleRpc: async ({ request, url }) => {
+      if (!url.pathname.endsWith('/rpc/save_project_inspection')) return null;
+      savedInspection = request.postDataJSON()?.p_inspection || null;
+      return { status: 200, body: { inspectionVersion: 2, fileVersions: {} } };
+    },
+  });
+
+  await page.goto(`/?tab=projects&project=${projectId}&projectTab=inspections`);
+  const card = page.locator('article.inspection-card').filter({ hasText: 'FRAME-220' });
+  await expect(card).toHaveCount(1);
+  await card.getByRole('button', { name: 'Edit FRAME-220' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit inspection' });
+  await dialog.getByRole('button', { name: 'Add re-inspection' }).click();
+  await expect(dialog.getByText('Attempt 2', { exact: false })).toBeVisible();
+  await dialog.getByLabel('Status').selectOption('scheduled');
+  await dialog.getByLabel('Date').fill('2026-08-28');
+  await dialog.getByRole('button', { name: 'Save inspection' }).click();
+
+  await expect.poll(() => savedInspection).not.toBeNull();
+  expect(savedInspection.id).toBe(inspectionId);
+  expect(savedInspection.status).toBe('scheduled');
+  expect(savedInspection.date).toBe('2026-08-28');
+  expect(savedInspection.attemptHistory).toHaveLength(1);
+  expect(savedInspection.attemptHistory[0]).toMatchObject({
+    status: 'failed',
+    date: '2026-08-20',
+    notes: 'Add fire blocking.',
+  });
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText('1 previous attempt')).toBeVisible();
+});
+
 test('projectless task deep link opens the top-level task and highlights it', async ({ page }) => {
   const appUserId = 'general-task-link-admin';
   const taskId = 'general-task-link-task';
