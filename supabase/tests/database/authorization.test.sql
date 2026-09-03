@@ -24,6 +24,8 @@ insert into public.project_files (project_id, folder_id, id, position, data) val
   ('auth-project-a', 'shared-files', 'active-portal-file', 0, '{"name":"Current plan.pdf","storagePath":"projects/auth-project-a/files/current-plan.pdf"}'),
   ('auth-project-a', 'shared-files', 'archived-portal-file', 1, '{"name":"Old plan.pdf","storagePath":"projects/auth-project-a/files/old-plan.pdf","archivedAt":"2026-08-27T12:00:00.000Z"}');
 
+insert into storage.buckets (id, name, public) values ('project-files', 'project-files', false)
+on conflict (id) do nothing;
 insert into storage.objects (bucket_id, name) values
   ('project-files', 'projects/auth-project-a/photos/photo-editor-12345678-editor.jpg'),
   ('project-files', 'projects/auth-project-b/photos/photo-blocked-12345678-blocked.jpg'),
