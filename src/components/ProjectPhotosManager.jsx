@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { addCustomerProjectPhotos, deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
+import { addProjectPhotos, deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured, queueProjectPhotoUpload, updateProject, uploadProjectFileToStorage } from '../services/trackerData.js';
+import { getOfflineAttachment } from '../services/offlineAttachmentStore.js';
+import { isOfflineNetworkError } from '../services/offlineOperations.js';
 import { formatFileSize, isImageFile } from '../utils/fileUi.js';
 import { isNativeAndroidApp, openPreview } from '../platform/platformAdapter.js';
 import { downloadFileWithUi } from '../utils/downloadUi.js';
@@ -79,7 +81,7 @@ export default function ProjectPhotosManager({
   useEffect(() => {
     const keepIds = new Set();
     photos.forEach((photo) => {
-      if (photo?.storagePath && isImageFile(photo)) {
+      if ((photo?.storagePath || photo?._offlineAttachmentId) && isImageFile(photo)) {
         keepIds.add(photo.galleryKey);
       }
     });
@@ -101,9 +103,12 @@ export default function ProjectPhotosManager({
 
     async function loadPreviews() {
       for (const photo of photos) {
-        if (!photo?.storagePath || !isImageFile(photo) || previewUrls[photo.galleryKey]) continue;
+        if ((!photo?.storagePath && !photo?._offlineAttachmentId) || !isImageFile(photo) || previewUrls[photo.galleryKey]) continue;
         try {
-          const blob = await downloadProjectFileFromStorage(photo);
+          const blob = photo._offlineAttachmentId
+            ? (await getOfflineAttachment(photo._offlineAttachmentId))?.file
+            : await downloadProjectFileFromStorage(photo);
+          if (!(blob instanceof Blob)) continue;
           const url = URL.createObjectURL(blob);
           if (cancelled) {
             URL.revokeObjectURL(url);
@@ -177,43 +182,34 @@ export default function ProjectPhotosManager({
     const mutationKey = ['project', project.id, 'photos-upload'];
     beginMutation(mutationKey);
     try {
-      const uploadResults = await Promise.all(files.map(async (file) => {
-        if (!readOnly) return createProjectPhotoRecord(file);
-        const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        return {
-          photoRecord: {
-            id: photoId,
-            name: file.name,
-            originalName: file.name,
-            size: file.size,
-            type: file.type,
-            uploadedAt: new Date().toISOString(),
-            ...(await uploadProjectFileToStorage(project.id, 'photos', photoId, file, { upsert: false })),
-            dataUrl: '',
-          },
-        };
-      }));
-      const uploads = uploadResults.map((result) => result.photoRecord);
-      setStorageNotice('');
-
-      const currentProject = data.projects.find((item) => item.id === project.id);
-      if (!currentProject) return;
-      if (readOnly) {
-        const savedPhotos = await addCustomerProjectPhotos(project.id, uploads);
-        const nextState = {
-          ...data,
-          projects: data.projects.map((item) => item.id === project.id
-            ? { ...item, photos: [...(item.photos || []), ...savedPhotos] }
-            : item),
-        };
-        onStateChange(nextState);
-        return;
+      const addedPhotos = [];
+      for (const file of files) {
+        let uploadedPhoto = null;
+        try {
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            addedPhotos.push(await queueProjectPhotoUpload(project.id, file));
+            continue;
+          }
+          uploadedPhoto = (await createProjectPhotoRecord(file)).photoRecord;
+          const savedPhotos = await addProjectPhotos(project.id, [uploadedPhoto]);
+          addedPhotos.push(...savedPhotos);
+        } catch (error) {
+          if (!isOfflineNetworkError(error)) throw error;
+          addedPhotos.push(await queueProjectPhotoUpload(project.id, file, uploadedPhoto));
+        }
       }
-      const nextProject = {
-        ...currentProject,
-        photos: [...(currentProject.photos || []), ...uploads],
+      const queuedCount = addedPhotos.filter((photo) => photo._offlineStatus).length;
+      setStorageNotice(queuedCount
+        ? `${queuedCount} photo${queuedCount === 1 ? '' : 's'} saved on this device and will upload automatically after reconnecting.`
+        : '');
+      const currentState = dataRef.current;
+      const nextState = {
+        ...currentState,
+        projects: currentState.projects.map((item) => item.id === project.id
+          ? { ...item, photos: [...(item.photos || []), ...addedPhotos] }
+          : item),
       };
-      const nextState = await updateProject(data, project.id, nextProject);
+      dataRef.current = nextState;
       onStateChange(nextState);
     } catch (error) {
       await showAppAlert(error instanceof Error ? error.message : 'Failed to upload photo.', 'Upload failed');
@@ -441,7 +437,9 @@ export default function ProjectPhotosManager({
     void (async () => {
       try {
         let previewSource = '';
-        if (photo?.storagePath && photo?.storageBucket) {
+        if (photo?._offlineAttachmentId) {
+          previewSource = (await getOfflineAttachment(photo._offlineAttachmentId))?.file || '';
+        } else if (photo?.storagePath && photo?.storageBucket) {
           previewSource = await downloadProjectFileFromStorage(photo);
         } else if (photo?.dataUrl) {
           previewSource = photo.dataUrl;
@@ -528,6 +526,7 @@ export default function ProjectPhotosManager({
           {group.photos.map((photo) => {
             const isProjectPhoto = photo.gallerySourceType === 'project';
             const isMainPhoto = isProjectPhoto && photo.id === mainPhotoId;
+            const isQueuedPhoto = Boolean(photo._offlineStatus);
             return (
             <article key={photo.galleryKey} className={`photo-card${isMainPhoto ? ' is-main-photo' : ''}`}>
               <button className="photo-thumb-button" type="button" onClick={() => void openPhoto(photo)}>
@@ -578,7 +577,12 @@ export default function ProjectPhotosManager({
                   {photo.size ? `${formatFileSize(photo.size)}` : ''}
                   {photo.uploadedAt ? ` • ${new Date(photo.uploadedAt).toLocaleDateString('en-US')}` : ''}
                 </small>
-                {isProjectPhoto && !readOnly ? <div className="files-list-actions photo-actions">
+                {isQueuedPhoto ? <span className={`status-pill ${photo._offlineStatus === 'needs-attention' ? 'danger' : 'warning'}`}>
+                  {photo._offlineStatus === 'syncing' ? 'Uploading…' : photo._offlineStatus === 'needs-attention' ? 'Needs attention' : 'Saved on device'}
+                </span> : null}
+                {isQueuedPhoto ? <div className="files-list-actions photo-actions">
+                  <button className="button secondary gantt-icon-button" type="button" onClick={() => void openPhoto(photo)} title="Open saved photo" aria-label={`Open ${getDisplayPhotoName(photo)}`}><FluentIcon name="eye" /></button>
+                </div> : isProjectPhoto && !readOnly ? <div className="files-list-actions photo-actions">
                   <input
                     ref={(node) => {
                       if (node) replacePhotoInputRefs.current[photo.id] = node;

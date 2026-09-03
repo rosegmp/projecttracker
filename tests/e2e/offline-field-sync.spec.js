@@ -38,6 +38,7 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   const access = { project_id: projectId, user_id: appUserId, position: 0, version: 1 };
   let savedDailyLog = null;
   let savedInspectionPayload = null;
+  const savedProjectPhotos = [];
   const uploadedStoragePaths = [];
 
   await page.addInitScript((session) => {
@@ -105,6 +106,14 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
       return;
     }
     if (url.pathname.includes('/rpc/')) {
+      if (url.pathname.endsWith('/rpc/add_project_photos')) {
+        const photos = request.postDataJSON()?.p_photos || [];
+        photos.forEach((photo) => {
+          if (!savedProjectPhotos.some((existing) => existing.id === photo.id)) savedProjectPhotos.push(photo);
+        });
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(photos) });
+        return;
+      }
       if (url.pathname.endsWith('/rpc/save_project_inspection')) {
         savedInspectionPayload = request.postDataJSON();
         await route.fulfill({
@@ -122,6 +131,9 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
     else if (url.pathname.endsWith('/app_users')) body = [appUser];
     else if (url.pathname.endsWith('/project_user_access')) body = [access];
     else if (url.pathname.endsWith('/project_core_records') || url.pathname.endsWith('/projects')) body = [project];
+    else if (url.pathname.endsWith('/project_photos')) body = savedProjectPhotos.map((photo, position) => ({
+      project_id: projectId, id: photo.id, position, data: photo, version: 1,
+    }));
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.route(`${SUPABASE_ORIGIN}/storage/v1/object/**`, async (route) => {
@@ -241,6 +253,46 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await expect.poll(() => uploadedStoragePaths.length).toBe(2);
   expect(savedInspectionPayload.p_inspection.stickerFile.storagePath).toContain('inspection-sticker');
   expect(savedInspectionPayload.p_inspection.reportFile.storagePath).toContain('inspection-report');
+  await expect(page.getByText('Saved on device')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(0);
+
+  uploadedStoragePaths.length = 0;
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByLabel('More project sections', { exact: true })
+    .getByRole('button', { name: 'Photos', exact: true }).click();
+  await context.setOffline(true);
+  await page.locator('.project-photos-manager input[type="file"][multiple]').setInputFiles({
+    name: 'offline-site-photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('offline-project-photo-content'),
+  });
+  await expect(page.getByText('offline-site-photo.jpg')).toBeVisible();
+  await expect(page.getByText('Saved on device').first()).toBeVisible();
+  expect(uploadedStoragePaths).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('project-tracker-offline', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('attachments', 'readonly');
+      const count = transaction.objectStore('attachments').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    };
+  }))).toBe(1);
+
+  await context.setOffline(false);
+  await expect.poll(() => savedProjectPhotos.length, { timeout: 20_000 }).toBe(1);
+  await expect.poll(() => uploadedStoragePaths.length).toBe(1);
+  expect(savedProjectPhotos[0].storagePath).toContain('/photos/');
   await expect(page.getByText('Saved on device')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
     const request = indexedDB.open('project-tracker-offline', 1);

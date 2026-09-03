@@ -1,6 +1,6 @@
 begin;
 
-select plan(115);
+select plan(135);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
@@ -23,6 +23,13 @@ insert into public.project_file_folders (project_id, id, position, data) values
 insert into public.project_files (project_id, folder_id, id, position, data) values
   ('auth-project-a', 'shared-files', 'active-portal-file', 0, '{"name":"Current plan.pdf","storagePath":"projects/auth-project-a/files/current-plan.pdf"}'),
   ('auth-project-a', 'shared-files', 'archived-portal-file', 1, '{"name":"Old plan.pdf","storagePath":"projects/auth-project-a/files/old-plan.pdf","archivedAt":"2026-08-27T12:00:00.000Z"}');
+
+insert into storage.buckets (id, name, public) values ('project-files', 'project-files', false)
+on conflict (id) do nothing;
+insert into storage.objects (bucket_id, name) values
+  ('project-files', 'projects/auth-project-a/photos/photo-editor-12345678-editor.jpg'),
+  ('project-files', 'projects/auth-project-b/photos/photo-blocked-12345678-blocked.jpg'),
+  ('project-files', 'projects/auth-project-a/photos/photo-customer-12345678-customer.jpg');
 
 insert into public.tasks (id, data) values
   ('auth-task-a', '{"name":"Authorized task","projectId":"auth-project-a"}'),
@@ -150,6 +157,34 @@ select results_eq(
 );
 select ok(public.app_user_can_edit_project('auth-project-a'), 'editors can edit assigned projects');
 select ok(not public.app_user_can_edit_project('auth-project-b'), 'editors cannot edit unassigned projects');
+select lives_ok(
+  $$select public.add_project_photos(
+    'auth-project-a',
+    '[{"id":"photo-editor-12345678","name":"Editor.jpg","originalName":"Editor.jpg","size":1024,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-a/photos/photo-editor-12345678-editor.jpg"}]'::jsonb
+  )$$,
+  'assigned editors can append a project photo through the focused RPC'
+);
+select lives_ok(
+  $$select public.add_project_photos(
+    'auth-project-a',
+    '[{"id":"photo-editor-12345678","name":"Editor.jpg","originalName":"Editor.jpg","size":1024,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-a/photos/photo-editor-12345678-editor.jpg"}]'::jsonb
+  )$$,
+  'replaying an offline photo append is idempotent'
+);
+select results_eq(
+  $$select count(*)::bigint from public.project_photos where project_id = 'auth-project-a' and id = 'photo-editor-12345678'$$,
+  array[1::bigint],
+  'an idempotent photo replay does not create a duplicate'
+);
+select throws_ok(
+  $$select public.add_project_photos(
+    'auth-project-b',
+    '[{"id":"photo-blocked-12345678","name":"Blocked.jpg","originalName":"Blocked.jpg","size":1024,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-b/photos/photo-blocked-12345678-blocked.jpg"}]'::jsonb
+  )$$,
+  '42501',
+  'You do not have permission to add photos to this project.',
+  'editors cannot append photos to an unassigned project'
+);
 select lives_ok(
   $$select public.create_project_from_template(
     '{"id":"template-project-editor","name":"Template Editor","accessUserIds":["test-editor"],"phases":[],"files":{"folders":[]},"inspections":[]}'::jsonb,
@@ -310,6 +345,15 @@ select results_eq(
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000003","email":"viewer@test.local","role":"authenticated"}';
 select ok(not public.app_user_can_edit(), 'view-only users do not receive edit capability');
 select throws_ok(
+  $$select public.add_project_photos(
+    'auth-project-a',
+    '[{"id":"photo-viewer-12345678","name":"Viewer.jpg","originalName":"Viewer.jpg","size":1024,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-a/photos/photo-viewer-12345678-viewer.jpg"}]'::jsonb
+  )$$,
+  '42501',
+  'You do not have permission to add photos to this project.',
+  'view-only users cannot append project photos'
+);
+select throws_ok(
   $$select public.create_project_from_template(
     '{"id":"template-project-viewer","name":"Template Viewer"}'::jsonb,
     '[]'::jsonb,
@@ -378,6 +422,22 @@ select throws_ok(
 );
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000004","email":"customer@test.local","role":"authenticated"}';
+select lives_ok(
+  $$select public.add_project_photos(
+    'auth-project-a',
+    '[{"id":"photo-customer-12345678","name":"Customer.jpg","originalName":"Customer.jpg","size":2048,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-a/photos/photo-customer-12345678-customer.jpg"}]'::jsonb
+  )$$,
+  'assigned customers can append a project photo through the focused RPC'
+);
+select throws_ok(
+  $$select public.add_project_photos(
+    'auth-project-b',
+    '[{"id":"photo-blocked-12345678","name":"Blocked.jpg","originalName":"Blocked.jpg","size":1024,"type":"image/jpeg","uploadedAt":"2026-09-02T12:00:00.000Z","storageProvider":"supabase","storageBucket":"project-files","storagePath":"projects/auth-project-b/photos/photo-blocked-12345678-blocked.jpg"}]'::jsonb
+  )$$,
+  '42501',
+  'You do not have permission to add photos to this project.',
+  'customers cannot append photos to an unassigned project'
+);
 select results_eq(
   'select count(*)::bigint from public.projects',
   array[0::bigint],
@@ -650,6 +710,11 @@ select ok(
   'anonymous clients cannot invoke project template creation'
 );
 select ok(
+  has_function_privilege('authenticated', 'public.add_project_photos(text,jsonb)', 'EXECUTE')
+    and not has_function_privilege('anon', 'public.add_project_photos(text,jsonb)', 'EXECUTE'),
+  'only authenticated application users can invoke the role-guarded project photo RPC'
+);
+select ok(
   has_table_privilege('authenticated', 'public.vendor_1099_import_rows', 'SELECT'),
   'authenticated administrators receive RLS-scoped read access to imported 1099 rows'
 );
@@ -674,6 +739,68 @@ select ok(
     and has_table_privilege('service_role', 'public.vendor_1099_filing_batches', 'SELECT, INSERT, UPDATE, DELETE')
     and has_table_privilege('service_role', 'public.vendor_1099_forms', 'SELECT, INSERT, UPDATE, DELETE'),
   'only the service workflow can manage encrypted 1099 filing records'
+);
+
+select results_eq(
+  $$select public from storage.buckets where id = 'vendor-tax-documents'$$,
+  array[false],
+  'vendor tax-document storage is private'
+);
+
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'Application users cannot % vendor tax documents'),
+  4,
+  'vendor tax-document storage has restrictive authenticated policies for every write and read operation'
+);
+
+select ok(
+  not has_table_privilege('anon', 'public.management_reporting_snapshots', 'SELECT')
+    and not has_table_privilege('anon', 'public.management_reporting_subcontractor_snapshots', 'SELECT'),
+  'anonymous users cannot read management reporting snapshots'
+);
+select ok(
+  has_table_privilege('authenticated', 'public.management_reporting_snapshots', 'SELECT')
+    and has_table_privilege('authenticated', 'public.management_reporting_subcontractor_snapshots', 'SELECT')
+    and has_table_privilege('service_role', 'public.management_reporting_snapshots', 'SELECT')
+    and has_table_privilege('service_role', 'public.management_reporting_subcontractor_snapshots', 'SELECT'),
+  'administrator RLS reads and scheduled service reads have the required reporting snapshot grants'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.management_reporting_snapshots', 'INSERT, UPDATE, DELETE')
+    and not has_table_privilege('authenticated', 'public.management_reporting_subcontractor_snapshots', 'INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot write reporting snapshot tables directly'
+);
+select ok(
+  not has_function_privilege('anon', 'public.capture_management_reporting_snapshot(date)', 'EXECUTE'),
+  'anonymous users cannot capture management reporting snapshots'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.capture_management_reporting_snapshot(date)', 'EXECUTE'),
+  'authenticated administrators can invoke the guarded reporting snapshot RPC'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename in ('management_reporting_snapshots', 'management_reporting_subcontractor_snapshots') and qual like '%current_app_user_role%Admin%'),
+  2,
+  'both reporting snapshot tables enforce administrator-only read policies'
+);
+select ok(
+  not has_table_privilege('anon', 'public.management_report_deliveries', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.management_report_deliveries', 'SELECT'),
+  'scheduled management-report delivery records are hidden from browser clients'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.management_report_deliveries', 'INSERT, UPDATE, DELETE'),
+  'authenticated clients cannot alter scheduled management-report delivery records'
+);
+select ok(
+  not has_function_privilege('anon', 'public.claim_management_report_delivery(date,text,text)', 'EXECUTE')
+    and not has_function_privilege('authenticated', 'public.claim_management_report_delivery(date,text,text)', 'EXECUTE'),
+  'browser clients cannot claim scheduled management-report deliveries'
+);
+select ok(
+  has_table_privilege('service_role', 'public.management_report_deliveries', 'SELECT, INSERT, UPDATE')
+    and has_function_privilege('service_role', 'public.claim_management_report_delivery(date,text,text)', 'EXECUTE'),
+  'the service workflow alone can checkpoint scheduled management-report delivery'
 );
 
 set local role service_role;

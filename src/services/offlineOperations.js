@@ -37,7 +37,7 @@ export function createOfflineOperationId() {
 
 export function isOfflineNetworkError(error) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
-  return /offline|network connection was lost|network request failed|failed to fetch|load failed|timed out|unable to connect securely|trust anchor|certificate path/i
+  return /offline|network connection was lost|network request failed|failed to fetch|load failed|timed out|unable to connect securely|unable to restore your session right now|trust anchor|certificate path/i
     .test(String(error?.message || error || ''));
 }
 
@@ -197,6 +197,39 @@ export function applyQueuedInspectionOperations(state, operations) {
         });
       });
       return { ...project, inspections: [...inspections.values()] };
+    }),
+  };
+}
+
+export function applyQueuedProjectPhotoOperations(state, operations) {
+  if (!state?.projects || !Array.isArray(operations) || !operations.length) return state;
+  const byProject = new Map();
+  operations
+    .filter((operation) => operation.kind === 'project-photo.upload')
+    .forEach((operation) => {
+      if (!byProject.has(operation.projectId)) byProject.set(operation.projectId, []);
+      byProject.get(operation.projectId).push(operation);
+    });
+  if (!byProject.size) return state;
+  return {
+    ...state,
+    projects: state.projects.map((project) => {
+      const queued = byProject.get(String(project.id));
+      if (!queued?.length) return project;
+      const photos = new Map((project.photos || []).map((photo) => [String(photo.id), photo]));
+      queued.forEach((operation) => {
+        const currentRecord = photos.get(operation.entityId) || null;
+        const serverRecord = currentRecord?._offlineServerRecord || currentRecord;
+        photos.set(operation.entityId, {
+          ...(serverRecord || {}),
+          ...operation.payload,
+          _offlineStatus: operation.status,
+          _offlineQueuedAt: operation.queuedAt,
+          _offlineOperationId: operation.id,
+          _offlineServerRecord: serverRecord,
+        });
+      });
+      return { ...project, photos: [...photos.values()] };
     }),
   };
 }

@@ -156,6 +156,48 @@ function ComplianceScheduledReminderSettings({ enabled, saving, status, onToggle
   );
 }
 
+function ManagementReportScheduleSettings({ enabled, schedule, saving, status, onChange }) {
+  return (
+    <section className="settings-card management-report-schedule-settings">
+      <div className="settings-card-header">
+        <div>
+          <h3>Scheduled management reports</h3>
+          <p>Capture a dated reporting snapshot and email the portfolio summary to every administrator.</p>
+        </div>
+      </div>
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => void onChange({ enabled: event.target.checked, schedule })}
+          disabled={saving}
+        />
+        <span>
+          <strong>Send scheduled management reports</strong>
+          <small>This is off by default. Only administrator accounts with valid email addresses receive the report.</small>
+        </span>
+      </label>
+      <label>
+        <span>Report frequency</span>
+        <select
+          value={schedule}
+          onChange={(event) => void onChange({ enabled, schedule: event.target.value })}
+          disabled={saving || !enabled}
+        >
+          <option value="weekly">Weekly on Monday</option>
+          <option value="monthly">Monthly on the first day</option>
+        </select>
+      </label>
+      <p className="panel-copy">Each due run refreshes that day’s snapshot before delivery. Repeated runs do not resend a report already delivered to the same administrator.</p>
+      {status?.message ? (
+        <p className={status.tone === 'error' ? 'form-error' : 'panel-copy'} role="status">
+          {status.message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function getNthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
   const firstDay = new Date(year, monthIndex, 1);
   const offset = (weekday - firstDay.getDay() + 7) % 7;
@@ -334,6 +376,9 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const [complianceEmailTestStatus, setComplianceEmailTestStatus] = useState({ tone: '', message: '' });
   const [complianceScheduledRemindersDraft, setComplianceScheduledRemindersDraft] = useState(data.settings?.complianceScheduledRemindersEnabled === true);
   const [complianceScheduledRemindersStatus, setComplianceScheduledRemindersStatus] = useState({ tone: '', message: '' });
+  const [managementReportsEnabledDraft, setManagementReportsEnabledDraft] = useState(data.settings?.managementReportsScheduledEnabled === true);
+  const [managementReportsScheduleDraft, setManagementReportsScheduleDraft] = useState(data.settings?.managementReportsSchedule === 'monthly' ? 'monthly' : 'weekly');
+  const [managementReportsScheduleStatus, setManagementReportsScheduleStatus] = useState({ tone: '', message: '' });
   const [notificationPermission, setNotificationPermission] = useState('');
   const [notificationDraft, setNotificationDraft] = useState(() => getAndroidNotificationPreferences(activeUser?.id));
   const [authInviteStatus, setAuthInviteStatus] = useState({});
@@ -380,6 +425,8 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         emailNewTasksToExternalAssignees: data.settings?.emailNewTasksToExternalAssignees === true,
         complianceEmailTestMode: data.settings?.complianceEmailTestMode === true,
         complianceScheduledRemindersEnabled: data.settings?.complianceScheduledRemindersEnabled === true,
+        managementReportsScheduledEnabled: data.settings?.managementReportsScheduledEnabled === true,
+        managementReportsSchedule: data.settings?.managementReportsSchedule === 'monthly' ? 'monthly' : 'weekly',
         visibleTopLevelTabs: normalizeVisibleTopLevelTabs(data.settings?.visibleTopLevelTabs),
         visibleProjectTabs: normalizeVisibleProjectTabs(data.settings?.visibleProjectTabs),
         inspectionSubcodes: Array.isArray(data.settings?.inspectionSubcodes)
@@ -495,6 +542,11 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   useEffect(() => {
     setComplianceScheduledRemindersDraft(data.settings?.complianceScheduledRemindersEnabled === true);
   }, [data.settings?.complianceScheduledRemindersEnabled]);
+
+  useEffect(() => {
+    setManagementReportsEnabledDraft(data.settings?.managementReportsScheduledEnabled === true);
+    setManagementReportsScheduleDraft(data.settings?.managementReportsSchedule === 'monthly' ? 'monthly' : 'weekly');
+  }, [data.settings?.managementReportsScheduledEnabled, data.settings?.managementReportsSchedule]);
 
   useEffect(() => {
     setHolidayDrafts((settings.holidays || []).map(normalizeHolidayEntry));
@@ -746,6 +798,35 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
       setComplianceScheduledRemindersStatus({
         tone: 'error',
         message: error instanceof Error ? error.message : 'Unable to save the scheduled reminder preference.',
+      });
+    }
+  }
+
+  async function handleManagementReportScheduleChange({ enabled, schedule }) {
+    const normalizedSchedule = schedule === 'monthly' ? 'monthly' : 'weekly';
+    setManagementReportsEnabledDraft(enabled);
+    setManagementReportsScheduleDraft(normalizedSchedule);
+    setManagementReportsScheduleStatus({ tone: '', message: 'Saving management report schedule…' });
+    try {
+      await runSettingsMutation(
+        {
+          managementReportsScheduledEnabled: enabled,
+          managementReportsSchedule: normalizedSchedule,
+        },
+        ['settings', 'managementReportsSchedule'],
+      );
+      setManagementReportsScheduleStatus({
+        tone: 'success',
+        message: enabled
+          ? `${normalizedSchedule === 'monthly' ? 'Monthly' : 'Weekly'} management reports enabled.`
+          : 'Scheduled management reports disabled.',
+      });
+    } catch (error) {
+      setManagementReportsEnabledDraft(settingsStateRef.current.settings?.managementReportsScheduledEnabled === true);
+      setManagementReportsScheduleDraft(settingsStateRef.current.settings?.managementReportsSchedule === 'monthly' ? 'monthly' : 'weekly');
+      setManagementReportsScheduleStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to save the management report schedule.',
       });
     }
   }
@@ -1328,6 +1409,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   const externalTaskEmailSaving = isMutating(['settings', 'taskAssignmentEmail', 'emailNewTasksToExternalAssignees']);
   const complianceEmailTestSaving = isMutating(['settings', 'complianceEmailTestMode']);
   const complianceScheduledRemindersSaving = isMutating(['settings', 'complianceScheduledRemindersEnabled']);
+  const managementReportsScheduleSaving = isMutating(['settings', 'managementReportsSchedule']);
   const projectTemplatesSaving = isMutating(['settings', 'projectTemplates']);
   const isSubcodeSaving = (draftId) => isMutating(['settings', 'subcode', draftId]);
   const isHolidaySaving = (holidayId) => holidaysSaving || isMutating(['settings', 'holiday', holidayId]);
@@ -1802,6 +1884,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 status={complianceScheduledRemindersStatus}
                 onToggle={handleComplianceScheduledRemindersToggle}
               />
+              <ManagementReportScheduleSettings
+                enabled={managementReportsEnabledDraft}
+                schedule={managementReportsScheduleDraft}
+                saving={managementReportsScheduleSaving}
+                status={managementReportsScheduleStatus}
+                onChange={handleManagementReportScheduleChange}
+              />
               <ComplianceEmailTestSettings
                 enabled={complianceEmailTestDraft}
                 saving={complianceEmailTestSaving}
@@ -1930,6 +2019,13 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
                 saving={complianceScheduledRemindersSaving}
                 status={complianceScheduledRemindersStatus}
                 onToggle={handleComplianceScheduledRemindersToggle}
+              />
+              <ManagementReportScheduleSettings
+                enabled={managementReportsEnabledDraft}
+                schedule={managementReportsScheduleDraft}
+                saving={managementReportsScheduleSaving}
+                status={managementReportsScheduleStatus}
+                onChange={handleManagementReportScheduleChange}
               />
               <ComplianceEmailTestSettings
                 enabled={complianceEmailTestDraft}

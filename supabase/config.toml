@@ -19,4 +19,7 @@ verify_jwt = false
 static_files = [ "./functions/manage-digital-approval/attachments/*.pdf" ]
 
 [functions.manage-vendor-1099]
-verify_jwt = true
+verify_jwt = false
+
+[functions.send-management-report]
+verify_jwt = false

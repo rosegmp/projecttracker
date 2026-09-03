@@ -92,6 +92,15 @@ function normalizeAuthTransportError(error, label) {
   return error;
 }
 
+export function isDefinitiveRefreshTokenError(errorText) {
+  const normalized = String(errorText || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /refresh token not found|invalid refresh token|refresh token (?:is |has )?(?:expired|revoked)|refresh token (?:has )?already (?:been )?used|refresh token reuse detected/.test(normalized);
+}
+
 async function fetchAuthWithTimeout(url, options = {}, label = 'Sign-in service', timeoutMs = 12000) {
   const controller = new AbortController();
   const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
@@ -124,6 +133,8 @@ const EMPTY_SETTINGS = {
   emailNewTasksToExternalAssignees: false,
   complianceEmailTestMode: false,
   complianceScheduledRemindersEnabled: false,
+  managementReportsScheduledEnabled: false,
+  managementReportsSchedule: 'weekly',
   users: [
     {
       id: 'user-admin',
@@ -187,7 +198,7 @@ async function refreshAuthSession(session) {
     }, 'Session refresh');
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
-      if (/refresh token not found|invalid refresh token|refresh token.*(?:expired|revoked|already used)/i.test(errorText)) {
+      if (isDefinitiveRefreshTokenError(errorText)) {
         if (authSessionRevision === startingRevision && authSession?.refreshToken === refreshToken) {
           writeAuthSession(null);
         }
@@ -526,6 +537,8 @@ function normalizeSettings(settings) {
     emailNewTasksToExternalAssignees: settings?.emailNewTasksToExternalAssignees === true,
     complianceEmailTestMode: settings?.complianceEmailTestMode === true,
     complianceScheduledRemindersEnabled: settings?.complianceScheduledRemindersEnabled === true,
+    managementReportsScheduledEnabled: settings?.managementReportsScheduledEnabled === true,
+    managementReportsSchedule: settings?.managementReportsSchedule === 'monthly' ? 'monthly' : 'weekly',
     projectTemplates: normalizeProjectTemplates(settings?.projectTemplates),
     visibleTopLevelTabs: normalizeVisibleTopLevelTabs(settings?.visibleTopLevelTabs),
     visibleProjectTabs: normalizeVisibleProjectTabs(settings?.visibleProjectTabs),
@@ -1984,6 +1997,77 @@ export async function addCustomerProjectPhotos(projectId, photos) {
   } catch {
     throw new Error('Customer photo save returned invalid JSON.');
   }
+}
+
+export async function addProjectPhotos(projectId, photos) {
+  if (!isSupabaseConfigured()) throw new Error('Supabase is not configured.');
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/add_project_photos`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ p_project_id: projectId, p_photos: photos }),
+  }, 'Project photo save');
+  const text = await response.text();
+  if (!response.ok) throw new Error(text || `Project photo save failed with status ${response.status}.`);
+  try {
+    const payload = text ? JSON.parse(text) : [];
+    invalidateTrackerQueries();
+    return Array.isArray(payload) ? payload : [];
+  } catch {
+    throw new Error('Project photo save returned invalid JSON.');
+  }
+}
+
+export async function queueProjectPhotoUpload(projectId, file, uploadedPhoto = null) {
+  const scopedProjectId = String(projectId || '').trim();
+  const userId = String(getStoredAuthSession()?.user?.id || '').trim();
+  if (!scopedProjectId) throw new Error('Project not found.');
+  if (!userId) throw new Error('Sign in before saving a photo on this device.');
+  if (!(file instanceof Blob) || !String(file.type || '').startsWith('image/')) {
+    throw new Error('Choose an image to save on this device.');
+  }
+  if (!file.size || file.size > 52428800) throw new Error('Each photo must be no larger than 50 MB.');
+
+  const photoId = String(uploadedPhoto?.id || `photo-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  const operationId = createOfflineOperationId();
+  const attachmentId = `${operationId}:project-photo:${photoId}`;
+  const payload = {
+    id: photoId,
+    name: String(uploadedPhoto?.name || file.name || 'Project photo'),
+    originalName: String(uploadedPhoto?.originalName || file.name || 'Project photo'),
+    size: Number(uploadedPhoto?.size || file.size) || 0,
+    type: String(uploadedPhoto?.type || file.type || 'image/jpeg'),
+    uploadedAt: String(uploadedPhoto?.uploadedAt || new Date().toISOString()),
+    storageProvider: String(uploadedPhoto?.storageProvider || 'device'),
+    storageBucket: String(uploadedPhoto?.storageBucket || ''),
+    storagePath: String(uploadedPhoto?.storagePath || ''),
+    dataUrl: '',
+    _offlineAttachmentId: attachmentId,
+  };
+  const operation = {
+    id: operationId,
+    userId,
+    kind: 'project-photo.upload',
+    action: 'create',
+    projectId: scopedProjectId,
+    entityId: photoId,
+    payload,
+  };
+  const attachmentIds = await reconcileOfflineAttachments(operation, [{
+    id: attachmentId,
+    slot: 'project-photo',
+    file,
+    name: payload.originalName,
+    type: payload.type,
+    size: payload.size,
+    metadata: { photoId },
+  }]);
+  const queued = enqueueOfflineOperation(userId, { ...operation, attachmentIds });
+  return {
+    ...payload,
+    _offlineStatus: queued.status,
+    _offlineQueuedAt: queued.queuedAt,
+    _offlineOperationId: queued.id,
+  };
 }
 
 async function persistVersionedProjectAndTasks(currentState, projects, tasks) {

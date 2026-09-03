@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
 import { loadVendor1099Import, replaceVendor1099Import, setVendor1099ImportMatch } from '../services/vendor1099Imports.js';
-import { createVendor1099FilingBatch, loadVendor1099FilingWorkspace, saveVendor1099PayerProfile } from '../services/vendor1099Filing.js';
+import { createVendor1099FilingBatch, downloadVendor1099PreparationCsv, loadVendor1099FilingWorkspace, requestVendor1099ElectronicConsent, saveVendor1099PayerProfile, sendVendor1099RecipientCopy, updateVendor1099FilingStatus, uploadVendor1099RecipientPdf } from '../services/vendor1099Filing.js';
+import { deliverBlob } from '../platform/platformAdapter.js';
 import { buildVendor1099Review } from '../utils/vendorReporting.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -44,7 +45,10 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
   const [filingBusy, setFilingBusy] = useState(false);
   const [payerOpen, setPayerOpen] = useState(false);
   const [payerDraft, setPayerDraft] = useState({ legalName: '', businessName: '', mailingAddress: '', phone: '', contactEmail: '', taxId: '' });
+  const [expandedBatchId, setExpandedBatchId] = useState('');
+  const [uploadFormId, setUploadFormId] = useState('');
   const fileInputRef = useRef(null);
+  const recipientPdfInputRef = useRef(null);
   const projectIds = useMemo(() => (data?.projects || []).map((project) => project.id).filter(Boolean), [data?.projects]);
   const canManageImports = activeUser?.role === 'Admin';
 
@@ -181,6 +185,36 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
     }
   }
 
+  async function refreshFilingWorkspace(successMessage = '') {
+    const workspace = await loadVendor1099FilingWorkspace();
+    setFilingWorkspace({ payer: workspace.payer || null, batches: workspace.batches || [] });
+    if (successMessage) setMessage(successMessage);
+  }
+
+  async function runFilingAction(action, successMessage) {
+    setFilingBusy(true); setMessage('');
+    try { await action(); await refreshFilingWorkspace(successMessage); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to update the filing workspace.'); }
+    finally { setFilingBusy(false); }
+  }
+
+  async function exportPreparation(batch, jurisdiction) {
+    if (!await showAppConfirm(`Download a ${jurisdiction === 'federal' ? 'federal' : 'New Jersey'} preparation CSV containing complete taxpayer IDs? Store it securely. This is not an agency upload file.`, { title: 'Download sensitive preparation file?', confirmLabel: 'Download CSV' })) return;
+    await runFilingAction(async () => { const result = await downloadVendor1099PreparationCsv(batch.id, jurisdiction); await deliverBlob(result.blob, result.fileName); }, 'Preparation CSV downloaded. It must be transferred into the official tax-year filing format before submission.');
+  }
+
+  async function changeFilingStatus(batch, jurisdiction, status) {
+    const confirmation = status === 'submitted' || status === 'accepted' ? window.prompt(`Enter the ${jurisdiction === 'federal' ? 'IRS' : 'New Jersey'} confirmation or acknowledgement number:`) : '';
+    if ((status === 'submitted' || status === 'accepted') && confirmation == null) return;
+    await runFilingAction(() => updateVendor1099FilingStatus(batch.id, jurisdiction, status, confirmation || ''), `${jurisdiction === 'federal' ? 'Federal' : 'New Jersey'} filing status updated.`);
+  }
+
+  async function selectRecipientPdf(file) {
+    const formId = uploadFormId; setUploadFormId(''); if (recipientPdfInputRef.current) recipientPdfInputRef.current.value = '';
+    if (!file || !formId) return;
+    await runFilingAction(() => uploadVendor1099RecipientPdf(formId, file), 'Official recipient PDF stored privately.');
+  }
+
   return (
     <div className="vendor-1099-review">
       <header className="vendor-1099-header">
@@ -236,7 +270,22 @@ export default function Vendor1099Review({ data, subcontractors, documents, taxI
           <label><span>{filingWorkspace.payer?.taxIdLastFour ? `New EIN (currently •••• ${filingWorkspace.payer.taxIdLastFour})` : 'Payer EIN'}</span><input required={!filingWorkspace.payer?.taxIdLastFour} inputMode="numeric" autoComplete="off" value={payerDraft.taxId} onChange={(event) => setPayerDraft((current) => ({ ...current, taxId: event.target.value }))} placeholder={filingWorkspace.payer?.taxIdLastFour ? 'Leave blank to keep current EIN' : '9 digits'} /></label>
           <div className="modal-actions wide"><button className="button secondary" type="button" onClick={() => setPayerOpen(false)}>Cancel</button><button className="button primary" type="submit" disabled={filingBusy}>{filingBusy ? 'Saving…' : 'Save payer profile'}</button></div>
         </form> : null}
-        {currentBatches.length ? <div className="vendor-1099-batches">{currentBatches.map((batch) => <div key={batch.id}><div><strong>{batch.formCount} form{batch.formCount === 1 ? '' : 's'} · {money(batch.totalCompensation)}</strong><span>Created {new Date(batch.createdAt).toLocaleString()}</span></div><span className={`status-pill status-${batch.status === 'accepted' ? 'ready' : 'review'}`}>{batch.status}</span></div>)}</div> : <p className="vendor-1099-import-meta">No filing batch has been created for {year}.</p>}
+        <input ref={recipientPdfInputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => void selectRecipientPdf(event.target.files?.[0])} />
+        {currentBatches.length ? <div className="vendor-1099-batches">{currentBatches.map((batch) => {
+          const expanded = expandedBatchId === batch.id;
+          const federalStatus = batch.forms?.[0]?.federalStatus || 'not_submitted';
+          const newJerseyStatus = batch.forms?.[0]?.newJerseyStatus || 'not_submitted';
+          return <section className="vendor-1099-batch" key={batch.id}>
+            <button className="vendor-1099-batch-summary" type="button" onClick={() => setExpandedBatchId(expanded ? '' : batch.id)} aria-expanded={expanded}><span><strong>{batch.formCount} form{batch.formCount === 1 ? '' : 's'} · {money(batch.totalCompensation)}</strong><small>Created {new Date(batch.createdAt).toLocaleString()}</small></span><span className={`status-pill status-${batch.status === 'accepted' ? 'ready' : 'review'}`}>{batch.status}</span></button>
+            {expanded ? <div className="vendor-1099-batch-detail">
+              <div className="vendor-1099-jurisdictions">
+                <div><strong>Federal · IRS IRIS</strong><span>{federalStatus.replaceAll('_', ' ')}{batch.federalConfirmation ? ` · ${batch.federalConfirmation}` : ''}</span><div><button className="button secondary" type="button" disabled={filingBusy} onClick={() => void exportPreparation(batch, 'federal')}>Preparation CSV</button><select aria-label="Federal filing status" value={federalStatus} disabled={filingBusy} onChange={(event) => void changeFilingStatus(batch, 'federal', event.target.value)}><option value="not_submitted">Not submitted</option><option value="submitted">Submitted</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option><option value="corrected">Corrected</option></select><a className="button secondary" href="https://www.irs.gov/filing/e-file-information-returns-with-iris" target="_blank" rel="noreferrer">Open IRS IRIS</a></div></div>
+                <div><strong>New Jersey</strong><span>{newJerseyStatus.replaceAll('_', ' ')}{batch.newJerseyConfirmation ? ` · ${batch.newJerseyConfirmation}` : ''}</span><div><button className="button secondary" type="button" disabled={filingBusy} onClick={() => void exportPreparation(batch, 'new_jersey')}>Preparation CSV</button><select aria-label="New Jersey filing status" value={newJerseyStatus} disabled={filingBusy} onChange={(event) => void changeFilingStatus(batch, 'new_jersey', event.target.value)}><option value="not_submitted">Not submitted</option><option value="submitted">Submitted</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option><option value="corrected">Corrected</option><option value="not_required">Not required</option></select><a className="button secondary" href="https://www.nj.gov/treasury/taxation/businesses/payroll/payroll-filing.shtml" target="_blank" rel="noreferrer">NJ filing options</a></div></div>
+              </div>
+              <div className="vendor-1099-delivery-list"><div className="vendor-1099-delivery-row heading"><span>Vendor</span><span>Delivery</span><span>Official PDF</span><span>Actions</span></div>{(batch.forms || []).map((form) => <div className="vendor-1099-delivery-row" key={form.id}><span><strong>{form.vendorName}</strong><small>{form.recipientEmail || 'Email missing'} · Tax ID •••• {form.taxIdLastFour}</small></span><span>{String(form.deliveryStatus || 'paper_required').replaceAll('_', ' ')}</span><span>{form.recipientPdfFileName || 'Not uploaded'}</span><span className="vendor-1099-row-actions"><button className="button secondary" type="button" disabled={filingBusy || !form.recipientEmail} onClick={() => void runFilingAction(() => requestVendor1099ElectronicConsent(form.id), `Consent request sent to ${form.vendorName}.`)}>Request consent</button><button className="button secondary" type="button" disabled={filingBusy} onClick={() => { setUploadFormId(form.id); recipientPdfInputRef.current?.click(); }}>Upload PDF</button><button className="button primary" type="button" disabled={filingBusy || !form.consentedAt || !form.recipientPdfFileName} onClick={() => void runFilingAction(() => sendVendor1099RecipientCopy(form.id), `Secure recipient-copy notice sent to ${form.vendorName}.`)}>Send copy</button></span></div>)}</div>
+            </div> : null}
+          </section>;
+        })}</div> : <p className="vendor-1099-import-meta">No filing batch has been created for {year}.</p>}
         <div className="vendor-1099-guidance"><FluentIcon name="lock" size={18} /><span>Federal filing, New Jersey filing, and recipient delivery are tracked independently. Full tax IDs remain server-only. Secure electronic delivery will require each vendor’s affirmative consent; vendors without consent remain marked for paper delivery.</span></div>
       </section> : null}
 

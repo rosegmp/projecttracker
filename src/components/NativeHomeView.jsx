@@ -285,11 +285,11 @@ function MyDayWorkspace({ summary, activeUser, canEdit, offline, onOpen, onCompl
           <div className="my-day-quick-actions" aria-label="My Day quick actions">
             <button className="button primary" type="button" onClick={onAddTask}><FluentIcon name="add" />Task</button>
             <button className="button secondary" type="button" onClick={() => onQuickAction?.('create-daily-log')}><FluentIcon name="document" />Daily log</button>
-            <button className="button secondary" type="button" onClick={() => onQuickAction?.('create-photo')} disabled={offline} title={offline ? 'Reconnect before uploading a project photo.' : 'Open project photos'}><FluentIcon name="camera" />Photo</button>
+            <button className="button secondary" type="button" onClick={() => onQuickAction?.('create-photo')} title={offline ? 'Save a project photo on this device.' : 'Open project photos'}><FluentIcon name="camera" />Photo</button>
           </div>
         ) : null}
       </header>
-      {offline ? <p className="my-day-offline-note"><FluentIcon name="warning" />Tasks and daily logs can be saved on this device. Reconnect before uploading photos.</p> : null}
+      {offline ? <p className="my-day-offline-note"><FluentIcon name="warning" />Tasks, daily logs, and photos can be saved on this device. Photos upload automatically after reconnecting.</p> : null}
       <div className="my-day-grid">
         <HomeList title="Due today" items={summary.tasks} emptyMessage="No assigned tasks due today." onOpen={onOpen} onComplete={onComplete} limit={4} />
         <HomeList title="Schedule" items={summary.scheduleItems} emptyMessage="No assigned schedule work today." onOpen={onOpen} limit={4} />

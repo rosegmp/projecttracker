@@ -35,6 +35,7 @@ import {
   normalizeInspectionAttemptHistory,
 } from '../src/utils/inspectionAttempts.js';
 import { groupInspections, sortInspections } from '../src/utils/inspectionView.js';
+import { buildManagementReport, managementReportCsv, summarizeManagementReport } from '../src/utils/managementReporting.js';
 import { buildAuditTrailEntries } from '../src/utils/auditTrail.js';
 import {
   buildHomeActionCenterItems,
@@ -78,6 +79,7 @@ import {
   hydrateTrackerWithNormalizedAssignments,
   hydrateTasksWithNormalizedAttachments,
   hydrateTasksWithNormalizedSelectionLinks,
+  isDefinitiveRefreshTokenError,
 } from '../src/services/trackerData.js';
 import { normalizeMutationKey } from '../src/hooks/useEntityMutations.js';
 import {
@@ -146,6 +148,7 @@ import {
 import { constrainDrawingEndpoint } from '../src/features/takeoff/services/takeoffDrawing.js';
 import {
   applyQueuedInspectionOperations,
+  applyQueuedProjectPhotoOperations,
   applyQueuedTaskOperations,
   enqueueOfflineOperation,
   getOfflineOperations,
@@ -439,6 +442,15 @@ const tests = [
           payload: { id: 'inspection-1', status: 'failed', notes: 'Corrected offline' },
         },
         {
+          id: 'offline-photo-operation',
+          kind: 'project-photo.upload',
+          projectId: 'project-1',
+          entityId: 'photo-offline-12345678',
+          status: 'pending',
+          queuedAt: '2026-07-27T12:01:30.000Z',
+          payload: { id: 'photo-offline-12345678', name: 'Site.jpg', type: 'image/jpeg', _offlineAttachmentId: 'attachment-1' },
+        },
+        {
           kind: 'task.save',
           projectId: 'project-1',
           entityId: 'task-1',
@@ -462,10 +474,10 @@ const tests = [
       assert.equal(logs[0].notes, 'Device notes');
       assert.equal(logs[0]._offlineStatus, 'pending');
       assert.equal(logs[0]._offlineServerRecord.notes, 'Server notes');
-      const state = applyQueuedTaskOperations(applyQueuedInspectionOperations({
+      const state = applyQueuedProjectPhotoOperations(applyQueuedTaskOperations(applyQueuedInspectionOperations({
         tasks: [{ id: 'task-1', projectId: 'project-1', label: 'Server task', done: false }],
-        projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', status: 'scheduled' }] }],
-      }, operations), operations);
+        projects: [{ id: 'project-1', inspections: [{ id: 'inspection-1', status: 'scheduled' }], photos: [] }],
+      }, operations), operations), operations);
       assert.equal(state.projects[0].inspections[0].status, 'failed');
       assert.equal(state.projects[0].inspections[0]._offlineStatus, 'needs-attention');
       assert.equal(state.projects[0].inspections[0]._offlineServerRecord.status, 'scheduled');
@@ -473,6 +485,9 @@ const tests = [
       assert.equal(state.tasks[0].done, true);
       assert.equal(state.tasks[0]._offlineStatus, 'pending');
       assert.equal(state.tasks[0]._offlineServerRecord.label, 'Server task');
+      assert.equal(state.projects[0].photos[0].name, 'Site.jpg');
+      assert.equal(state.projects[0].photos[0]._offlineStatus, 'pending');
+      assert.equal(state.projects[0].photos[0]._offlineAttachmentId, 'attachment-1');
       const warrantyItems = mergeQueuedWarrantyItems(
         [{ id: 'warranty-1', number: 'WAR-001', title: 'Server punch item', status: 'open' }],
         operations,
@@ -482,6 +497,7 @@ const tests = [
       assert.equal(warrantyItems[0]._offlineServerRecord.title, 'Server punch item');
       assert.equal(isOfflineNetworkError(new Error('Network connection was lost.')), true);
       assert.equal(isOfflineNetworkError(new Error('Unable to connect securely to Project Hub.')), true);
+      assert.equal(isOfflineNetworkError(new Error('Unable to restore your session right now. Check your connection and try again.')), true);
       assert.equal(isOfflineNetworkError(new Error('Permission denied.')), false);
     },
   },
@@ -537,7 +553,10 @@ const tests = [
       assert.match(inspectionSource, /storageProvider: 'device'/);
       assert.match(syncSource, /operation\.kind === 'task\.save'/);
       assert.match(syncSource, /operation\.kind === 'warranty-item\.save'/);
+      assert.match(syncSource, /operation\.kind === 'project-photo\.upload'/);
+      assert.match(syncSource, /addProjectPhotos\(operation\.projectId, \[photo\]\)/);
       assert.match(inspectionSource, /export function queueTaskUpdateOffline/);
+      assert.match(inspectionSource, /export async function queueProjectPhotoUpload/);
       assert.match(inspectionSource, /export async function syncQueuedTask/);
     },
   },
@@ -545,9 +564,9 @@ const tests = [
     name: 'top-level tab visibility preserves required navigation and safe defaults',
     run() {
       assert.deepEqual(normalizeVisibleTopLevelTabs(undefined), DEFAULT_VISIBLE_TOP_LEVEL_TABS);
-      assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'settings']);
-      assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'settings']);
-      assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'reports', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'reports', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'reports', 'settings']);
     },
   },
   {
@@ -1646,7 +1665,11 @@ const tests = [
       assert.match(trackerSource, /inviteAuthUser[\s\S]*fetchAuthorizedSupabase\('\/functions\/v1\/create-auth-user'/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Your sign-in session is missing/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Unable to reach the login invite service/);
-      assert.match(trackerSource, /refresh token not found\|invalid refresh token/);
+      assert.equal(isDefinitiveRefreshTokenError('{"code":"refresh_token_not_found"}'), true);
+      assert.equal(isDefinitiveRefreshTokenError('{"code":"refresh_token_already_used"}'), true);
+      assert.equal(isDefinitiveRefreshTokenError('Invalid Refresh Token'), true);
+      assert.equal(isDefinitiveRefreshTokenError('Temporary authentication service failure'), false);
+      assert.match(trackerSource, /isDefinitiveRefreshTokenError\(errorText\)/);
       assert.match(trackerSource, /writeAuthSession\(null\)/);
       assert.match(trackerSource, /let authRefreshPromise = null/);
       assert.match(trackerSource, /if \(authRefreshPromise\) return authRefreshPromise/);
@@ -1975,8 +1998,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 9/);
-      assert.match(buildSource, /versionName "1\.8\.0"/);
+      assert.match(buildSource, /versionCode 10/);
+      assert.match(buildSource, /versionName "1\.9\.0"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
@@ -4976,9 +4999,11 @@ const tests = [
       assert.match(detailSource, /readOnly=\{!canEdit\}/);
       assert.match(detailSource, /canAddPhotos=\{canEdit \|\| customerReadOnly\}/);
       assert.match(photosSource, /canAddPhotos = !readOnly/);
-      assert.match(photosSource, /addCustomerProjectPhotos\(project\.id, uploads\)/);
+      assert.match(photosSource, /addProjectPhotos\(project\.id, \[uploadedPhoto\]\)/);
+      assert.match(photosSource, /queueProjectPhotoUpload\(project\.id, file/);
       assert.match(photosSource, /if \(!canAddPhotos\) return;[\s\S]*uploadInputRef\.current\?\.click\(\)/);
       assert.match(trackerSource, /export async function addCustomerProjectPhotos/);
+      assert.match(trackerSource, /export async function addProjectPhotos/);
       assert.match(customerPhotoWritesSource, /create policy "Customers can upload assigned project photos"/);
       assert.match(customerPhotoWritesSource, /create or replace function public\.add_customer_project_photos/);
       assert.match(customerPhotoWritesSource, /actor_role <> 'Customer'/);
@@ -6096,7 +6121,7 @@ const tests = [
   {
     name: '1099 workspace keeps tax IDs masked and exposes dated payment controls',
     async run() {
-      const [reviewSource, commitmentsSource, complianceSource, importService, importParser, importMigration, filingService, filingFunction, filingMigration] = await Promise.all([
+      const [reviewSource, commitmentsSource, complianceSource, importService, importParser, importMigration, filingService, filingFunction, filingMigration, deliveryMigration, recipientService, recipientPage, functionConfig] = await Promise.all([
         readFile(new URL('../src/components/Vendor1099Review.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
@@ -6106,6 +6131,10 @@ const tests = [
         readFile(new URL('../src/services/vendor1099Filing.js', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/functions/manage-vendor-1099/index.ts', import.meta.url), 'utf8'),
         readFile(new URL('../supabase/migrations/20260826140000_add_vendor_1099_filing_workspace.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260902150000_add_vendor_1099_recipient_delivery.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/vendor1099Recipient.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/Vendor1099RecipientPage.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
       ]);
       assert.match(reviewSource, /Tax ID •••• \$\{row\.taxIdLastFour\}/);
       assert.doesNotMatch(reviewSource, /encryptedTaxId|encrypted_tax_id|fullTaxId/);
@@ -6128,11 +6157,19 @@ const tests = [
       assert.match(filingService, /\/functions\/v1\/manage-vendor-1099/);
       assert.doesNotMatch(filingService, /encryptedTaxId|encrypted_tax_id|fullTaxId/);
       assert.match(filingFunction, /String\(appUser\?\.data\?\.role \|\| ''\) !== 'Admin'/);
-      assert.match(filingFunction, /decryptValue\(String\(identifier\.encrypted_tax_id\)/);
-      assert.match(filingFunction, /encryptValue\(taxId, `1099-form:\$\{formId\}`\)/);
+      assert.match(filingFunction, /decrypt\(identity\.encrypted_tax_id, identity\.encryption_iv/);
+      assert.match(filingFunction, /encrypt\(tin, `1099-form:\$\{formId\}`\)/);
       assert.doesNotMatch(filingFunction, /return respond\([^)]*taxId[^L]/s);
       assert.match(filingMigration, /revoke all on public\.vendor_1099_forms from public, anon, authenticated/);
       assert.match(filingMigration, /Full tax IDs remain server-only|complete EIN is encrypted/i);
+      assert.match(deliveryMigration, /vendor-tax-documents/);
+      assert.match(deliveryMigration, /public = false/);
+      assert.match(recipientService, /#tax-document=/);
+      assert.match(recipientPage, /PDF access test/);
+      assert.match(filingFunction, /recipient_access_token_hash/);
+      assert.match(filingFunction, /Preparation only - not an agency upload file/);
+      assert.match(functionConfig, /\[functions\.manage-vendor-1099\]\s+verify_jwt = false/);
+      assert.match(reviewSource, /Download sensitive preparation file/);
     },
   },
   {
@@ -6285,6 +6322,62 @@ const tests = [
       assert.match(viewSource, />Sort by</);
       assert.match(viewSource, /groupInspections\(inspections, groupBy\)/);
       assert.match(viewSource, /sortInspections\(source, sortBy\)/);
+    },
+  },
+  {
+    name: 'management reporting aggregates portfolio exposure without inventing historical trends',
+    async run() {
+      const projects = [{ id: 'p1', name: 'Alpha', status: 'active', customerName: 'Owner', phases: [{ steps: [{ id: 's1', end: '2026-08-28', status: 'in_progress' }, { id: 's2', end: '2026-09-01', status: 'complete' }] }], selections: [{ id: 'sel1', status: 'needs decision' }] }];
+      const rows = buildManagementReport(projects, {
+        budgetItems: [{ projectId: 'p1', status: 'active', originalBudget: 100000, approvedChanges: 5000, forecastCost: 112000 }],
+        commitments: [{ projectId: 'p1', status: 'approved', committedAmount: 108000 }],
+        changeOrders: [{ projectId: 'p1', status: 'proposed' }],
+        portalItems: [{ projectId: 'p1', itemType: 'approval', status: 'response_requested' }],
+        closeoutItems: [{ projectId: 'p1', required: true, status: 'complete' }, { projectId: 'p1', required: true, status: 'in_progress' }],
+      }, '2026-09-02');
+      assert.equal(rows[0].scheduleVarianceDays, 5);
+      assert.equal(rows[0].budgetExposure, 7000);
+      assert.equal(rows[0].outstandingApprovals, 3);
+      assert.equal(rows[0].closeoutPercent, 50);
+      assert.equal(summarizeManagementReport(rows).delayedProjects, 1);
+      assert.match(managementReportCsv(rows), /Project,Status,Customer,Schedule variance days/);
+      const [viewSource, appSource, navigationSource, reportingService, reportingMigration, settingsSource, trackerDataSource, reportFunction, reportWorkflow, supabaseConfig] = await Promise.all([
+        readFile(new URL('../src/components/ManagementReportingView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/navigationTabs.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/managementReporting.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/migrations/20260902170000_add_management_reporting_snapshots.sql', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/functions/send-management-report/index.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/management-reports.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
+      ]);
+      assert.match(viewSource, /SavedFiltersControls/);
+      assert.match(viewSource, /Print \/ Save PDF/);
+      assert.match(viewSource, /Historical compliance trends and scored subcontractor performance/);
+      assert.match(appSource, /!\['settings', 'reports'\]\.includes\(tab\.id\)/);
+      assert.match(navigationSource, /id: 'reports'.*required: true/);
+      assert.match(viewSource, /Capture today’s snapshot/);
+      assert.match(viewSource, /Project Hub does not assign an opaque composite score/);
+      assert.match(reportingService, /capture_management_reporting_snapshot/);
+      assert.match(reportingMigration, /public\.current_app_user_role\(\) <> 'Admin'/);
+      assert.match(reportingMigration, /revoke all on public\.management_reporting_snapshots, public\.management_reporting_subcontractor_snapshots from public, anon, authenticated/);
+      assert.match(reportingMigration, /claim_management_report_delivery/);
+      assert.match(reportingMigration, /revoke all on public\.management_report_deliveries from public, anon, authenticated/);
+      assert.doesNotMatch(reportingMigration, /performance_score|composite_score/);
+      assert.match(settingsSource, /Scheduled management reports/);
+      assert.match(settingsSource, /Weekly on Monday/);
+      assert.match(settingsSource, /Monthly on the first day/);
+      assert.match(trackerDataSource, /managementReportsScheduledEnabled: false/);
+      assert.match(reportFunction, /x-management-report-token/);
+      assert.match(reportFunction, /safeEqual/);
+      assert.match(reportFunction, /claim_management_report_delivery/);
+      assert.match(reportFunction, /Idempotency-Key/);
+      assert.match(reportWorkflow, /environment: production/);
+      assert.match(reportWorkflow, /MANAGEMENT_REPORT_SCHEDULE_TOKEN/);
+      assert.match(reportWorkflow, /https:\/\/oxojlwhmarafxuqvqgqg\.supabase\.co/);
+      assert.match(supabaseConfig, /\[functions\.send-management-report\]\s+verify_jwt = false/);
     },
   },
   {
