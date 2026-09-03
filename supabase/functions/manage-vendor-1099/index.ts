@@ -1,211 +1,128 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { PDFDocument, StandardFonts } from 'npm:pdf-lib@1.17.1';
 import { getRequestId, jsonResponse, logEdgeFailure, REQUEST_ID_HEADER } from '../_shared/requestCorrelation.ts';
 import { getAppRuntimeStatus, maintenanceMessage } from '../_shared/maintenance.ts';
 
 const FUNCTION_NAME = 'manage-vendor-1099';
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': `authorization, x-client-info, apikey, content-type, ${REQUEST_ID_HEADER}`,
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Expose-Headers': REQUEST_ID_HEADER,
-};
+const SITE_URL = 'https://projecthub.destinyhomesnj.com';
+const BUCKET = 'vendor-tax-documents';
+const PUBLIC_ACTIONS = new Set(['recipient-load', 'recipient-sample', 'recipient-consent', 'recipient-download', 'recipient-withdraw']);
+const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': `authorization, x-client-info, apikey, content-type, ${REQUEST_ID_HEADER}`, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Expose-Headers': `${REQUEST_ID_HEADER}, Content-Disposition` };
 
-function requiredEnv(name: string) {
-  const value = Deno.env.get(name);
-  if (!value) throw new Error(`${name} is not configured.`);
-  return value;
+function env(name: string) { const value = Deno.env.get(name); if (!value) throw new Error(`${name} is not configured.`); return value; }
+function serviceKey() { return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || env('SUPABASE_SECRET_KEY'); }
+function text(value: unknown, length = 500) { return String(value || '').trim().slice(0, length); }
+function email(value: unknown) { const result = text(value, 254).toLowerCase(); return /^\S+@\S+\.\S+$/.test(result) ? result : ''; }
+function bearer(request: Request) { return request.headers.get('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] || ''; }
+function html(value: unknown) { return String(value || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c)); }
+function bytes64(bytes: Uint8Array) { let value = ''; for (let i = 0; i < bytes.length; i += 0x8000) value += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(value); }
+function from64(value: string) { return Uint8Array.from(atob(value), (c) => c.charCodeAt(0)); }
+function token() { return bytes64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
+async function tokenHash(value: string) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))].map((b) => b.toString(16).padStart(2, '0')).join(''); }
+async function key() { const bytes = from64(env('TAX_ID_ENCRYPTION_KEY_V1')); if (bytes.length !== 32) throw new Error('Invalid encryption key.'); return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']); }
+async function encrypt(value: string, aad: string) { const iv = crypto.getRandomValues(new Uint8Array(12)); const result = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(aad) }, await key(), new TextEncoder().encode(value)); return { encrypted: bytes64(new Uint8Array(result)), iv: bytes64(iv) }; }
+async function decrypt(value: string, iv: string, aad: string) { return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: from64(iv), additionalData: new TextEncoder().encode(aad) }, await key(), from64(value))); }
+function safeName(value: unknown) { return (text(value, 120) || 'document').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-'); }
+function link(value: string) { return `${SITE_URL}/#tax-document=${encodeURIComponent(value)}`; }
+function disclosures(year: number) { return { paper: 'You may receive a paper copy instead of consenting to electronic delivery.', scope: `Consent applies only to the ${year} Form 1099-NEC PDF from Destiny Homes LLC.`, access: 'You need internet access, a current browser, and software capable of opening PDF files.', withdrawal: 'You may withdraw consent through the secure page. Withdrawal does not affect a copy already furnished.', paperCopy: 'Contact Destiny Homes to request a paper copy or update your mailing or email address.', duration: `The copy remains available through at least October 15, ${year + 1}, or 90 days after posting, whichever is later.` }; }
+function summary(form: Record<string, any>, year: number) { return { id: form.id, vendorName: text(form.vendor_name, 240), recipientEmail: text(form.recipient_email, 254), taxIdLastFour: text(form.tax_id_last_four, 4), compensation: Number(form.compensation || 0), federalStatus: form.federal_status, newJerseyStatus: form.new_jersey_status, deliveryStatus: form.delivery_status, consentRequestedAt: form.consent_requested_at || null, consentedAt: form.consented_at || null, consentName: text(form.consent_name, 120), recipientPdfFileName: text(form.recipient_pdf_file_name, 240), recipientAvailableAt: form.recipient_available_at || null, recipientNoticeSentAt: form.recipient_notice_sent_at || null, recipientDownloadedAt: form.recipient_downloaded_at || null, consentWithdrawnAt: form.consent_withdrawn_at || null, paperCopyRequestedAt: form.paper_copy_requested_at || null, taxYear: year }; }
+function payer(row: Record<string, any> | null) { return row ? { configured: Boolean(row.encrypted_tax_id && row.legal_name && row.mailing_address && row.contact_email), legalName: text(row.legal_name, 240), businessName: text(row.business_name, 240), mailingAddress: text(row.mailing_address), phone: text(row.phone, 40), contactEmail: text(row.contact_email, 254), taxIdLastFour: text(row.tax_id_last_four, 4), updatedAt: row.updated_at } : { configured: false }; }
+function binary(bytes: Uint8Array, name: string, requestId: string, type = 'application/pdf') { return new Response(bytes, { headers: { ...corsHeaders, [REQUEST_ID_HEADER]: requestId, 'Content-Type': type, 'Content-Disposition': `attachment; filename="${safeName(name)}"`, 'Cache-Control': 'private, no-store, max-age=0' } }); }
+function csv(value: unknown) { const s = String(value ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+
+async function sendMail(requestId: string, to: string, cc: string, subject: string, body: string, targetLink: string, suffix: string) {
+  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${env('RESEND_API_KEY')}`, 'Content-Type': 'application/json', 'Idempotency-Key': `${requestId}:1099:${suffix}` }, body: JSON.stringify({ from: Deno.env.get('TASK_ASSIGNMENT_EMAIL_FROM') || Deno.env.get('CERTIFICATE_RENEWAL_EMAIL_FROM') || env('VENDOR_1099_EMAIL_FROM'), to: [to], ...(cc && cc !== to ? { cc: [cc] } : {}), reply_to: cc, subject, text: `${body}\n\n${targetLink}\n\nDo not forward this private link.\n\nDestiny Homes LLC`, html: `<p>${html(body)}</p><p><a href="${html(targetLink)}">Open the secure tax-document page</a></p><p>Do not forward this private link.</p><p>Destiny Homes LLC</p>` }) });
+  if (!response.ok) throw new Error(`email_${response.status}`);
 }
 
-function serviceRoleKey() {
-  return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || requiredEnv('SUPABASE_SECRET_KEY');
-}
-
-function bearerToken(request: Request) {
-  return request.headers.get('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] || '';
-}
-
-function cleanText(value: unknown, maxLength = 500) {
-  return String(value || '').trim().slice(0, maxLength);
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(value: string) {
-  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
-}
-
-async function encryptionKey() {
-  const bytes = base64ToBytes(requiredEnv('TAX_ID_ENCRYPTION_KEY_V1'));
-  if (bytes.byteLength !== 32) throw new Error('TAX_ID_ENCRYPTION_KEY_V1 must contain exactly 32 bytes.');
-  return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function encryptValue(value: string, aad: string) {
-  const key = await encryptionKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(aad) }, key, new TextEncoder().encode(value));
-  return { encrypted: bytesToBase64(new Uint8Array(encrypted)), iv: bytesToBase64(iv) };
-}
-
-async function decryptValue(encrypted: string, iv: string, aad: string) {
-  const key = await encryptionKey();
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(iv), additionalData: new TextEncoder().encode(aad) }, key, base64ToBytes(encrypted));
-  return new TextDecoder().decode(decrypted);
-}
-
-function payerSummary(row: Record<string, unknown> | null) {
-  return row ? {
-    configured: Boolean(row.encrypted_tax_id && row.legal_name && row.mailing_address && row.contact_email),
-    legalName: cleanText(row.legal_name, 240),
-    businessName: cleanText(row.business_name, 240),
-    mailingAddress: cleanText(row.mailing_address),
-    phone: cleanText(row.phone, 40),
-    contactEmail: cleanText(row.contact_email, 254),
-    taxIdLastFour: cleanText(row.tax_id_last_four, 4),
-    updatedAt: cleanText(row.updated_at, 40),
-  } : { configured: false, legalName: '', businessName: '', mailingAddress: '', phone: '', contactEmail: '', taxIdLastFour: '', updatedAt: '' };
-}
+async function publicForm(admin: any, rawToken: string) { if (rawToken.length < 32 || rawToken.length > 200) return null; const hash = await tokenHash(rawToken); const { data: form } = await admin.from('vendor_1099_forms').select('*').or(`consent_token_hash.eq.${hash},recipient_access_token_hash.eq.${hash}`).maybeSingle(); if (!form) return null; const { data: batch } = await admin.from('vendor_1099_filing_batches').select('tax_year').eq('id', form.batch_id).maybeSingle(); return batch ? { form, year: Number(batch.tax_year), hash } : null; }
 
 Deno.serve(async (request) => {
   const requestId = getRequestId(request);
   const respond = (body: Record<string, unknown>, status = 200) => jsonResponse(body, status, requestId, corsHeaders);
-  const fail = (error: string, status: number, operation: string, code: unknown) => {
-    logEdgeFailure({ code, functionName: FUNCTION_NAME, operation, requestId, status });
-    return respond({ error, ...(code === 'app_writes_frozen' ? { code: 'APP_WRITES_FROZEN' } : {}) }, status);
-  };
+  const fail = (error: string, status: number, operation: string, code: unknown) => { logEdgeFailure({ code, functionName: FUNCTION_NAME, operation, requestId, status }); return respond({ error, ...(code === 'app_writes_frozen' ? { code: 'APP_WRITES_FROZEN' } : {}) }, status); };
   let operation = 'request.initialize';
   if (request.method === 'OPTIONS') return new Response('ok', { headers: { ...corsHeaders, [REQUEST_ID_HEADER]: requestId } });
   if (request.method !== 'POST') return fail('Method not allowed.', 405, 'request.validate', 'method_not_allowed');
-
   try {
-    const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const admin = createClient(supabaseUrl, serviceRoleKey(), { auth: { autoRefreshToken: false, persistSession: false } });
-    operation = 'auth.verify';
-    const { data: callerData, error: callerError } = await admin.auth.getUser(bearerToken(request));
-    const caller = callerData?.user;
-    if (callerError || !caller?.id || !caller.email) return fail('Unable to verify signed-in user.', 401, operation, 'invalid_token');
-
-    operation = 'authorization.check';
-    const { data: appUsers, error: usersError } = await admin.from('app_users').select('data');
-    if (usersError) return fail('Unable to verify 1099 permissions.', 500, operation, usersError.code);
-    const email = caller.email.trim().toLowerCase();
-    const appUser = (appUsers || []).find((item) => String(item.data?.email || '').trim().toLowerCase() === email);
-    if (String(appUser?.data?.role || '') !== 'Admin') return fail('Only administrators can manage 1099 filings.', 403, operation, 'admin_required');
-
     const body = await request.json().catch(() => ({}));
-    const action = cleanText(body?.action, 40);
-    if (action !== 'get-workspace') {
-      operation = 'maintenance.check';
-      const runtime = await getAppRuntimeStatus(admin);
-      if (runtime.writesFrozen) return fail(maintenanceMessage(runtime), 503, operation, 'app_writes_frozen');
+    const action = text(body?.action, 50);
+    const admin = createClient(env('SUPABASE_URL'), serviceKey(), { auth: { autoRefreshToken: false, persistSession: false } });
+    if (PUBLIC_ACTIONS.has(action)) {
+      operation = action;
+      const loaded = await publicForm(admin, text(body?.token, 200));
+      if (!loaded) return fail('This secure tax-document link is invalid or unavailable.', 404, operation, 'invalid_token');
+      const { form, year, hash } = loaded;
+      const isConsent = form.consent_token_hash === hash, isAccess = form.recipient_access_token_hash === hash;
+      const expired = (isConsent && form.consent_expires_at && new Date(form.consent_expires_at) < new Date()) || (isAccess && form.recipient_access_expires_at && new Date(form.recipient_access_expires_at) < new Date());
+      if (expired) return fail('This secure tax-document link has expired.', 410, operation, 'expired_token');
+      if (action === 'recipient-load') return respond({ request: { ...summary(form, year), mode: isAccess ? 'recipient_copy' : 'consent', disclosures: form.consent_disclosures || disclosures(year), sampleAccessed: Boolean(form.consent_sample_accessed_at), availableUntil: form.recipient_access_expires_at || null, fileName: form.recipient_pdf_file_name || `Form-1099-NEC-${year}.pdf` } });
+      if (action === 'recipient-sample') {
+        if (!isConsent) return fail('This consent link is invalid.', 404, operation, 'invalid_token');
+        const pdf = await PDFDocument.create(), page = pdf.addPage([612, 792]), font = await pdf.embedFont(StandardFonts.Helvetica), bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+        page.drawText('Destiny Homes LLC', { x: 54, y: 730, size: 17, font: bold }); page.drawText('Electronic Form 1099 PDF access test', { x: 54, y: 690, size: 15, font: bold }); page.drawText(`Tax year ${year}`, { x: 54, y: 660, size: 11, font }); page.drawText('If you can read this PDF, your device can access the official PDF format.', { x: 54, y: 615, size: 11, font }); page.drawText('This is not a tax form and contains no taxpayer information.', { x: 54, y: 580, size: 11, font: bold });
+        await admin.from('vendor_1099_forms').update({ consent_sample_accessed_at: new Date().toISOString() }).eq('id', form.id);
+        return binary(new Uint8Array(await pdf.save()), 'Destiny-Homes-PDF-access-test.pdf', requestId);
+      }
+      const runtime = await getAppRuntimeStatus(admin); if (runtime.writesFrozen) return fail(maintenanceMessage(runtime), 503, 'maintenance.check', 'app_writes_frozen');
+      if (action === 'recipient-consent') {
+        const signerName = text(body?.signerName, 120), signerEmail = email(body?.signerEmail);
+        if (!isConsent || !form.consent_sample_accessed_at || !signerName || signerEmail !== email(form.recipient_email)) return fail('Open the PDF access test and enter the recipient email address before consenting.', 400, operation, 'consent_incomplete');
+        const now = new Date().toISOString(); const { error } = await admin.from('vendor_1099_forms').update({ consented_at: now, consent_name: signerName, consent_email: signerEmail, consent_scope: 'single_tax_year_pdf', consent_token_hash: null, consent_expires_at: null, delivery_status: 'consented' }).eq('id', form.id); if (error) return fail('Unable to record consent.', 500, operation, error.code);
+        return respond({ request: { ...summary({ ...form, consented_at: now, consent_name: signerName, delivery_status: 'consented' }, year), mode: 'consent' } });
+      }
+      if (action === 'recipient-download') {
+        if (!isAccess || !form.recipient_pdf_path) return fail('This recipient copy is unavailable.', 410, operation, 'copy_unavailable'); const { data, error } = await admin.storage.from(form.recipient_pdf_bucket || BUCKET).download(form.recipient_pdf_path); if (error || !data) return fail('Unable to download the recipient copy.', 500, operation, error?.message || 'download_failed'); await admin.from('vendor_1099_forms').update({ recipient_downloaded_at: new Date().toISOString(), delivery_status: 'delivered' }).eq('id', form.id); return binary(new Uint8Array(await data.arrayBuffer()), form.recipient_pdf_file_name || `Form-1099-NEC-${year}.pdf`, requestId);
+      }
+      const now = new Date().toISOString(); const { error } = await admin.from('vendor_1099_forms').update({ consent_withdrawn_at: now, paper_copy_requested_at: now, consent_token_hash: null, recipient_access_token_hash: null, delivery_status: 'withdrawn' }).eq('id', form.id); if (error) return fail('Unable to record the paper-delivery request.', 500, operation, error.code); return respond({ request: { ...summary({ ...form, delivery_status: 'withdrawn', consent_withdrawn_at: now, paper_copy_requested_at: now }, year), mode: 'consent' } });
     }
+
+    operation = 'auth.verify'; const { data: auth, error: authError } = await admin.auth.getUser(bearer(request)); const caller = auth?.user; if (authError || !caller?.id || !caller.email) return fail('Unable to verify signed-in user.', 401, operation, 'invalid_token');
+    const callerEmail = email(caller.email); const { data: users, error: usersError } = await admin.from('app_users').select('data'); if (usersError) return fail('Unable to verify 1099 permissions.', 500, 'authorization.check', usersError.code); const appUser = (users || []).find((item: any) => email(item.data?.email) === callerEmail); if (String(appUser?.data?.role || '') !== 'Admin') return fail('Only administrators can manage 1099 filings.', 403, 'authorization.check', 'admin_required');
+    if (!['get-workspace', 'download-preparation-export'].includes(action)) { const runtime = await getAppRuntimeStatus(admin); if (runtime.writesFrozen) return fail(maintenanceMessage(runtime), 503, 'maintenance.check', 'app_writes_frozen'); }
 
     if (action === 'get-workspace') {
-      operation = 'workspace.read';
-      const [{ data: payer, error: payerError }, { data: batches, error: batchesError }, { data: forms, error: formsError }] = await Promise.all([
+      const [{ data: payerRow, error: payerError }, { data: batches, error: batchError }, { data: forms, error: formError }] = await Promise.all([
         admin.from('vendor_1099_payer_profiles').select('legal_name,business_name,mailing_address,phone,contact_email,tax_id_last_four,encrypted_tax_id,updated_at').eq('id', true).maybeSingle(),
-        admin.from('vendor_1099_filing_batches').select('id,tax_year,status,federal_method,new_jersey_method,federal_confirmation,new_jersey_confirmation,submitted_at,accepted_at,created_at,updated_at').order('created_at', { ascending: false }).limit(20),
-        admin.from('vendor_1099_forms').select('batch_id,federal_status,new_jersey_status,delivery_status,compensation'),
+        admin.from('vendor_1099_filing_batches').select('*').order('created_at', { ascending: false }).limit(20),
+        admin.from('vendor_1099_forms').select('id,batch_id,vendor_name,recipient_email,tax_id_last_four,compensation,federal_status,new_jersey_status,delivery_status,consent_requested_at,consented_at,consent_name,recipient_pdf_file_name,recipient_available_at,recipient_notice_sent_at,recipient_downloaded_at,consent_withdrawn_at,paper_copy_requested_at'),
       ]);
-      if (payerError || batchesError || formsError) return fail('Unable to load the 1099 filing workspace.', 500, operation, payerError?.code || batchesError?.code || formsError?.code);
-      const formsByBatch = new Map<string, Record<string, unknown>[]>();
-      (forms || []).forEach((form) => formsByBatch.set(String(form.batch_id), [...(formsByBatch.get(String(form.batch_id)) || []), form]));
-      return respond({ payer: payerSummary(payer), batches: (batches || []).map((batch) => {
-        const batchForms = formsByBatch.get(String(batch.id)) || [];
-        return {
-          id: batch.id, taxYear: batch.tax_year, status: batch.status, federalMethod: batch.federal_method,
-          newJerseyMethod: batch.new_jersey_method, federalConfirmation: batch.federal_confirmation,
-          newJerseyConfirmation: batch.new_jersey_confirmation, submittedAt: batch.submitted_at,
-          acceptedAt: batch.accepted_at, createdAt: batch.created_at, updatedAt: batch.updated_at,
-          formCount: batchForms.length,
-          totalCompensation: batchForms.reduce((sum, form) => sum + Number(form.compensation || 0), 0),
-          deliveryCounts: batchForms.reduce((result: Record<string, number>, form) => ({ ...result, [String(form.delivery_status)]: (result[String(form.delivery_status)] || 0) + 1 }), {}),
-        };
-      }) });
+      if (payerError || batchError || formError) return fail('Unable to load the 1099 filing workspace.', 500, 'workspace.read', payerError?.code || batchError?.code || formError?.code);
+      const grouped = new Map<string, Record<string, any>[]>(); (forms || []).forEach((form: any) => grouped.set(String(form.batch_id), [...(grouped.get(String(form.batch_id)) || []), form]));
+      return respond({ payer: payer(payerRow), batches: (batches || []).map((batch: any) => { const batchForms = grouped.get(String(batch.id)) || []; return { id: batch.id, taxYear: batch.tax_year, status: batch.status, federalMethod: batch.federal_method, newJerseyMethod: batch.new_jersey_method, federalConfirmation: batch.federal_confirmation, newJerseyConfirmation: batch.new_jersey_confirmation, submittedAt: batch.submitted_at, acceptedAt: batch.accepted_at, createdAt: batch.created_at, updatedAt: batch.updated_at, formCount: batchForms.length, totalCompensation: batchForms.reduce((sum, form) => sum + Number(form.compensation || 0), 0), forms: batchForms.map((form) => summary(form, Number(batch.tax_year))) }; }) });
     }
-
     if (action === 'save-payer') {
-      operation = 'payer.validate';
-      const legalName = cleanText(body?.legalName, 240);
-      const businessName = cleanText(body?.businessName, 240);
-      const mailingAddress = cleanText(body?.mailingAddress, 500);
-      const phone = cleanText(body?.phone, 40);
-      const contactEmail = cleanText(body?.contactEmail, 254).toLowerCase();
-      const taxId = cleanText(body?.taxId, 32).replace(/\D/g, '');
-      if (!legalName || !mailingAddress || !/^\S+@\S+\.\S+$/.test(contactEmail)) return fail('Enter the payer legal name, complete address, and contact email.', 400, operation, 'invalid_payer');
-      const { data: existing } = await admin.from('vendor_1099_payer_profiles').select('encrypted_tax_id,encryption_iv,tax_id_last_four').eq('id', true).maybeSingle();
-      let encryptedTaxId = String(existing?.encrypted_tax_id || '');
-      let encryptionIv = String(existing?.encryption_iv || '');
-      let lastFour = String(existing?.tax_id_last_four || '');
-      if (taxId) {
-        if (taxId.length !== 9) return fail('Enter a valid 9-digit payer EIN.', 400, operation, 'invalid_ein');
-        const encrypted = await encryptValue(taxId, '1099-payer:default');
-        encryptedTaxId = encrypted.encrypted;
-        encryptionIv = encrypted.iv;
-        lastFour = taxId.slice(-4);
-      }
-      if (!encryptedTaxId) return fail('Enter the payer EIN.', 400, operation, 'payer_ein_required');
-      operation = 'payer.save';
-      const { data: saved, error } = await admin.from('vendor_1099_payer_profiles').upsert({
-        id: true, legal_name: legalName, business_name: businessName, mailing_address: mailingAddress,
-        phone, contact_email: contactEmail, encrypted_tax_id: encryptedTaxId, encryption_iv: encryptionIv,
-        encryption_key_version: 1, tax_id_last_four: lastFour, updated_by: caller.id, updated_at: new Date().toISOString(),
-      }).select('legal_name,business_name,mailing_address,phone,contact_email,tax_id_last_four,encrypted_tax_id,updated_at').single();
-      if (error) return fail('Unable to save the payer profile.', 500, operation, error.code);
-      return respond({ payer: payerSummary(saved) });
+      const legalName = text(body.legalName, 240), businessName = text(body.businessName, 240), address = text(body.mailingAddress), phone = text(body.phone, 40), contactEmail = email(body.contactEmail), taxId = text(body.taxId, 32).replace(/\D/g, '');
+      if (!legalName || !address || !contactEmail) return fail('Enter the payer legal name, complete address, and contact email.', 400, 'payer.validate', 'invalid_payer');
+      const { data: old } = await admin.from('vendor_1099_payer_profiles').select('encrypted_tax_id,encryption_iv,tax_id_last_four').eq('id', true).maybeSingle(); let encryptedTaxId = old?.encrypted_tax_id || '', iv = old?.encryption_iv || '', lastFour = old?.tax_id_last_four || '';
+      if (taxId) { if (taxId.length !== 9) return fail('Enter a valid 9-digit payer EIN.', 400, 'payer.validate', 'invalid_ein'); const secured = await encrypt(taxId, '1099-payer:default'); encryptedTaxId = secured.encrypted; iv = secured.iv; lastFour = taxId.slice(-4); }
+      if (!encryptedTaxId) return fail('Enter the payer EIN.', 400, 'payer.validate', 'payer_ein_required');
+      const { data: saved, error } = await admin.from('vendor_1099_payer_profiles').upsert({ id: true, legal_name: legalName, business_name: businessName, mailing_address: address, phone, contact_email: contactEmail, encrypted_tax_id: encryptedTaxId, encryption_iv: iv, encryption_key_version: 1, tax_id_last_four: lastFour, updated_by: caller.id, updated_at: new Date().toISOString() }).select('*').single(); if (error) return fail('Unable to save the payer profile.', 500, 'payer.save', error.code); return respond({ payer: payer(saved) });
     }
-
     if (action === 'create-batch') {
-      operation = 'batch.validate';
-      const taxYear = Number(body?.taxYear);
-      const rows = Array.isArray(body?.rows) ? body.rows : [];
-      if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > new Date().getFullYear() + 1) return fail('Select a valid tax year.', 400, operation, 'invalid_year');
-      if (!rows.length || rows.length > 500) return fail('Choose between 1 and 500 ready vendors.', 400, operation, 'invalid_rows');
-      const [{ data: payer }, { data: subs }, { data: identifiers }] = await Promise.all([
-        admin.from('vendor_1099_payer_profiles').select('*').eq('id', true).maybeSingle(),
-        admin.from('subs').select('id,data').in('id', rows.map((row: Record<string, unknown>) => cleanText(row.subcontractorId, 200))),
-        admin.from('subcontractor_tax_identifiers').select('*').in('subcontractor_id', rows.map((row: Record<string, unknown>) => cleanText(row.subcontractorId, 200))),
-      ]);
-      if (!payerSummary(payer).configured) return fail('Complete the payer profile before creating a filing batch.', 400, operation, 'payer_incomplete');
-      const subById = new Map((subs || []).map((sub) => [String(sub.id), sub]));
-      const idBySub = new Map((identifiers || []).map((identifier) => [String(identifier.subcontractor_id), identifier]));
-      const batchId = crypto.randomUUID();
-      const forms = [];
-      for (const input of rows as Record<string, unknown>[]) {
-        const subcontractorId = cleanText(input.subcontractorId, 200);
-        const compensation = Math.round(Number(input.compensation || 0) * 100) / 100;
-        const sub = subById.get(subcontractorId);
-        const identifier = idBySub.get(subcontractorId);
-        const vendorName = cleanText(identifier?.legal_name || sub?.data?.legalName || sub?.data?.company || `${sub?.data?.first || ''} ${sub?.data?.last || ''}`, 240);
-        const vendorAddress = cleanText(identifier?.mailing_address, 500);
-        if (!sub || !identifier || !vendorName || !vendorAddress || !Number.isFinite(compensation) || compensation <= 0) return fail('One or more vendors are no longer ready for filing. Refresh the review and try again.', 409, operation, 'vendor_not_ready');
-        const taxId = await decryptValue(String(identifier.encrypted_tax_id), String(identifier.encryption_iv), `subcontractor:${subcontractorId}`);
-        const formId = crypto.randomUUID();
-        const encrypted = await encryptValue(taxId, `1099-form:${formId}`);
-        forms.push({ id: formId, batch_id: batchId, subcontractor_id: subcontractorId, compensation, vendor_name: vendorName,
-          vendor_address: vendorAddress, recipient_email: cleanText(sub.data?.email, 254).toLowerCase(), encrypted_tax_id: encrypted.encrypted,
-          encryption_iv: encrypted.iv, encryption_key_version: 1, tax_id_last_four: String(identifier.tax_id_last_four) });
-      }
-      operation = 'batch.create';
-      const now = new Date().toISOString();
-      const { error: batchError } = await admin.from('vendor_1099_filing_batches').insert({ id: batchId, tax_year: taxYear, created_by: caller.id, updated_by: caller.id, created_at: now, updated_at: now });
-      if (batchError) return fail('Unable to create the filing batch.', 500, operation, batchError.code);
-      const { error: formsError } = await admin.from('vendor_1099_forms').insert(forms);
-      if (formsError) {
-        await admin.from('vendor_1099_filing_batches').delete().eq('id', batchId);
-        return fail('Unable to snapshot the vendor forms.', 500, operation, formsError.code);
-      }
-      return respond({ batch: { id: batchId, taxYear, status: 'draft', formCount: forms.length, totalCompensation: forms.reduce((sum, form) => sum + form.compensation, 0), createdAt: now } });
+      const year = Number(body.taxYear), rows = Array.isArray(body.rows) ? body.rows : []; if (!Number.isInteger(year) || year < 2000 || year > new Date().getFullYear() + 1 || !rows.length || rows.length > 500) return fail('Select a valid tax year and 1 to 500 ready vendors.', 400, 'batch.validate', 'invalid_batch');
+      const ids = rows.map((row: any) => text(row.subcontractorId, 200)); const [{ data: payerRow }, { data: subs }, { data: identifiers }] = await Promise.all([admin.from('vendor_1099_payer_profiles').select('*').eq('id', true).maybeSingle(), admin.from('subs').select('id,data').in('id', ids), admin.from('subcontractor_tax_identifiers').select('*').in('subcontractor_id', ids)]); if (!payer(payerRow).configured) return fail('Complete the payer profile before creating a filing batch.', 400, 'batch.validate', 'payer_incomplete');
+      const subMap = new Map((subs || []).map((item: any) => [String(item.id), item])), idMap = new Map((identifiers || []).map((item: any) => [String(item.subcontractor_id), item])), batchId = crypto.randomUUID(), forms: Record<string, any>[] = [];
+      for (const row of rows) { const id = text(row.subcontractorId, 200), sub: any = subMap.get(id), identity: any = idMap.get(id), amount = Math.round(Number(row.compensation || 0) * 100) / 100, name = text(identity?.legal_name || sub?.data?.legalName || sub?.data?.company || `${sub?.data?.first || ''} ${sub?.data?.last || ''}`, 240), address = text(identity?.mailing_address); if (!sub || !identity || !name || !address || !(amount > 0)) return fail('One or more vendors are no longer ready for filing.', 409, 'batch.validate', 'vendor_not_ready'); const formId = crypto.randomUUID(), tin = await decrypt(identity.encrypted_tax_id, identity.encryption_iv, `subcontractor:${id}`), secured = await encrypt(tin, `1099-form:${formId}`); forms.push({ id: formId, batch_id: batchId, subcontractor_id: id, compensation: amount, vendor_name: name, vendor_address: address, recipient_email: email(sub.data?.email), encrypted_tax_id: secured.encrypted, encryption_iv: secured.iv, encryption_key_version: 1, tax_id_last_four: identity.tax_id_last_four }); }
+      const now = new Date().toISOString(); const { error: batchError } = await admin.from('vendor_1099_filing_batches').insert({ id: batchId, tax_year: year, created_by: caller.id, updated_by: caller.id, created_at: now, updated_at: now }); if (batchError) return fail('Unable to create the filing batch.', 500, 'batch.create', batchError.code); const { error: formError } = await admin.from('vendor_1099_forms').insert(forms); if (formError) { await admin.from('vendor_1099_filing_batches').delete().eq('id', batchId); return fail('Unable to snapshot vendor forms.', 500, 'batch.create', formError.code); } return respond({ batch: { id: batchId, taxYear: year, status: 'draft', formCount: forms.length, totalCompensation: forms.reduce((sum, form) => sum + form.compensation, 0), forms: forms.map((form) => summary(form, year)), createdAt: now } });
     }
-
+    if (action === 'request-consent') {
+      const formId = text(body.formId, 100), { data: form } = await admin.from('vendor_1099_forms').select('*,vendor_1099_filing_batches(tax_year)').eq('id', formId).maybeSingle(), to = email(form?.recipient_email), year = Number(form?.vendor_1099_filing_batches?.tax_year); if (!form || !to || !year) return fail('Add a valid vendor email before requesting consent.', 400, 'consent.validate', 'recipient_email_required');
+      const rawToken = token(), expires = new Date(Date.now() + 30 * 86400000).toISOString(), now = new Date().toISOString(); const { error } = await admin.from('vendor_1099_forms').update({ consent_token_hash: await tokenHash(rawToken), consent_expires_at: expires, consent_requested_at: now, consent_sample_accessed_at: null, consent_disclosures: disclosures(year), delivery_status: 'consent_requested', delivery_updated_by: caller.id }).eq('id', formId); if (error) return fail('Unable to create the consent request.', 500, 'consent.save', error.code);
+      try { await sendMail(requestId, to, callerEmail, `${year} Form 1099 electronic-delivery consent`, `Hello ${form.vendor_name},\n\nDestiny Homes requests your consent to receive your ${year} Form 1099-NEC electronically as a PDF. Review the disclosures and test PDF access before consenting. This link expires ${new Date(expires).toLocaleString('en-US')}.`, link(rawToken), `consent:${formId}`); } catch (error) { await admin.from('vendor_1099_forms').update({ delivery_status: 'failed' }).eq('id', formId); return fail('The request was saved, but its email could not be sent.', 502, 'consent.email', error instanceof Error ? error.message : 'email_failed'); } return respond({ form: summary({ ...form, consent_requested_at: now, delivery_status: 'consent_requested' }, year) });
+    }
+    if (action === 'upload-recipient-pdf') {
+      const formId = text(body.formId, 100), name = text(body.fileName, 240), content = text(body.contentBase64, 15000000); let bytes: Uint8Array; try { bytes = from64(content); await PDFDocument.load(bytes); } catch { return fail('Choose a valid PDF recipient copy.', 400, 'recipient.upload', 'invalid_pdf'); } if (!name.toLowerCase().endsWith('.pdf') || !bytes.length || bytes.length > 10485760) return fail('Choose a PDF no larger than 10 MB.', 400, 'recipient.upload', 'invalid_pdf'); const { data: form } = await admin.from('vendor_1099_forms').select('*,vendor_1099_filing_batches(tax_year)').eq('id', formId).maybeSingle(); if (!form) return fail('The vendor form was not found.', 404, 'recipient.upload', 'not_found'); const year = Number(form.vendor_1099_filing_batches?.tax_year), path = `${year}/${form.batch_id}/${form.id}.pdf`, digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join(''); const { error: uploadError } = await admin.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', cacheControl: '0', upsert: true }); if (uploadError) return fail('Unable to store the recipient PDF.', 500, 'recipient.upload', uploadError.message); const status = form.consented_at ? 'consented' : form.delivery_status === 'consent_requested' ? 'consent_requested' : 'paper_required'; const { error } = await admin.from('vendor_1099_forms').update({ recipient_pdf_bucket: BUCKET, recipient_pdf_path: path, recipient_pdf_file_name: name, recipient_pdf_sha256: digest, delivery_status: status, delivery_updated_by: caller.id }).eq('id', formId); if (error) return fail('Unable to record the recipient PDF.', 500, 'recipient.upload', error.code); return respond({ form: summary({ ...form, recipient_pdf_file_name: name, delivery_status: status }, year) });
+    }
+    if (action === 'send-recipient-copy') {
+      const formId = text(body.formId, 100), { data: form } = await admin.from('vendor_1099_forms').select('*,vendor_1099_filing_batches(tax_year)').eq('id', formId).maybeSingle(), to = email(form?.recipient_email), year = Number(form?.vendor_1099_filing_batches?.tax_year); if (!form?.consented_at || !form?.recipient_pdf_path || !to) return fail('Consent, a recipient PDF, and a valid email are required.', 400, 'recipient.send', 'not_ready'); const rawToken = token(), now = new Date(), minimum = new Date(year + 1, 9, 15, 23, 59, 59), ninetyDays = new Date(now.getTime() + 90 * 86400000), expires = (minimum > ninetyDays ? minimum : ninetyDays).toISOString(); await admin.from('vendor_1099_forms').update({ recipient_access_token_hash: await tokenHash(rawToken), recipient_access_expires_at: expires, recipient_available_at: now.toISOString(), delivery_status: 'available', delivery_updated_by: caller.id }).eq('id', formId); try { await sendMail(requestId, to, callerEmail, `Your ${year} Form 1099-NEC is available`, `Hello ${form.vendor_name},\n\nYour ${year} Form 1099-NEC recipient copy is available through ${new Date(expires).toLocaleDateString('en-US')}.`, link(rawToken), `copy:${formId}`); } catch (error) { await admin.from('vendor_1099_forms').update({ delivery_status: 'failed' }).eq('id', formId); return fail('The secure copy was prepared, but its email could not be sent.', 502, 'recipient.send', error instanceof Error ? error.message : 'email_failed'); } const sent = new Date().toISOString(); await admin.from('vendor_1099_forms').update({ recipient_notice_sent_at: sent }).eq('id', formId); return respond({ form: summary({ ...form, recipient_available_at: now.toISOString(), recipient_notice_sent_at: sent, delivery_status: 'available' }, year) });
+    }
+    if (action === 'update-filing-status') {
+      const batchId = text(body.batchId, 100), jurisdiction = text(body.jurisdiction, 20), status = text(body.status, 30), confirmation = text(body.confirmation, 240), allowed = new Set(['not_submitted', 'submitted', 'accepted', 'rejected', 'corrected', 'not_required']); if (!batchId || !['federal', 'new_jersey'].includes(jurisdiction) || !allowed.has(status) || (jurisdiction === 'federal' && status === 'not_required')) return fail('Choose a valid filing status.', 400, 'filing.update', 'invalid_status'); const now = new Date().toISOString(), column = jurisdiction === 'federal' ? 'federal_status' : 'new_jersey_status', confirmationColumn = jurisdiction === 'federal' ? 'federal_confirmation' : 'new_jersey_confirmation'; const { error } = await admin.from('vendor_1099_filing_batches').update({ [confirmationColumn]: confirmation, updated_by: caller.id, updated_at: now, ...(status === 'submitted' ? { submitted_at: now, status: 'submitted' } : {}), ...(status === 'accepted' ? { accepted_at: now, status: 'accepted' } : {}) }).eq('id', batchId); if (error) return fail('Unable to update the filing batch.', 500, 'filing.update', error.code); await admin.from('vendor_1099_forms').update({ [column]: status }).eq('batch_id', batchId); return respond({ batchId, jurisdiction, status, confirmation, updatedAt: now });
+    }
+    if (action === 'download-preparation-export') {
+      const batchId = text(body.batchId, 100), jurisdiction = text(body.jurisdiction, 20); if (!batchId || !['federal', 'new_jersey'].includes(jurisdiction)) return fail('Choose a valid filing export.', 400, 'export.validate', 'invalid_export'); const [{ data: batch }, { data: payerRow }, { data: forms }] = await Promise.all([admin.from('vendor_1099_filing_batches').select('*').eq('id', batchId).maybeSingle(), admin.from('vendor_1099_payer_profiles').select('*').eq('id', true).maybeSingle(), admin.from('vendor_1099_forms').select('*').eq('batch_id', batchId).order('vendor_name')]); if (!batch || !payerRow || !forms?.length) return fail('The filing batch is unavailable.', 404, 'export.load', 'not_found'); const payerTin = await decrypt(payerRow.encrypted_tax_id, payerRow.encryption_iv, '1099-payer:default'), lines = [['Preparation only - not an agency upload file', 'Jurisdiction', 'Tax year', 'Form type', 'Payer legal name', 'Payer TIN', 'Payer address', 'Recipient name', 'Recipient TIN', 'Recipient address', 'Recipient email', 'NEC box 1 compensation'].map(csv).join(',')]; for (const form of forms) { const tin = await decrypt(form.encrypted_tax_id, form.encryption_iv, `1099-form:${form.id}`); lines.push(['PREPARATION ONLY', jurisdiction === 'federal' ? 'IRS IRIS' : 'New Jersey', batch.tax_year, form.form_type, payerRow.legal_name, payerTin, payerRow.mailing_address, form.vendor_name, tin, form.vendor_address, form.recipient_email, Number(form.compensation || 0).toFixed(2)].map(csv).join(',')); } return binary(new TextEncoder().encode(`\uFEFF${lines.join('\r\n')}\r\n`), `${batch.tax_year}-${jurisdiction}-1099-preparation.csv`, requestId, 'text/csv; charset=utf-8');
+    }
     return fail('Unsupported 1099 action.', 400, 'request.validate', 'invalid_action');
-  } catch (error) {
-    return fail('Unable to manage the 1099 filing workspace.', 500, operation, error instanceof Error ? error.name : 'unexpected_error');
-  }
+  } catch (error) { return fail('Unable to manage the 1099 filing workspace.', 500, operation, error instanceof Error ? error.name : 'unexpected_error'); }
 });

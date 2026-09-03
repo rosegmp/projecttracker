@@ -1,0 +1,39 @@
+name: Scheduled management reports
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 13 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-management-reports
+  cancel-in-progress: false
+
+jobs:
+  send:
+    name: Capture and send due management report
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      PRODUCTION_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      MANAGEMENT_REPORT_SCHEDULE_TOKEN: ${{ secrets.MANAGEMENT_REPORT_SCHEDULE_TOKEN }}
+    steps:
+      - name: Invoke protected reporting function
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PRODUCTION_SUPABASE_URL"
+          test -n "$MANAGEMENT_REPORT_SCHEDULE_TOKEN"
+          case "$PRODUCTION_SUPABASE_URL" in
+            https://oxojlwhmarafxuqvqgqg.supabase.co) ;;
+            *) echo "Refusing an unapproved Supabase project." >&2; exit 1 ;;
+          esac
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' --request POST --header 'content-type: application/json' --header "x-management-report-token: $MANAGEMENT_REPORT_SCHEDULE_TOKEN" --data '{}' "$PRODUCTION_SUPABASE_URL/functions/v1/send-management-report")"
+          test "$status" -ge 200 -a "$status" -lt 300
+          node -e 'const fs=require("fs");const result=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(`Management report: ${result.status}; sent=${result.sent||0}; skipped=${result.skipped||0}; failed=${result.failed||0}`);if((result.failed||0)>0)process.exit(1)' "$response_file"

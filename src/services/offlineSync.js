@@ -1,5 +1,6 @@
 import { createConstructionWorkflowService } from './constructionWorkflows.js';
 import {
+  addProjectPhotos,
   deleteProjectFileFromStorage,
   syncQueuedTask,
   syncQueuedProjectInspection,
@@ -87,6 +88,20 @@ async function materializeInspection(operation, storedAttachments) {
   return payload;
 }
 
+async function materializeProjectPhoto(operation, storedAttachments) {
+  const payload = { ...operation.payload };
+  if (payload.storageProvider === 'supabase' && payload.storageBucket && payload.storagePath) return payload;
+  const record = storedAttachments.find((item) => item.id === payload._offlineAttachmentId);
+  if (!record) throw new Error('A queued project photo is missing from device storage.');
+  const uploaded = {
+    ...payload,
+    ...(await uploadProjectFileToStorage(operation.projectId, 'photos', payload.id, browserFile(record), { upsert: false })),
+  };
+  delete uploaded._offlineAttachmentId;
+  updateOfflineOperation(operation.userId, operation.id, { payload: uploaded });
+  return uploaded;
+}
+
 async function syncOperation(operation) {
   const storedAttachments = operation.attachmentIds?.length
     ? await getOfflineAttachments(operation.id)
@@ -108,6 +123,10 @@ async function syncOperation(operation) {
     });
   }
   if (operation.kind === 'task.save') return syncQueuedTask(operation);
+  if (operation.kind === 'project-photo.upload') {
+    const photo = await materializeProjectPhoto(operation, storedAttachments);
+    return addProjectPhotos(operation.projectId, [photo]);
+  }
   if (operation.kind === 'warranty-item.save') {
     const service = createConstructionWorkflowService({
       projectId: operation.projectId,

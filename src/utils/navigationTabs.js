@@ -6,6 +6,7 @@ export const TOP_LEVEL_TAB_DEFS = [
   { id: 'tasks', label: 'Tasks', description: 'Tasks across visible projects.' },
   { id: 'people', label: 'People', description: 'Customers, subcontractors, employees, and contacts.' },
   { id: 'certificates', label: 'Compliance', description: 'Subcontractor insurance, agreements, and tax documentation.' },
+  { id: 'reports', label: 'Reports', description: 'Portfolio schedule, financial, approval, and closeout reporting.', required: true },
   { id: 'settings', label: 'Settings', description: 'Administration and workspace configuration.', required: true },
 ];
 

@@ -16,6 +16,7 @@ import { DEFAULT_VISIBLE_PROJECT_TABS, getVisibleProjectTabs } from './utils/pro
 import { reportError } from './services/observability.js';
 import {
   applyQueuedInspectionOperations,
+  applyQueuedProjectPhotoOperations,
   applyQueuedTaskOperations,
   getOfflineOperations,
   getOfflineOperationSummary,
@@ -34,9 +35,13 @@ import {
 } from './services/runtimeStatus.js';
 import * as trackerDataModule from './services/trackerData.js';
 import { consumeDigitalApprovalToken } from './services/digitalApprovals.js';
+import { consumeVendor1099RecipientToken } from './services/vendor1099Recipient.js';
 
 function applyQueuedFieldOperations(state, operations) {
-  return applyQueuedTaskOperations(applyQueuedInspectionOperations(state, operations), operations);
+  return applyQueuedProjectPhotoOperations(
+    applyQueuedTaskOperations(applyQueuedInspectionOperations(state, operations), operations),
+    operations,
+  );
 }
 
 const NativeProjectsView = lazy(() => import('./components/NativeProjectsView.jsx'));
@@ -45,9 +50,11 @@ const NativeScheduleView = lazy(() => import('./components/NativeScheduleView.js
 const NativeTasksView = lazy(() => import('./components/NativeTasksView.jsx'));
 const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'));
 const NativeCertificatesView = lazy(() => import('./components/NativeCertificatesView.jsx'));
+const ManagementReportingView = lazy(() => import('./components/ManagementReportingView.jsx'));
 const NativeSettingsView = lazy(() => import('./components/NativeSettingsView.jsx'));
 const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
 const DigitalApprovalPage = lazy(() => import('./components/DigitalApprovalPage.jsx'));
+const Vendor1099RecipientPage = lazy(() => import('./components/Vendor1099RecipientPage.jsx'));
 const NativeFilesView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativeFilesView })),
 );
@@ -138,6 +145,11 @@ const tabs = [
     description: 'Track subcontractor insurance, agreements, tax documents, and renewal history.',
   },
   {
+    id: 'reports',
+    label: 'Reports',
+    description: 'Portfolio schedule, financial, approval, and closeout reporting.',
+  },
+  {
     id: 'settings',
     label: 'Settings',
     description: 'Controls that shape date calculations, calendar visibility, and page-level display helpers.',
@@ -175,7 +187,7 @@ function getUserCapabilities(role) {
     normalizedRole === 'Admin'
       ? tabs.map((tab) => tab.id)
       : normalizedRole === 'Edit'
-        ? tabs.filter((tab) => tab.id !== 'settings').map((tab) => tab.id)
+        ? tabs.filter((tab) => !['settings', 'reports'].includes(tab.id)).map((tab) => tab.id)
         : readOnlyAllowedTabs;
 
   return {
@@ -250,6 +262,7 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
 export default function App() {
   const nativeAndroid = isNativeAndroidApp();
   const [digitalApprovalToken] = useState(() => consumeDigitalApprovalToken());
+  const [vendor1099RecipientToken] = useState(() => consumeVendor1099RecipientToken());
   const [activeTab, setActiveTab] = useState(() => nativeAndroid ? 'home' : getTabFromLocation());
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
@@ -608,7 +621,11 @@ export default function App() {
       setOfflineSyncSummary({ total: 0, pending: 0, syncing: 0, needsAttention: 0 });
       return undefined;
     }
-    const updateSummary = () => setOfflineSyncSummary(getOfflineOperationSummary(userId));
+    const updateSummary = () => {
+      const operations = getOfflineOperations(userId);
+      setOfflineSyncSummary(getOfflineOperationSummary(userId));
+      if (operations.length) setTrackerState((current) => applyQueuedFieldOperations(current, operations));
+    };
     const syncNow = () => {
       updateSummary();
       if (runtimeStatus.writesFrozen) return;
@@ -716,14 +733,18 @@ export default function App() {
   function offlineOperationLabel(operation) {
     const projectName = trackerState.projects.find((project) => project.id === operation.projectId)?.name || 'Project';
     const record = operation.payload || {};
-    const recordName = operation.kind === 'daily-log.save'
+    const recordName = operation.kind === 'project-photo.upload'
+      ? record.name || record.originalName || 'Project photo'
+      : operation.kind === 'daily-log.save'
       ? record.date || record.title || 'Daily log'
       : operation.kind === 'task.save'
         ? record.label || 'Task'
         : operation.kind === 'warranty-item.save'
           ? record.number || record.title || 'Warranty item'
           : record.subcode || record.inspectionType || 'Inspection';
-    const deviceSummary = operation.kind === 'daily-log.save'
+    const deviceSummary = operation.kind === 'project-photo.upload'
+      ? [record.type, record.size ? `${Math.max(1, Math.round(Number(record.size) / 1024))} KB` : ''].filter(Boolean).join(' · ')
+      : operation.kind === 'daily-log.save'
       ? [record.weather, record.notes, record.delays, record.issues].find((value) => String(value || '').trim())
       : operation.kind === 'task.save'
         ? [record.done ? 'Done' : 'Open', record.due, ...(record.assignees || [])].filter((value) => String(value || '').trim()).join(' · ')
@@ -756,6 +777,14 @@ export default function App() {
     if (!confirmed) return;
     setOfflineReviewBusyId(operation.id);
     try {
+      if (operation.kind === 'project-photo.upload' && operation.payload?.storagePath) {
+        try {
+          await trackerDataModule.deleteProjectFileFromStorage(operation.payload);
+        } catch (error) {
+          await showAppAlert(error instanceof Error ? error.message : 'The uploaded photo could not be removed.', 'Discard failed');
+          return;
+        }
+      }
       await removeOfflineAttachments(operation.id);
       removeOfflineOperation(userId, operation.id);
       await refreshData({ force: true });
@@ -1601,6 +1630,10 @@ export default function App() {
     return <Suspense fallback={<WorkspaceSplash message="Loading secure approval" />}><DigitalApprovalPage token={digitalApprovalToken} /></Suspense>;
   }
 
+  if (vendor1099RecipientToken) {
+    return <Suspense fallback={<WorkspaceSplash message="Loading secure tax document" />}><Vendor1099RecipientPage token={vendor1099RecipientToken} /></Suspense>;
+  }
+
   if (authLoading) {
     return <WorkspaceSplash message="Preparing sign-in" />;
   }
@@ -1754,6 +1787,10 @@ export default function App() {
       );
     }
 
+    if (activeTab === 'reports') {
+      return <ManagementReportingView data={trackerState} activeUser={activeUser} />;
+    }
+
     if (activeTab === 'settings') {
       return (
         <NativeSettingsView
@@ -1809,7 +1846,7 @@ export default function App() {
                       <div>
                         <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.status === 'syncing' ? 'Syncing' : 'Saved on device'}</span>
                         <h3>{operation.action === 'delete' ? `Delete ${recordName}` : recordName}</h3>
-                        <p>{projectName} · {operation.kind === 'daily-log.save' ? 'Daily log' : operation.kind === 'task.save' ? 'Task' : operation.kind === 'warranty-item.save' ? 'Warranty item' : 'Inspection'}</p>
+                        <p>{projectName} · {operation.kind === 'project-photo.upload' ? 'Project photo' : operation.kind === 'daily-log.save' ? 'Daily log' : operation.kind === 'task.save' ? 'Task' : operation.kind === 'warranty-item.save' ? 'Warranty item' : 'Inspection'}</p>
                         {deviceSummary ? <p><strong>Device copy:</strong> {deviceSummary}</p> : null}
                         {operation.lastError ? <p className="offline-review-error">{operation.lastError}</p> : null}
                         <small>Saved {operation.updatedAt ? new Date(operation.updatedAt).toLocaleString() : 'on this device'}</small>

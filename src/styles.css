@@ -1965,6 +1965,18 @@ a {
   }
 }
 
+@media print {
+  body:has(.management-reporting) * { visibility: hidden; }
+  .management-reporting, .management-reporting * { visibility: visible; }
+  .management-reporting { position: absolute; inset: 0; width: 100%; padding: 0; box-shadow: none; }
+  .management-report-actions, .management-report-filters, .management-reporting .vendor-1099-guidance { display: none !important; }
+  .management-report-summary { grid-template-columns: repeat(3, 1fr); }
+  .management-report-table-wrap { max-height: none; overflow: visible; border: 0; }
+  .management-report-table { min-width: 0; font-size: 9pt; }
+  .management-report-table th { position: static; }
+  .management-report-table tr { break-inside: avoid; }
+}
+
 .digital-approval-page {
   min-height: 100vh;
   display: grid;
@@ -2134,6 +2146,56 @@ a {
 .vendor-1099-batches > div:last-child { border-bottom: 0; }
 .vendor-1099-batches > div > div { display: grid; gap: 2px; }
 .vendor-1099-batches > div > div span { color: var(--muted); font-size: .8rem; }
+.vendor-1099-batch { border-bottom: 1px solid var(--border); }
+.vendor-1099-batch:last-child { border-bottom: 0; }
+.vendor-1099-batch-summary { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.vendor-1099-batch-summary > span:first-child { display: grid; gap: 3px; }
+.vendor-1099-batch-summary small { color: var(--muted); font-size: .8rem; }
+.vendor-1099-batch-detail { display: grid; gap: 14px; padding: 0 0 16px; }
+.vendor-1099-jurisdictions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--border); }
+.vendor-1099-jurisdictions > div { display: grid; gap: 7px; padding: 12px; border-right: 1px solid var(--border); }
+.vendor-1099-jurisdictions > div:last-child { border-right: 0; }
+.vendor-1099-jurisdictions > div > span { color: var(--muted); font-size: .82rem; text-transform: capitalize; }
+.vendor-1099-jurisdictions > div > div, .vendor-1099-row-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.vendor-1099-delivery-list { display: grid; overflow-x: auto; }
+.vendor-1099-delivery-row { display: grid; grid-template-columns: minmax(190px, 1.2fr) minmax(105px, .65fr) minmax(150px, .8fr) minmax(310px, 1.5fr); gap: 12px; align-items: center; min-width: 850px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.vendor-1099-delivery-row.heading { color: var(--muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; }
+.vendor-1099-delivery-row > span:first-child { display: grid; gap: 2px; }
+.vendor-1099-delivery-row small { color: var(--muted); }
+.management-reporting { display: grid; gap: 18px; min-width: 0; }
+.management-report-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.management-report-header h1, .management-report-header p { margin: 0; }
+.management-report-header h1 { margin-block: 2px 6px; }
+.management-report-header > div:first-child > p:last-child { color: var(--muted); }
+.management-report-actions, .management-report-filters { display: flex; flex-wrap: wrap; gap: 9px; align-items: flex-end; }
+.management-report-filters { padding-block: 12px; border-block: 1px solid var(--border); }
+.management-report-filters > label { display: grid; gap: 5px; color: var(--muted); font-size: .8rem; font-weight: 700; }
+.management-report-search { flex: 1 1 220px; }
+.management-report-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-block: 1px solid var(--border); }
+.management-report-summary > div { display: grid; gap: 4px; padding: 13px; border-right: 1px solid var(--border); }
+.management-report-summary > div:last-child { border-right: 0; }
+.management-report-summary span { color: var(--muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; }
+.management-report-summary strong { font-size: 1.15rem; }
+.management-report-summary small { color: var(--muted); }
+.management-reporting .is-warning { color: #b42318; }
+.management-report-table-wrap { max-height: min(64vh, 740px); overflow: auto; border: 1px solid var(--border); }
+.management-report-table { width: 100%; min-width: 940px; border-collapse: collapse; }
+.management-report-table th { position: sticky; top: 0; z-index: 1; padding: 10px 12px; background: var(--surface); color: var(--muted); text-align: left; border-bottom: 1px solid var(--border); }
+.management-report-table td { padding: 12px; vertical-align: top; border-bottom: 1px solid var(--border); }
+.management-report-table td strong, .management-report-table td small { display: block; }
+.management-report-table td small { margin-top: 3px; color: var(--muted); }
+.management-history-section { display: grid; gap: 13px; padding-top: 6px; border-top: 1px solid var(--border); }
+.management-history-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; }
+.management-history-heading h2, .management-history-heading p { margin: 0; }
+.management-history-heading h2 { margin-block: 2px 5px; }
+.management-history-heading > div > p:last-child { color: var(--muted); }
+.management-history-heading > label { display: grid; gap: 5px; color: var(--muted); font-size: .8rem; font-weight: 700; }
+.management-compliance-trend { display: flex; align-items: flex-end; gap: 12px; min-height: 220px; padding: 18px 12px 8px; overflow-x: auto; border-block: 1px solid var(--border); }
+.management-trend-column { display: grid; grid-template-rows: 150px auto auto auto; justify-items: center; gap: 3px; min-width: 72px; }
+.management-trend-bar { width: 34px; height: 150px; display: flex; align-items: flex-end; background: var(--surface-subtle); border: 1px solid var(--border); }
+.management-trend-bar span { display: block; width: 100%; min-height: 2px; background: var(--brand); }
+.management-trend-column small { color: var(--muted); font-size: .72rem; }
+.subcontractor-measures-table { min-width: 1040px; }
 .vendor-1099-table-wrap { overflow: auto; max-height: min(62vh, 720px); border: 1px solid var(--border); }
 .vendor-1099-table { width: 100%; min-width: 1080px; border-collapse: collapse; font-size: .88rem; }
 .vendor-1099-table th { position: sticky; top: 0; z-index: 1; padding: 10px 12px; background: var(--surface); border-bottom: 1px solid var(--border); color: var(--muted); text-align: left; white-space: nowrap; }
@@ -2162,6 +2224,12 @@ a {
   .vendor-1099-filing-status > div:last-child { border-bottom: 0; }
   .vendor-1099-payer-form { grid-template-columns: 1fr; }
   .vendor-1099-payer-form .wide { grid-column: auto; }
+  .vendor-1099-jurisdictions { grid-template-columns: 1fr; }
+  .vendor-1099-jurisdictions > div { border-right: 0; border-bottom: 1px solid var(--border); }
+  .management-report-header { display: grid; }
+  .management-report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .management-report-summary > div:nth-child(2n) { border-right: 0; }
+  .management-history-heading { display: grid; align-items: start; }
   .vendor-1099-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vendor-1099-summary > div:nth-child(2) { border-right: 0; }
   .vendor-payment-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

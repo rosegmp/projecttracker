@@ -29,6 +29,7 @@ export function consumeDigitalApprovalToken() {
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
     return match[1];
   }
+  if (window.location.hash) return '';
   return window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
 }
 
