@@ -242,3 +242,52 @@ test('Backup retention refuses objects outside the approved encrypted prefix', a
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test('Backup deletion response accepts an empty quiet-mode success', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-deletion-response-test-'));
+  try {
+    const responsePath = path.join(temporaryRoot, 'delete-result.json');
+    await writeFile(responsePath, '');
+    const result = await runNode('scripts/count-backup-deletion-errors.mjs', [responsePath]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, '0');
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('Backup deletion response counts provider errors without logging their details', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-deletion-errors-test-'));
+  try {
+    const responsePath = path.join(temporaryRoot, 'delete-result.json');
+    await writeFile(responsePath, JSON.stringify({
+      Errors: [
+        { Key: 'private-object-name', Code: 'AccessDenied' },
+        { Key: 'another-private-object-name', Code: 'InvalidRequest' },
+      ],
+    }));
+    const result = await runNode('scripts/count-backup-deletion-errors.mjs', [responsePath]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, '2');
+    assert.doesNotMatch(result.stdout + result.stderr, /private-object-name|AccessDenied/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('Backup deletion response fails closed on malformed provider output', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'project-tracker-deletion-malformed-test-'));
+  try {
+    const responsePath = path.join(temporaryRoot, 'delete-result.json');
+    await writeFile(responsePath, '{"Errors":');
+    const result = await runNode('scripts/count-backup-deletion-errors.mjs', [responsePath]);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /validation failed/);
+    assert.doesNotMatch(result.stdout + result.stderr, /Unexpected end|SyntaxError/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
