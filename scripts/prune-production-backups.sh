@@ -63,7 +63,7 @@ if [ "$delete_count" -gt 0 ]; then
     --endpoint-url "$B2_ENDPOINT" \
     "${bypass_arguments[@]}" \
     --output json > "$delete_result"
-  delete_errors="$(node -p "(JSON.parse(require('fs').readFileSync(process.argv[1])).Errors || []).length" "$delete_result")"
+  delete_errors="$(node scripts/count-backup-deletion-errors.mjs "$delete_result")"
   [ "$delete_errors" -eq 0 ] || fail "B2 rejected one or more approved backup deletions"
 fi
 
