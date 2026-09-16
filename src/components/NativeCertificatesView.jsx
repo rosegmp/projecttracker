@@ -10,6 +10,7 @@ import {
   certificateEligible,
   certificateMatchesStatusFilter,
   certificateStatus,
+  complianceMatchesRequirementStatusFilter,
   sortCertificatesByExpiration,
   subcontractorComplianceStatus,
   subcontractorCertificateStatus,
@@ -1390,7 +1391,11 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         if (!generalLiability || generalLiability.satisfied !== (statusFilter === 'liability-compliant')) return false;
       } else if (['compliant', 'needs-attention'].includes(statusFilter)) {
         if (complianceStatus.id !== statusFilter) return false;
-      } else if (!certificateMatchesStatusFilter(insuranceStatus.id, statusFilter)) return false;
+      } else {
+        const requirementMatch = complianceMatchesRequirementStatusFilter(complianceStatus, statusFilter);
+        if (requirementMatch === false) return false;
+        if (requirementMatch === null && !certificateMatchesStatusFilter(insuranceStatus.id, statusFilter)) return false;
+      }
       if (subcontractorFilter !== 'all' && subcontractor.id !== subcontractorFilter) return false;
       if (!needle) return true;
       return [
@@ -1575,6 +1580,9 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                 <option value="needs-attention">Needs attention</option>
                 <option value="liability-compliant">Liability compliant</option>
                 <option value="liability-non-compliant">Liability non-compliant</option>
+                <option value="workers-comp-non-compliant">Workers Comp non-compliant</option>
+                <option value="agreement-missing">Agreement missing</option>
+                <option value="w9-missing">Form W-9 missing</option>
                 <option value="expired-expiring">Expired / expiring</option>
                 <option value="active">Active</option>
                 <option value="expiring">Expiring soon</option>

@@ -116,7 +116,12 @@ import {
   findClosestSubcontractor,
   normalizeSubcontractorName,
 } from '../src/utils/certificateMatching.js';
-import { certificateMatchesStatusFilter, subcontractorComplianceStatus } from '../src/utils/certificateStatus.js';
+import {
+  certificateMatchesStatusFilter,
+  complianceMatchesRequirementStatusFilter,
+  complianceRequirementStatusId,
+  subcontractorComplianceStatus,
+} from '../src/utils/certificateStatus.js';
 import { buildVendor1099Review, legacyUnallocatedPaidAmount, reportingThresholdForYear, totalPaidAmount } from '../src/utils/vendorReporting.js';
 import { parseVendor1099Rows, suggestVendor1099Matches } from '../src/utils/vendor1099Spreadsheet.js';
 import { is1099ReportingCompanyType, normalizeCompanyType } from '../src/utils/companyType.js';
@@ -1336,6 +1341,15 @@ const tests = [
       }], documents, '2026-07-16');
       assert.equal(expiredWorkersComp.id, 'compliant');
       assert.deepEqual(expiredWorkersComp.missing, []);
+      assert.equal(complianceRequirementStatusId(expiredWorkersComp, 'workers_compensation'), 'expired');
+      assert.equal(complianceRequirementStatusId(compliant, 'subcontractor_agreement'), 'on-file');
+      assert.equal(complianceRequirementStatusId(compliant, 'w9'), 'on-file');
+      assert.equal(complianceRequirementStatusId(exempt, 'w9'), 'exempt');
+      assert.equal(complianceMatchesRequirementStatusFilter(expiredWorkersComp, 'workers-comp-non-compliant'), true);
+      assert.equal(complianceMatchesRequirementStatusFilter(missingDocuments, 'agreement-missing'), true);
+      assert.equal(complianceMatchesRequirementStatusFilter(missingDocuments, 'w9-missing'), true);
+      assert.equal(complianceMatchesRequirementStatusFilter({ id: 'inactive' }, 'all'), null);
+      assert.equal(complianceMatchesRequirementStatusFilter({ id: 'inactive' }, 'agreement-missing'), false);
 
       const legacyWaiver = subcontractorComplianceStatus(
         { ...subcontractor, certificateRequirement: 'not_required' },
@@ -5552,6 +5566,10 @@ const tests = [
       assert.match(componentSource, /const \[activityFilter, setActivityFilter\] = useState\('active'\)/);
       assert.match(componentSource, /Active subcontractors/);
       assert.match(componentSource, /Inactive subcontractors/);
+      assert.match(componentSource, /complianceMatchesRequirementStatusFilter\(complianceStatus, statusFilter\)/);
+      assert.match(componentSource, /Workers Comp non-compliant/);
+      assert.match(componentSource, /Agreement missing/);
+      assert.match(componentSource, /Form W-9 missing/);
       assert.match(componentSource, /activityFilter === 'active' && subcontractor\.inactive === true/);
       assert.match(componentSource, /const activityRoster = subcontractorRoster\.filter/);
       assert.match(componentSource, /total: activityRoster\.length/);

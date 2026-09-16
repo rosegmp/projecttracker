@@ -42,6 +42,33 @@ export function certificateMatchesStatusFilter(statusId, filterId = 'all') {
   return statusId === filterId;
 }
 
+export function complianceRequirementStatusId(complianceStatus, requirementId) {
+  if (complianceStatus?.id === 'inactive') return 'inactive';
+  if (requirementId === 'workers_compensation') {
+    return complianceStatus?.workersCompensation?.status?.id || 'missing';
+  }
+  const requirement = (complianceStatus?.requirements || [])
+    .find((item) => item.id === requirementId);
+  if (!requirement?.satisfied) return 'missing';
+  if (requirementId === 'w9' && requirement.detail === 'Not subject to 1099 reporting') return 'exempt';
+  return 'on-file';
+}
+
+export function complianceMatchesRequirementStatusFilter(complianceStatus, filterId) {
+  if (!['workers-comp-non-compliant', 'agreement-missing', 'w9-missing'].includes(filterId)) return null;
+  if (complianceStatus?.id === 'inactive') return false;
+  if (filterId === 'workers-comp-non-compliant') {
+    return !['active', 'expiring'].includes(complianceRequirementStatusId(complianceStatus, 'workers_compensation'));
+  }
+  if (filterId === 'agreement-missing') {
+    return complianceRequirementStatusId(complianceStatus, 'subcontractor_agreement') === 'missing';
+  }
+  if (filterId === 'w9-missing') {
+    return complianceRequirementStatusId(complianceStatus, 'w9') === 'missing';
+  }
+  return false;
+}
+
 export function certificateRequired(subcontractor) {
   return subcontractor?.inactive !== true;
 }
