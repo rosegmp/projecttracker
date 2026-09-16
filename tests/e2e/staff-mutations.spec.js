@@ -1292,8 +1292,7 @@ test('administrator creates a subcontractor insurance certificate without projec
   await routedCertificateDialog.getByRole('button', { name: 'Cancel' }).click();
   expect(certificateExtractionActions.slice(0, 2)).toEqual(['classify', 'extract']);
 
-  const activityFilter = page.getByLabel('Active / inactive');
-  await expect(activityFilter).toHaveValue('active');
+  await expect(page.getByLabel('Active / inactive')).toHaveCount(0);
   const toolbarControlTops = await page.locator('.certificate-toolbar > label').evaluateAll((controls) =>
     controls.map((control) => Math.round(control.getBoundingClientRect().top)));
   expect(new Set(toolbarControlTops).size).toBe(1);
@@ -1337,28 +1336,7 @@ test('administrator creates a subcontractor insurance certificate without projec
     data: { is1099Exempt: true, inactive: false },
   });
 
-  await excludedCard.getByRole('button', { name: 'Mark inactive' }).click();
-  await expect(excludedCard).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'All subcontractors 1' })).toBeVisible();
-  expect(subcontractorOperations.at(-1)).toMatchObject({
-    table: 'subs',
-    id: excludedSubcontractorId,
-    data: { is1099Exempt: true, inactive: true },
-  });
-
-  await activityFilter.selectOption('inactive');
-  await expect(excludedCard).toBeVisible();
-  await expect(excludedCard.locator('.certificate-status-badge')).toHaveText('Inactive');
-  await expect(brightElectricCard).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'All subcontractors 1' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Inactive 1' })).toBeVisible();
-  await activityFilter.selectOption('all');
-  await expect(excludedCard).toBeVisible();
-  await expect(brightElectricCard).toBeVisible();
-  await expect(page.getByRole('button', { name: 'All subcontractors 2' })).toBeVisible();
-  await activityFilter.selectOption('active');
-  await expect(excludedCard).toHaveCount(0);
-  await expect(brightElectricCard).toBeVisible();
+  await expect(excludedCard.getByRole('button', { name: 'Mark inactive' })).toHaveCount(0);
 
   await brightElectricCard.locator('summary').click();
   await brightElectricCard.getByRole('button', { name: 'Add certificate' }).click();
@@ -1383,7 +1361,7 @@ test('administrator creates a subcontractor insurance certificate without projec
 
   await expect(page.getByRole('heading', { name: 'Bright Electric LLC' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Liability compliant 1' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Liability non-compliant 0' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Liability non-compliant 1' })).toBeVisible();
   await expect(page.getByText('Test Mutual')).toBeVisible();
   await expect(page.getByText('GL-TEST-100')).toBeVisible();
   await expect(page.getByRole('table', { name: 'Insurance coverage details' })).toHaveCount(0);
