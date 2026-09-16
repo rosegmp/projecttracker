@@ -9,13 +9,14 @@ import { useEntityMutations } from '../hooks/useEntityMutations.js';
 const PersonModal = lazy(() => import('./PersonModal.jsx'));
 import { DashboardStat, PageStats } from './SharedUI.jsx';
 
-const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
+const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'status', 'role', 'phone', 'email', 'tags'];
 const PEOPLE_VIEW_MODE_KEY = 'cx_people_view_mode';
 const PEOPLE_LIST_ACTIONS_WIDTH = 92;
-const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = { company: 220, name: 220, companyType: 260, role: 180, phone: 170, email: 240, tags: 200 };
+const DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS = { company: 220, name: 220, status: 140, companyType: 260, role: 180, phone: 170, email: 240, tags: 200 };
 const PEOPLE_LIST_COLUMN_DEFS = [
   { id: 'name', label: 'Name', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.name },
   { id: 'company', label: 'Company', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.company },
+  { id: 'status', label: 'Status', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.status },
   { id: 'companyType', label: 'Company Type', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.companyType },
   { id: 'role', label: 'Role', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.role },
   { id: 'phone', label: 'Phone', width: DEFAULT_PEOPLE_LIST_COLUMN_WIDTHS.phone },
@@ -60,13 +61,13 @@ function PersonCard({ person, type, onEdit, onDelete, saving }) {
     : person.role || typeMeta.label;
 
   return (
-    <article className="person-card">
+    <article className={`person-card${person.inactive ? ' is-inactive' : ''}`}>
       <div className="person-card-top">
         <div className="person-card-header">
           <div className="person-avatar">{personInitials(person)}</div>
           <div>
             <h3>{header}</h3>
-            <p className="person-subtitle">{secondary}</p>
+            <p className="person-subtitle">{secondary}{person.inactive ? ' · Inactive' : ''}</p>
           </div>
         </div>
         <div className="task-row-actions person-card-actions">
@@ -238,6 +239,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
   function getValue(person, columnId) {
     if (columnId === 'name') return `${person.first || ''} ${person.last || ''}`.trim() || 'Not provided';
     if (columnId === 'company') return person.company || 'Not provided';
+    if (columnId === 'status') return person.inactive ? 'Inactive' : 'Active';
     if (columnId === 'companyType') return person.companyType || 'Not provided';
     if (columnId === 'role') return person.role || 'Not provided';
     if (columnId === 'phone') return person.phone || 'Not provided';
@@ -273,7 +275,7 @@ function PeopleListTable({ people, type, columns, boldColumns, onEdit, onDelete,
       </div>
       {virtualRange.beforeSize ? <div className="virtual-list-spacer" style={{ height: `${virtualRange.beforeSize}px` }} aria-hidden="true" /> : null}
       {visiblePeople.map((person) => (
-        <div key={person.id} className="people-list-row" role="row" style={{ gridTemplateColumns }}>
+        <div key={person.id} className={`people-list-row${person.inactive ? ' is-inactive' : ''}`} role="row" style={{ gridTemplateColumns }}>
           {activeColumns.map((column) => (
             <span key={column.id}>
               {column.id === 'email' && person.email ? (
@@ -428,6 +430,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       notes: '',
       tags: '',
       type: nextType,
+      inactive: false,
     });
   }
 
@@ -446,6 +449,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
       notes: person.notes || '',
       tags: splitTags(person.tags).join(', '),
       type: personType,
+      inactive: person.inactive === true,
     });
   }
 
@@ -494,7 +498,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
   }
 
   function handleExportPeople() {
-    const headers = ['first', 'last', 'company', 'legalName', 'companyType', 'role', 'phone', 'email', 'license', 'notes', 'tags'];
+    const headers = ['first', 'last', 'company', 'legalName', 'companyType', 'role', 'phone', 'email', 'license', 'notes', 'tags', 'inactive'];
     const csv = [
       headers.join(','),
       ...filteredPeople.map((person) =>
@@ -546,6 +550,7 @@ export default function NativePeopleView({ data, onStateChange, refresh, loading
             license: record.license || record.credential || '',
             notes: record.notes || '',
             tags: record.tags || '',
+            inactive: ['true', 'yes', '1', 'inactive'].includes(String(record.inactive || '').toLowerCase()),
           };
         })
         .filter((person) => person.first || person.last || person.company);

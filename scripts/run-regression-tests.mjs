@@ -1883,15 +1883,44 @@ const tests = [
     },
   },
   {
-    name: 'assignee helpers deduplicate labels and prefer records with email',
+    name: 'assignee helpers exclude inactive people, deduplicate labels, and prefer records with email',
     run() {
       const subs = [{ first: 'Alex', last: 'Smith', company: 'Build Co', email: '' }];
       const employees = [
         { first: 'Alex', last: 'Smith', company: 'Build Co', email: 'alex@example.com' },
         { first: 'Jamie', last: 'Jones', company: '', email: 'jamie@example.com' },
+        { first: 'Taylor', last: 'Inactive', company: '', email: 'taylor@example.com', inactive: true },
       ];
       assert.deepEqual(buildTaskAssigneeOptions(subs, employees), ['Alex Smith (Build Co)', 'Jamie Jones']);
       assert.equal(buildTaskAssigneeDirectory(subs, employees).get('Alex Smith (Build Co)').email, 'alex@example.com');
+      assert.equal(buildTaskAssigneeDirectory(subs, employees).has('Taylor Inactive'), false);
+    },
+  },
+  {
+    name: 'all People types can be made inactive and are excluded from new usage and compliance',
+    async run() {
+      const [peopleSource, modalSource, trackerSource, certificateSource, settingsSource, budgetSource, rfiSource, warrantySource, workflowSource] = await Promise.all([
+        readFile(new URL('../src/components/NativePeopleView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/PersonModal.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/services/trackerData.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeCertificatesView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectBudgetCommitmentsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectRfiSubmittalsManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWarrantyCloseoutManager.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/components/ProjectWorkflowManager.jsx', import.meta.url), 'utf8'),
+      ]);
+      assert.match(modalSource, /checked=\{draft\.inactive === true\}/);
+      assert.match(peopleSource, /inactive: person\.inactive === true/);
+      assert.match(peopleSource, /person\.inactive \? 'Inactive' : 'Active'/);
+      assert.match(trackerSource, /inactive: person\.inactive === true/);
+      assert.match(trackerSource, /inactive: payload\.inactive === true/);
+      assert.match(certificateSource, /filter\(\(subcontractor\) => subcontractor\.inactive !== true\)/);
+      assert.match(settingsSource, /isPersonActive\(person\)/);
+      assert.match(budgetSource, /filter\(isPersonActive\)/);
+      assert.match(rfiSource, /filter\(isPersonActive\)/);
+      assert.match(warrantySource, /filter\(isPersonActive\)/);
+      assert.match(workflowSource, /filter\(\(person\) => person\.inactive !== true\)/);
     },
   },
   {
@@ -5562,17 +5591,14 @@ const tests = [
       assert.match(componentSource, /Remove W-9 exemption/);
       assert.match(componentSource, /Subcontractor agreement/);
       assert.match(componentSource, /Form W-9/);
-      assert.match(componentSource, /Mark inactive/);
-      assert.match(componentSource, /const \[activityFilter, setActivityFilter\] = useState\('active'\)/);
-      assert.match(componentSource, /Active subcontractors/);
-      assert.match(componentSource, /Inactive subcontractors/);
+      assert.match(componentSource, /filter\(\(subcontractor\) => subcontractor\.inactive !== true\)/);
+      assert.doesNotMatch(componentSource, /Mark inactive/);
+      assert.doesNotMatch(componentSource, /const \[activityFilter, setActivityFilter\]/);
       assert.match(componentSource, /complianceMatchesRequirementStatusFilter\(complianceStatus, statusFilter\)/);
       assert.match(componentSource, /Workers Comp non-compliant/);
       assert.match(componentSource, /Agreement missing/);
       assert.match(componentSource, /Form W-9 missing/);
-      assert.match(componentSource, /activityFilter === 'active' && subcontractor\.inactive === true/);
-      assert.match(componentSource, /const activityRoster = subcontractorRoster\.filter/);
-      assert.match(componentSource, /total: activityRoster\.length/);
+      assert.match(componentSource, /total: subcontractorRoster\.length/);
       assert.match(componentSource, /updatePerson\(data, 'sub'/);
       assert.match(componentSource, /findClosestSubcontractor/);
       assert.doesNotMatch(componentSource, /projectId|projectFilter|Project required/);

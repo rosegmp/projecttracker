@@ -91,6 +91,14 @@ export default function PersonModal({ draft, type, isEditing, saving, onChange, 
             <span>Notes</span>
             <textarea value={draft.notes} onChange={(event) => onChange('notes', event.target.value)} />
           </label>
+          <label className="full checkbox-field">
+            <input
+              type="checkbox"
+              checked={draft.inactive === true}
+              onChange={(event) => onChange('inactive', event.target.checked)}
+            />
+            <span>Inactive — hide this person from assignments, vendor lists, access linking, and compliance</span>
+          </label>
         </div>
 
         <div className="modal-actions">

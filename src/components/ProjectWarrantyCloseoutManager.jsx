@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { getOfflineOperations, subscribeToOfflineOperations } from '../services/offlineOperations.js';
 import { getStoredAuthSession } from '../services/trackerData.js';
-import { personAssignmentLabel } from '../utils/accessUi.js';
+import { isPersonActive, personAssignmentLabel } from '../utils/accessUi.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -181,12 +181,13 @@ function StaffWarrantyCloseoutManager({ project, data, canEdit = true, navigatio
   );
 
   const subcontractorOptions = useMemo(() => (data?.subs || [])
+    .filter(isPersonActive)
     .map((person) => ({ id: String(person.id || ''), label: companyFirstName(person) }))
     .filter((person) => person.id)
     .sort((a, b) => a.label.localeCompare(b.label)), [data?.subs]);
   const responsibleOptions = useMemo(() => [
     ...subcontractorOptions,
-    ...(data?.employees || []).map((person) => ({ id: String(person.id || ''), label: personAssignmentLabel(person) })),
+    ...(data?.employees || []).filter(isPersonActive).map((person) => ({ id: String(person.id || ''), label: personAssignmentLabel(person) })),
   ].filter((person) => person.id).sort((a, b) => a.label.localeCompare(b.label)), [data?.employees, subcontractorOptions]);
 
   const summary = useMemo(() => {

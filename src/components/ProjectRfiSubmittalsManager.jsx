@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
-import { personAssignmentLabel } from '../utils/accessUi.js';
+import { isPersonActive, personAssignmentLabel } from '../utils/accessUi.js';
 import { formatShortDate } from '../utils/calendarUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -75,11 +75,12 @@ export default function ProjectRfiSubmittalsManager({ project, data, canEdit = t
   const meta = TYPES[activeType];
 
   const responsibleOptions = useMemo(() => [
-    ...(data?.subs || []).map((person) => ({ id: String(person.id), label: companyFirstName(person) })),
-    ...(data?.employees || []).map((person) => ({ id: String(person.id), label: personAssignmentLabel(person) })),
+    ...(data?.subs || []).filter(isPersonActive).map((person) => ({ id: String(person.id), label: companyFirstName(person) })),
+    ...(data?.employees || []).filter(isPersonActive).map((person) => ({ id: String(person.id), label: personAssignmentLabel(person) })),
   ].filter((person) => person.id && person.label).sort((a, b) => a.label.localeCompare(b.label)), [data?.employees, data?.subs]);
 
   const subcontractorOptions = useMemo(() => (data?.subs || [])
+    .filter(isPersonActive)
     .map((person) => ({ id: String(person.id), label: companyFirstName(person) }))
     .filter((person) => person.id && person.label)
     .sort((a, b) => a.label.localeCompare(b.label)), [data?.subs]);
