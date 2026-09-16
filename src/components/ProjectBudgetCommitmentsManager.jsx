@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 import { formatShortDate } from '../utils/calendarUi.js';
+import { isPersonActive } from '../utils/accessUi.js';
 import { legacyUnallocatedPaidAmount, normalizeVendorPayments, totalPaidAmount, VENDOR_PAYMENT_METHODS } from '../utils/vendorReporting.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
@@ -85,7 +86,8 @@ export default function ProjectBudgetCommitmentsManager({ project, data, canEdit
   const vendorOptions = useMemo(() => [
     ...(data?.subs || []),
     ...(data?.employees || []).filter((person) => person.peopleType === 'supplier'),
-  ].map((person) => ({ id: String(person.id || ''), label: companyFirstName(person) }))
+  ].filter(isPersonActive)
+    .map((person) => ({ id: String(person.id || ''), label: companyFirstName(person) }))
     .filter((person) => person.id && person.label)
     .sort((a, b) => a.label.localeCompare(b.label)), [data?.employees, data?.subs]);
 

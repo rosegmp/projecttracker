@@ -127,7 +127,7 @@ const EMPTY_SETTINGS = {
   visibleTopLevelTabs: DEFAULT_VISIBLE_TOP_LEVEL_TABS,
   visibleProjectTabs: DEFAULT_VISIBLE_PROJECT_TABS,
   inspectionSubcodes: ['FOOT-101', 'FRAME-220', 'ELEC-310'],
-  peopleListColumns: ['company', 'name', 'role', 'phone', 'email', 'tags'],
+  peopleListColumns: ['company', 'name', 'status', 'role', 'phone', 'email', 'tags'],
   peopleListBoldColumns: ['name'],
   emailNewTasksToInternalAssignees: false,
   emailNewTasksToExternalAssignees: false,
@@ -565,6 +565,7 @@ function normalizePerson(type, person = {}) {
     license: String(person.license || '').trim(),
     notes: String(person.notes || '').trim(),
     tags: normalizeTags(person.tags),
+    inactive: person.inactive === true,
     peopleType: type === 'sub' ? 'sub' : normalizePeopleType(person.peopleType || type),
   };
 }
@@ -3754,11 +3755,11 @@ function buildPerson(type, payload) {
     license: payload.license?.trim() || '',
     notes: payload.notes?.trim() || '',
     tags: normalizeTags(payload.tags),
+    inactive: payload.inactive === true,
     peopleType: type,
     ...(type === 'sub'
       ? {
         is1099Exempt: companyType ? !is1099ReportingCompanyType(companyType) : payload.is1099Exempt === true,
-        inactive: payload.inactive === true,
         complianceRequestedRequirements,
         complianceRequestedAt: complianceRequestedRequirements.length
           ? String(payload.complianceRequestedAt || '').trim()

@@ -13,7 +13,7 @@ import {
 } from '../utils/androidNotifications.js';
 import { syncAndroidPushRegistration } from '../utils/androidPushNotifications.js';
 import { buildAuditTrailEntries, formatAuditValue } from '../utils/auditTrail.js';
-import { buildProjectAccessUpdates } from '../utils/accessUi.js';
+import { buildProjectAccessUpdates, isPersonActive } from '../utils/accessUi.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { normalizeVisibleTopLevelTabs, TOP_LEVEL_TAB_DEFS } from '../utils/navigationTabs.js';
 import { normalizeVisibleProjectTabs, PROJECT_TAB_DEFS } from '../utils/projectTabs.js';
@@ -21,7 +21,7 @@ import { reorderSettingIds } from '../utils/settingsOrder.js';
 import { buildProjectTemplate, normalizeProjectTemplates } from '../utils/projectTemplates.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
 
-const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'role', 'phone', 'email', 'tags'];
+const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'status', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
 const SETTINGS_SECTIONS = [
   { id: 'scheduling', label: 'Scheduling', description: 'Work calendar and schedule display defaults.' },
@@ -35,7 +35,7 @@ const SETTINGS_SECTIONS = [
   { id: 'system', label: 'System status', description: 'Data source, record counts, and refresh controls.' },
 ];
 const PEOPLE_LIST_COLUMN_DEFS = [
-  { id: 'name', label: 'Name' }, { id: 'company', label: 'Company' }, { id: 'companyType', label: 'Company Type' }, { id: 'role', label: 'Role' },
+  { id: 'name', label: 'Name' }, { id: 'company', label: 'Company' }, { id: 'status', label: 'Status' }, { id: 'companyType', label: 'Company Type' }, { id: 'role', label: 'Role' },
   { id: 'phone', label: 'Phone' }, { id: 'email', label: 'Email' }, { id: 'tags', label: 'Tags' },
 ];
 function normalizeAppUserRole(role) { return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only'; }
@@ -494,7 +494,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
 
   const customerPeople = useMemo(
     () => (data.employees || [])
-      .filter((person) => (person.peopleType || 'emp') === 'customer')
+      .filter((person) => isPersonActive(person) && (person.peopleType || 'emp') === 'customer')
       .map((person) => ({
         ...person,
         personId: getLinkedPersonId(person),
@@ -506,6 +506,7 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
   );
   const subcontractorPeople = useMemo(
     () => (data.subs || [])
+      .filter(isPersonActive)
       .map((person) => ({
         ...person,
         personId: getLinkedPersonId(person, 'sub'),

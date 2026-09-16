@@ -47,8 +47,13 @@ export function personAssignmentLabel(person) {
   return name || person.company || '';
 }
 
+export function isPersonActive(person) {
+  return person?.inactive !== true;
+}
+
 export function buildTaskAssigneeOptions(subs = [], employees = []) {
   return [...subs, ...employees]
+    .filter(isPersonActive)
     .map((person) => personAssignmentLabel(person).trim())
     .filter(Boolean)
     .filter((label, index, labels) => labels.indexOf(label) === index)
@@ -58,8 +63,8 @@ export function buildTaskAssigneeOptions(subs = [], employees = []) {
 export function buildTaskAssigneeDirectory(subs = [], employees = []) {
   const directory = new Map();
   [
-    ...subs.map((person) => ({ ...person, directoryType: 'sub' })),
-    ...employees.map((person) => ({ ...person, directoryType: person.peopleType || 'emp' })),
+    ...subs.filter(isPersonActive).map((person) => ({ ...person, directoryType: 'sub' })),
+    ...employees.filter(isPersonActive).map((person) => ({ ...person, directoryType: person.peopleType || 'emp' })),
   ].forEach((person) => {
     const label = personAssignmentLabel(person).trim();
     if (!label) return;

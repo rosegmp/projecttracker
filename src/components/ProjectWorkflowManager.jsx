@@ -146,6 +146,7 @@ export default function ProjectWorkflowManager({
   const [approvalSavingId, setApprovalSavingId] = useState('');
   const [approvalNotice, setApprovalNotice] = useState('');
   const subcontractorOptions = useMemo(() => (subcontractors || [])
+    .filter((person) => person.inactive !== true)
     .map((person) => ({ id: String(person.id || ''), label: subcontractorDisplayName(person), company: String(person.company || '') }))
     .filter((person) => person.id && person.label)
     .sort((a, b) => a.label.localeCompare(b.label)), [subcontractors]);

@@ -543,7 +543,9 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const canEdit = ['Admin', 'Edit'].includes(activeUser?.role);
   const [workspaceMode, setWorkspaceMode] = useState('compliance');
   const subcontractors = useMemo(
-    () => [...(data.subs || [])].sort((a, b) => subcontractorLabel(a).localeCompare(subcontractorLabel(b))),
+    () => (data.subs || [])
+      .filter((subcontractor) => subcontractor.inactive !== true)
+      .sort((a, b) => subcontractorLabel(a).localeCompare(subcontractorLabel(b))),
     [data.subs],
   );
   const subcontractorById = useMemo(
@@ -561,7 +563,6 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
-  const [activityFilter, setActivityFilter] = useState('active');
   const [statusFilter, setStatusFilter] = useState('all');
   const [subcontractorFilter, setSubcontractorFilter] = useState('all');
   const [draft, setDraft] = useState(null);
@@ -618,13 +619,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
     if (!navigationTarget?.subcontractorId && !navigationTarget?.statusId) return;
     setWorkspaceMode('compliance');
     setSubcontractorFilter(navigationTarget.subcontractorId || 'all');
-    if (navigationTarget.statusId === 'inactive') {
-      setActivityFilter('inactive');
-      setStatusFilter('all');
-    } else {
-      setActivityFilter('active');
-      setStatusFilter(navigationTarget.statusId || 'all');
-    }
+    setStatusFilter(navigationTarget.statusId === 'inactive' ? 'all' : navigationTarget.statusId || 'all');
     setSearch('');
   }, [navigationTarget]);
 
@@ -1384,8 +1379,6 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
   const filteredRoster = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return subcontractorRoster.filter(({ subcontractor, certificates: subcontractorCertificates, complianceStatus, insuranceStatus }) => {
-      if (activityFilter === 'active' && subcontractor.inactive === true) return false;
-      if (activityFilter === 'inactive' && subcontractor.inactive !== true) return false;
       if (['liability-compliant', 'liability-non-compliant'].includes(statusFilter)) {
         const generalLiability = complianceStatus.requirements.find((requirement) => requirement.id === 'general_liability');
         if (!generalLiability || generalLiability.satisfied !== (statusFilter === 'liability-compliant')) return false;
@@ -1412,28 +1405,22 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
         ]),
       ].some((value) => String(value || '').toLowerCase().includes(needle));
     });
-  }, [activityFilter, search, statusFilter, subcontractorFilter, subcontractorRoster]);
+  }, [search, statusFilter, subcontractorFilter, subcontractorRoster]);
 
   const stats = useMemo(() => {
-    const activityRoster = subcontractorRoster.filter(({ subcontractor }) => {
-      if (activityFilter === 'active') return subcontractor.inactive !== true;
-      if (activityFilter === 'inactive') return subcontractor.inactive === true;
-      return true;
-    });
     const result = {
-      total: activityRoster.length,
+      total: subcontractorRoster.length,
       active: 0,
       expiring: 0,
       expired: 0,
       missing: 0,
       'not-required': 0,
-      inactive: 0,
       compliant: 0,
       'needs-attention': 0,
       'liability-compliant': 0,
       'liability-non-compliant': 0,
     };
-    activityRoster.forEach(({ insuranceStatus, complianceStatus }) => {
+    subcontractorRoster.forEach(({ insuranceStatus, complianceStatus }) => {
       result[insuranceStatus.id] = (result[insuranceStatus.id] || 0) + 1;
       if (complianceStatus.id !== insuranceStatus.id) {
         result[complianceStatus.id] = (result[complianceStatus.id] || 0) + 1;
@@ -1445,7 +1432,7 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
       }
     });
     return result;
-  }, [activityFilter, subcontractorRoster]);
+  }, [subcontractorRoster]);
 
   const workspaceSwitch = (
     <div className="project-document-workflow-switch compliance-workspace-switch" role="tablist" aria-label="Compliance workspace">
@@ -1548,30 +1535,11 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
             <strong>{count}</strong>
           </button>
         ))}
-        <button
-          className={`compliance-summary-tab status-inactive${activityFilter === 'inactive' ? ' active' : ''}`}
-          type="button"
-          onClick={() => {
-            setActivityFilter('inactive');
-            setStatusFilter('all');
-          }}
-        >
-          <span>Inactive</span>
-          <strong>{stats.inactive}</strong>
-        </button>
       </div>
 
       <div className="workspace-control-grid">
         <section className="workspace-section workspace-control-card workspace-control-card-wide">
           <div className="certificate-toolbar">
-            <label className="task-filter">
-              <span>Active / inactive</span>
-              <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value)}>
-                <option value="active">Active subcontractors</option>
-                <option value="inactive">Inactive subcontractors</option>
-                <option value="all">All subcontractors</option>
-              </select>
-            </label>
             <label className="task-filter">
               <span>Status</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -2001,16 +1969,6 @@ export default function NativeCertificatesView({ data, activeUser, onStateChange
                           {subcontractor.is1099Exempt ? 'Remove W-9 exemption' : 'Mark W-9 exempt'}
                         </button>
                       ) : null}
-                      <button
-                        className="button secondary"
-                        type="button"
-                        disabled={updatingSubcontractor}
-                        onClick={() => void updateSubcontractorCompliance(subcontractor, {
-                          inactive: subcontractor.inactive !== true,
-                        })}
-                      >
-                        {subcontractor.inactive ? 'Reactivate' : 'Mark inactive'}
-                      </button>
                       {certificateEligible(subcontractor) ? (
                         <button className="button primary" type="button" onClick={() => startCreate(subcontractor.id)} disabled={updatingSubcontractor}>
                           Add certificate
