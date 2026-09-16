@@ -55,6 +55,7 @@ export function complianceRequirementStatusId(complianceStatus, requirementId) {
 }
 
 export function complianceMatchesRequirementStatusFilter(complianceStatus, filterId) {
+  if (!['workers-comp-non-compliant', 'agreement-missing', 'w9-missing'].includes(filterId)) return null;
   if (complianceStatus?.id === 'inactive') return false;
   if (filterId === 'workers-comp-non-compliant') {
     return !['active', 'expiring'].includes(complianceRequirementStatusId(complianceStatus, 'workers_compensation'));
@@ -65,7 +66,7 @@ export function complianceMatchesRequirementStatusFilter(complianceStatus, filte
   if (filterId === 'w9-missing') {
     return complianceRequirementStatusId(complianceStatus, 'w9') === 'missing';
   }
-  return null;
+  return false;
 }
 
 export function certificateRequired(subcontractor) {

@@ -1348,6 +1348,8 @@ const tests = [
       assert.equal(complianceMatchesRequirementStatusFilter(expiredWorkersComp, 'workers-comp-non-compliant'), true);
       assert.equal(complianceMatchesRequirementStatusFilter(missingDocuments, 'agreement-missing'), true);
       assert.equal(complianceMatchesRequirementStatusFilter(missingDocuments, 'w9-missing'), true);
+      assert.equal(complianceMatchesRequirementStatusFilter({ id: 'inactive' }, 'all'), null);
+      assert.equal(complianceMatchesRequirementStatusFilter({ id: 'inactive' }, 'agreement-missing'), false);
 
       const legacyWaiver = subcontractorComplianceStatus(
         { ...subcontractor, certificateRequirement: 'not_required' },
