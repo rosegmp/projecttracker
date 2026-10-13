@@ -259,6 +259,41 @@ test('task deep link opens the authorized project task and highlights it', async
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
 
+test('selection dialog saves a new selection and preserves its draft on backdrop clicks', async ({ page }) => {
+  const appUserId = 'selection-admin';
+  const projectId = 'selection-project';
+  let savedSections = null;
+  await mockStaffBackend(page, {
+    role: 'Admin',
+    email: 'selection-admin@example.test',
+    appUserId,
+    authUserId: '40000000-0000-4000-8000-000000000079',
+    projects: [projectRow(projectId, appUserId)],
+    handleRpc: async ({ request, url }) => {
+      if (!url.pathname.endsWith('/rpc/save_normalized_project_sections')) return null;
+      savedSections = request.postDataJSON()?.p_sections || null;
+      return { status: 200, body: { version: 2, normalizedVersions: { selections: {} } } };
+    },
+  });
+
+  await page.goto('/?tab=projects&project=' + projectId + '&projectTab=selections');
+  await page.getByRole('button', { name: 'Add selection' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add selection' });
+  await dialog.getByRole('button', { name: 'Save selection' }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Enter an item name before saving.');
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('Item name').fill('Kitchen backsplash');
+  await dialog.getByRole('button', { name: 'Save selection' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Kitchen backsplash', { exact: true })).toBeVisible();
+  expect(savedSections?.selections?.[0]?.itemName).toBe('Kitchen backsplash');
+  await page.getByRole('button', { name: 'Add selection' }).click();
+  await dialog.getByLabel('Item name').fill('Bathroom vanity');
+  await page.locator('.modal-backdrop').last().click({ position: { x: 4, y: 4 } });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Item name')).toHaveValue('Bathroom vanity');
+});
+
 test('failed inspection can add a re-inspection without creating a second inspection', async ({ page }) => {
   const appUserId = 'reinspection-admin';
   const projectId = 'reinspection-project';
