@@ -37,6 +37,9 @@ jobs:
       - name: Run regression tests
         run: npm test
 
+      - name: Test ProjectHub read-only API contract
+        run: npm run test:projecthub
+
       - name: Validate Supabase Edge Function bundles
         run: npm run test:edge
 

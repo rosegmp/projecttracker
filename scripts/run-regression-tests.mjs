@@ -1740,6 +1740,17 @@ const tests = [
     },
   },
   {
+    name: 'opening a schedule step preserves its saved color in the editor',
+    async run() {
+      const source = await readFile(new URL('../src/components/NativeScheduleView.jsx', import.meta.url), 'utf8');
+      const phaseEditor = source.split('function openPhaseEditor(')[1]?.split('function openStepEditor(')[0] || '';
+      const stepEditor = source.split('function openStepEditor(')[1]?.split('function openStepStatus(')[0] || '';
+      assert.doesNotMatch(phaseEditor, /color: step\?\.color/);
+      assert.match(stepEditor, /color: step\?\.color \|\| TASK_COLOR_PALETTE\[0\]/);
+      assert.match(source, /color: editorDraft\.color \|\| TASK_COLOR_PALETTE\[0\]/);
+    },
+  },
+  {
     name: 'foundational design values live in a dedicated token layer',
     async run() {
       const [mainSource, tokenSource, styleSource] = await Promise.all([
@@ -2041,8 +2052,8 @@ const tests = [
       const adaptiveSource = await readFile(new URL('../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', import.meta.url), 'utf8');
       const backgroundSource = await readFile(new URL('../android/app/src/main/res/values/ic_launcher_background.xml', import.meta.url), 'utf8');
       const generatorSource = await readFile(new URL('./generate_android_icons.py', import.meta.url), 'utf8');
-      assert.match(buildSource, /versionCode 10/);
-      assert.match(buildSource, /versionName "1\.9\.0"/);
+      assert.match(buildSource, /versionCode 11/);
+      assert.match(buildSource, /versionName "1\.9\.1"/);
       assert.match(buildSource, /signingConfigs \{/);
       assert.match(buildSource, /signingConfig signingConfigs\.release/);
       assert.match(buildSource, /ANDROID_RELEASE_KEYSTORE_PATH/);
@@ -3301,6 +3312,24 @@ const tests = [
     },
   },
   {
+    name: 'calendar schedule bars continue through schedulable holidays',
+    run() {
+      const cells = Array.from({ length: 7 }, () => ({ isWeekend: false, holidays: [], items: [] }));
+      cells[2].holidays = [{ name: 'Open holiday', nonWorkday: false }];
+      cells[3].holidays = [{ name: 'Closed holiday', nonWorkday: true }];
+      const week = {
+        cells,
+        laneCount: 1,
+        holidayLaneCount: 0,
+        isExpanded: true,
+        scheduledBars: [{ id: 'step-1', type: 'step', lane: 0, startCol: 1, endCol: 5 }],
+        holidayBars: [],
+      };
+      const segments = getCalendarWeekLayout(week).renderableScheduleBars;
+      assert.deepEqual(segments.map(({ startCol, endCol }) => [startCol, endCol]), [[1, 2], [4, 5]]);
+    },
+  },
+  {
     name: 'top-level and project calendars use the shared grid renderer',
     async run() {
       for (const moduleName of ['NativeScheduleView', 'ProjectDetailCalendar']) {
@@ -3783,6 +3812,22 @@ const tests = [
     run() {
       assert.equal(normalizeStartDate('2026-05-24', weekdaySettings), '2026-05-26');
       assert.equal(computeStepEndDate('2026-05-22', 2, weekdaySettings), '2026-05-26');
+    },
+  },
+  {
+    name: 'scheduling allows holidays without the non-workday flag and skips flagged holidays',
+    run() {
+      const settings = {
+        weekdaysOnly: true,
+        holidays: [
+          { date: '2026-05-25', name: 'Open holiday', nonWorkday: false },
+          { date: '2026-05-26', name: 'Closed holiday', nonWorkday: true },
+        ],
+      };
+      assert.equal(normalizeStartDate('2026-05-25', settings), '2026-05-25');
+      assert.equal(normalizeStartDate('2026-05-26', settings), '2026-05-27');
+      assert.equal(computeStepEndDate('2026-05-22', 2, settings), '2026-05-25');
+      assert.equal(computeStepEndDate('2026-05-25', 2, settings), '2026-05-27');
     },
   },
   {

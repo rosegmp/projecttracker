@@ -39,7 +39,7 @@ export function splitStepBarAroundBlockedDays(item, weekCells) {
   let currentStart = null;
   for (let column = item.startCol; column <= item.endCol; column += 1) {
     const cell = weekCells[column];
-    const blocked = !cell || cell.isWeekend || cell.holidays.length > 0;
+    const blocked = !cell || cell.isWeekend || cell.holidays.some((holiday) => holiday.nonWorkday !== false);
     if (!blocked) {
       if (currentStart === null) currentStart = column;
       continue;
