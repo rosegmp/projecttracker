@@ -25,3 +25,7 @@ If you leave the Supabase vars blank, the app falls back to browser local storag
 
 1. `npm run build`
 2. `npm run preview`
+
+## Executive briefing API
+
+The read-only JSON API and MCP server are documented in [docs/projecthub-read-api.md](docs/projecthub-read-api.md). They use a dedicated service-account credential and do not reuse website login sessions.

@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.send-management-report]
 verify_jwt = false
+
+[functions.projecthub-read-api]
+verify_jwt = false

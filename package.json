@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-regression-tests.mjs",
+    "test:projecthub": "node --test --test-isolation=none tests/projecthub-read-api.test.js",
     "test:edge": "node scripts/check-edge-functions.mjs",
     "test:e2e": "playwright test",
     "test:e2e:server": "vite build && vite preview --host 127.0.0.1 --port 4173",
@@ -22,9 +23,9 @@
     "android:open": "npx cap open android"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.1",
-    "@capacitor/cli": "^8.4.1",
-    "@capacitor/core": "^8.4.1",
+    "@capacitor/android": "8.4.3",
+    "@capacitor/cli": "8.4.3",
+    "@capacitor/core": "8.4.3",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/local-notifications": "^8.2.0",
     "@capacitor/push-notifications": "^8.1.2",
