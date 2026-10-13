@@ -1,6 +1,14 @@
 begin;
 
-select plan(135);
+select plan(136);
+
+select ok(
+  pg_get_functiondef('public.save_normalized_project_sections(text,jsonb,jsonb)'::regprocedure)
+    like '%PT409%'
+  and pg_get_functiondef('public.save_normalized_project_sections(text,jsonb,jsonb)'::regprocedure)
+    not like '%40001%',
+  'normalized project saves return HTTP 409 for stale versions'
+);
 
 insert into public.app_users (id, position, data) values
   ('test-admin', 0, '{"name":"Test Admin","email":"admin@test.local","role":"Admin"}'),
