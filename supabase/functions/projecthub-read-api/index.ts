@@ -30,7 +30,7 @@ async function sha256(value: string) {
 }
 
 function json(body: unknown, status: number, requestId: string, headers: Record<string, string> = {}) {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', [REQUEST_ID_HEADER]: requestId, ...headers } });
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', [REQUEST_ID_HEADER]: requestId, ...headers } });
 }
 
 function routePath(url: URL) {
