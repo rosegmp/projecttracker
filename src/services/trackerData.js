@@ -1819,7 +1819,7 @@ async function persistNormalizedProjectSections(previousProject, nextProject) {
     }, 'Normalized project save', 30000);
     const text = await response.text();
     if (!response.ok) {
-      if (/NORMALIZED_VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (/NORMALIZED_VERSION_CONFLICT|PT409|40001/i.test(text)) throw concurrencyConflictError();
       if (response.status === 404 || /PGRST202/i.test(text)) return null;
       throw new Error(`Normalized project save failed: ${text || response.statusText}`);
     }
@@ -1858,7 +1858,7 @@ async function persistTaskWithNormalizedAttachments(previousTask, nextTask) {
     }, 'Task save');
     const text = await response.text();
     if (!response.ok) {
-      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|PT409|40001/i.test(text)) throw concurrencyConflictError();
       if (response.status === 404 || /PGRST202/i.test(text)) return null;
       throw new Error(`Task save failed: ${text || response.statusText}`);
     }
@@ -1889,7 +1889,7 @@ async function applyVersionedOperations(operations) {
     }, 'Concurrent save');
     const text = await response.text();
     if (!response.ok) {
-      if (/VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (/VERSION_CONFLICT|PT409|40001/i.test(text)) throw concurrencyConflictError();
       throw new Error(`Versioned save failed: ${text || response.statusText}`);
     }
     try {
@@ -1913,7 +1913,7 @@ async function applyNormalizedProjectTaskBatch(projectUpdates, taskOperations) {
     }, 'Normalized project and task save');
     const text = await response.text();
     if (!response.ok) {
-      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+      if (/NORMALIZED_VERSION_CONFLICT|VERSION_CONFLICT|PT409|40001/i.test(text)) throw concurrencyConflictError();
       if (response.status === 404 || /PGRST202/i.test(text)) return null;
       throw new Error(`Normalized project and task save failed: ${text || response.statusText}`);
     }
@@ -3321,7 +3321,7 @@ async function callPortalVisibilityRpc(functionName, body, label) {
   }, label, 20000);
   const text = await response.text();
   if (!response.ok) {
-    if (/NORMALIZED_VERSION_CONFLICT|40001/i.test(text)) throw concurrencyConflictError();
+    if (/NORMALIZED_VERSION_CONFLICT|PT409|40001/i.test(text)) throw concurrencyConflictError();
     throw new Error(`${label} failed: ${text || response.statusText}`);
   }
   try {

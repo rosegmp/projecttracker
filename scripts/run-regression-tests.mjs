@@ -2836,7 +2836,7 @@ const tests = [
       assert.match(trackerSource, /'save_normalized_project_sections'/);
       assert.match(trackerSource, /p_expected_versions: previousProject\._normalizedVersions/);
       assert.match(trackerSource, /hasOnlyNormalizedProjectChanges/);
-      assert.match(trackerSource, /NORMALIZED_VERSION_CONFLICT\|40001/);
+      assert.match(trackerSource, /NORMALIZED_VERSION_CONFLICT\|PT409\|40001/);
     },
   },
   {

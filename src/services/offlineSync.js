@@ -23,7 +23,7 @@ const activeFlushes = new Map();
 
 function attentionMessage(error) {
   const message = String(error?.message || error || '');
-  if (/changed elsewhere|version conflict|NORMALIZED_VERSION_CONFLICT|40001/i.test(message)) {
+  if (/changed elsewhere|version conflict|NORMALIZED_VERSION_CONFLICT|PT409|40001/i.test(message)) {
     return 'This record changed on the server. Reopen it and apply the device changes manually.';
   }
   if (/permission|not authorized|row-level security|401|403/i.test(message)) {
