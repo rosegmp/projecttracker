@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { renderModalPortal } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { isNativeAndroidApp } from '../platform/platformAdapter.js';
@@ -22,13 +22,24 @@ export default function SelectionModal({
   onRemovePendingAttachment,
   onRemovePendingPhoto,
 }) {
+  const itemNameRef = useRef(null);
+  const [showNameError, setShowNameError] = useState(false);
   if (!draft) return null;
   const isEditing = draft.mode === 'edit';
   const nativeAndroid = isNativeAndroidApp();
 
+  function handleSave() {
+    if (!draft.itemName.trim()) {
+      setShowNameError(true);
+      itemNameRef.current?.focus();
+      return;
+    }
+    onSave();
+  }
+
   return renderModalPortal(
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="selection-modal-title" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop">
+      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="selection-modal-title">
         <div className="panel-header">
           <div>
             <p className="eyebrow">Selection</p>
@@ -61,7 +72,17 @@ export default function SelectionModal({
           </label>
           <label className="full">
             <span>Item name</span>
-            <input value={draft.itemName} onChange={(event) => onChange('itemName', event.target.value)} />
+            <input
+              ref={itemNameRef}
+              value={draft.itemName}
+              onChange={(event) => {
+                setShowNameError(false);
+                onChange('itemName', event.target.value);
+              }}
+              aria-invalid={showNameError}
+              aria-describedby={showNameError ? 'selection-item-name-error' : undefined}
+            />
+            {showNameError ? <small id="selection-item-name-error" role="alert">Enter an item name before saving.</small> : null}
           </label>
           <label className="full">
             <span>Chosen option</span>
@@ -211,7 +232,7 @@ export default function SelectionModal({
           <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={onSave} disabled={saving || !draft.itemName.trim()}>
+          <button className={`button primary${saving ? ' is-loading' : ''}`} type="button" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save selection'}
           </button>
         </div>
