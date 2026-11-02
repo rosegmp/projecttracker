@@ -161,6 +161,27 @@ function clean(value, max = 500) { return String(value || '').replace(/\s+/g, ' 
 function iso(value, fallback = '') { const date = new Date(value || fallback); return Number.isNaN(date.getTime()) ? null : date.toISOString(); }
 function dateOnly(value) { const match = clean(value, 40).match(/^\d{4}-\d{2}-\d{2}/); return match?.[0] || null; }
 
+export function isActiveProjectRecord(row) {
+  return String(row?.data?.inactive ?? 'false').toLowerCase() !== 'true';
+}
+
+export function filterActiveProjectRecords(rows) {
+  const projectRows = (rows.projectRows || []).filter(isActiveProjectRecord);
+  const activeIds = new Set(projectRows.map((row) => String(row.id)));
+  const belongsToActiveProject = (row) => activeIds.has(String(row.project_id || ''));
+  return {
+    projectRows,
+    taskRows: (rows.taskRows || []).filter((row) => !row.data?.projectId || activeIds.has(String(row.data.projectId))),
+    phaseRows: (rows.phaseRows || []).filter(belongsToActiveProject),
+    stepRows: (rows.stepRows || []).filter(belongsToActiveProject),
+    delayRows: (rows.delayRows || []).filter(belongsToActiveProject),
+    logRows: (rows.logRows || []).filter(belongsToActiveProject),
+    rfiRows: (rows.rfiRows || []).filter(belongsToActiveProject),
+    submittalRows: (rows.submittalRows || []).filter(belongsToActiveProject),
+    selectionRows: (rows.selectionRows || []).filter(belongsToActiveProject),
+  };
+}
+
 export function projectRecord(row, baseUrl) {
   const data = row?.data || {};
   const owner = clean(data.manager || data.owner);
