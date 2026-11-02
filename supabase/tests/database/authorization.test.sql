@@ -1,6 +1,6 @@
 begin;
 
-select plan(144);
+select plan(145);
 
 select ok(
   pg_get_functiondef('public.save_normalized_project_sections(text,jsonb,jsonb)'::regprocedure)
