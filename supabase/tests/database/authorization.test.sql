@@ -1,6 +1,6 @@
 begin;
 
-select plan(136);
+select plan(139);
 
 select ok(
   pg_get_functiondef('public.save_normalized_project_sections(text,jsonb,jsonb)'::regprocedure)
@@ -475,6 +475,29 @@ select ok(
   not public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/old-plan.pdf'),
   'portal users cannot download an archived file'
 );
+reset role;
+update public.projects
+set data = data || '{"inactive":true}'::jsonb
+where id = 'auth-project-a';
+set local role authenticated;
+select is(
+  jsonb_array_length(public.get_project_portal_bootstrap()->'projects'),
+  0,
+  'inactive projects disappear from the customer portal bootstrap'
+);
+select ok(
+  not public.app_user_can_view_project('auth-project-a'),
+  'customers cannot read an inactive project through project authorization'
+);
+select ok(
+  not public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/current-plan.pdf'),
+  'customers cannot download files from an inactive project'
+);
+reset role;
+update public.projects
+set data = data - 'inactive'
+where id = 'auth-project-a';
+set local role authenticated;
 select results_eq(
   'select count(*)::bigint from public.certificate_renewal_requests',
   array[0::bigint],

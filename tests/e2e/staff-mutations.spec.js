@@ -289,7 +289,9 @@ test('selection dialog saves a new selection and preserves its draft on backdrop
   expect(savedSections?.selections?.[0]?.itemName).toBe('Kitchen backsplash');
   await page.getByRole('button', { name: 'Add selection' }).click();
   await dialog.getByLabel('Item name').fill('Bathroom vanity');
-  await page.locator('.modal-backdrop').last().click({ position: { x: 4, y: 4 } });
+  const backdrop = page.locator('.modal-backdrop').last();
+  const backdropBox = await backdrop.boundingBox();
+  await backdrop.click({ position: { x: backdropBox.width - 8, y: backdropBox.height - 8 } });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Item name')).toHaveValue('Bathroom vanity');
 });
@@ -329,7 +331,7 @@ test('failed inspection can add a re-inspection without creating a second inspec
   await page.goto(`/?tab=projects&project=${projectId}&projectTab=inspections`);
   const card = page.locator('article.inspection-card').filter({ hasText: 'FRAME-220' });
   await expect(card).toHaveCount(1);
-  await card.getByRole('button', { name: 'Edit FRAME-220' }).click();
+  await card.locator('.inspection-name-button').click();
   const dialog = page.getByRole('dialog', { name: 'Edit inspection' });
   await dialog.getByRole('button', { name: 'Add re-inspection' }).click();
   await expect(dialog.getByText('Attempt 2', { exact: false })).toBeVisible();
