@@ -198,11 +198,11 @@ export default function NativeTasksView({
     () => buildTaskAssigneeOptions(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
+  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || []);
   const assigneeDirectory = useMemo(
     () => buildTaskAssigneeDirectory(data.subs || [], data.employees || []),
     [data.employees, data.subs],
   );
-  const complianceWarnings = useSubcontractorComplianceWarnings(data.subs || []);
   const selectionLinksByTaskId = useMemo(() => {
     const links = new Map();
     visibleProjects.forEach((project) => {

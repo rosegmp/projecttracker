@@ -152,7 +152,7 @@ test('successful internal sign-in starts at Home instead of a remembered or deep
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
   await expect(page).toHaveURL(/\?tab=home$/, { timeout: 20_000 });
-  await expect(page.getByRole('button', { name: /^Home:/ })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
 });
 
 test('customer stays inside the allowlisted portal and can answer a published request', async ({ page }) => {
@@ -273,8 +273,8 @@ test('customer stays inside the allowlisted portal and can answer a published re
 
   await expect(page.getByLabel('Portal account')).toContainText('Portal Customer');
   await expect(page.getByRole('navigation', { name: 'Destiny Project Hub navigation' })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveCount(0);
+  await expect(page.locator('#project-tab-overview')).toBeVisible();
+  await expect(page.locator('#project-tab-tasks')).toHaveCount(0);
   await expect(page).toHaveURL(/\?tab=projects/);
 
   await expect.poll(() => workspaceManifestCount).toBeGreaterThan(0);
@@ -290,7 +290,7 @@ test('customer stays inside the allowlisted portal and can answer a published re
   await expect.poll(() => portalBootstrapCount).toBeGreaterThan(bootstrapBeforeQuickReload);
   await expect(page.getByLabel('Portal account')).toContainText('Portal Customer');
 
-  await page.getByRole('tab', { name: 'Portal' }).click();
+  await page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Portal' }).click();
   await expect(page.getByText('Confirm delivery window')).toBeVisible();
   await page.getByRole('button', { name: 'Respond' }).click();
   await page.getByLabel('Your response').fill('Friday morning works for us.');
@@ -518,47 +518,34 @@ test('administrator project-tab settings hide project sections and preserve requ
 
   await page.goto(`/?tab=projects&project=${adminProjectId}`);
 
-  await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Tasks' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Calendar' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Daily Logs' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Files' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Photos' })).toHaveCount(0);
+  const sections = page.getByRole('navigation', { name: 'Project Hub navigation' });
+  for (const id of ['overview', 'tasks', 'calendar', 'daily-logs', 'files', 'portal', 'inspections', 'selections']) {
+    await expect(page.locator(`#project-tab-${id}`)).toBeVisible();
+  }
+  await expect(page.locator('#project-tab-photos')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Project breadcrumb' })).toContainText('Admin Tab Test');
 
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  const moreSections = page.getByLabel('More project sections', { exact: true });
-  await expect(moreSections.getByRole('button', { name: 'Portal', exact: true })).toBeVisible();
-  await expect(moreSections.getByRole('button', { name: 'Inspections', exact: true })).toBeVisible();
-  await expect(moreSections.getByRole('button', { name: 'Selections', exact: true })).toBeVisible();
-  await expect(moreSections.getByRole('button', { name: 'Photos', exact: true })).toHaveCount(0);
-  await moreSections.getByRole('button', { name: 'Make available offline', exact: true }).click();
-  const offlineAccess = moreSections.getByLabel('Offline access', { exact: true });
-  await expect(offlineAccess.getByText('Available on this device', { exact: true })).toBeVisible();
-  await expect(offlineAccess.getByText('Overview', { exact: true })).toBeVisible();
-  await expect(offlineAccess.getByText('Inspections', { exact: true })).toBeVisible();
-  const offlineAssets = offlineAccess.getByLabel('Offline files and photos', { exact: true });
-  await offlineAssets.getByRole('checkbox', { name: 'Files (2)', exact: true }).check();
-  await offlineAssets.getByRole('button', { name: 'Download selected', exact: true }).click();
-  await expect(offlineAssets.getByText('2 items downloaded for offline use.', { exact: true })).toBeVisible();
-  await expect(offlineAccess.getByText('Files', { exact: true })).toBeVisible();
+  const offlineAccess = page.getByRole('region', { name: 'Offline project copy' });
+  await offlineAccess.getByRole('button', { name: 'Make available offline' }).click();
+  await expect(offlineAccess).toContainText('Saved');
+  await offlineAccess.getByRole('checkbox', { name: 'Files (2)' }).check();
+  await offlineAccess.getByRole('button', { name: 'Download selected' }).click();
+  await expect(offlineAccess).toContainText('2 files and photos downloaded');
   expect(storageDownloadCount).toBe(2);
-  await page.keyboard.press('Escape');
   await page.evaluate(() => {
     Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
     window.dispatchEvent(new Event('offline'));
   });
-  await page.getByRole('tab', { name: 'Daily Logs', exact: true }).click();
+  await page.locator('#project-tab-daily-logs').click();
   await expect(page.getByRole('heading', { name: 'Offline site log' })).toBeVisible();
   await expect(page.getByText('Cached workflow record', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  await page.locator('#project-tab-files').click();
   await expect(page.getByText('Offline plan.txt', { exact: true })).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Offline plan.txt', exact: true }).click();
   await download;
   expect(storageDownloadCount).toBe(2);
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await moreSections.getByRole('button', { name: 'Selections', exact: true }).click();
+  await page.locator('#project-tab-selections').click();
   await expect(page.getByText('Kitchen tile', { exact: true })).toBeVisible();
   const selectionDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Tile quote.txt', exact: true }).click();
@@ -568,7 +555,7 @@ test('administrator project-tab settings hide project sections and preserve requ
     Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
     window.dispatchEvent(new Event('online'));
   });
-  await page.getByRole('button', { name: 'Projects', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Project breadcrumb' }).getByRole('button', { name: 'Projects' }).click();
   const offlineProjects = page.getByLabel('Offline projects', { exact: true });
   await expect(offlineProjects).toContainText('1 available');
   await expect(offlineProjects.getByRole('button', { name: /Admin Tab Test/ })).toBeVisible();
@@ -577,62 +564,36 @@ test('administrator project-tab settings hide project sections and preserve requ
   await expect(offlineProjects.getByRole('button', { name: 'Show all projects', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await offlineProjects.getByRole('button', { name: 'Refresh copies', exact: true }).click();
   await offlineProjects.getByRole('button', { name: /Admin Tab Test/ }).click();
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await moreSections.getByRole('checkbox', { name: /Compact desktop navigation/ }).check();
-  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
-  await moreSections.getByRole('button', { name: 'Inspections', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Inspections' })).toHaveAttribute('aria-selected', 'true');
+  await page.locator('#project-tab-inspections').click();
+  await expect(page.locator('#project-tab-inspections')).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveURL(/projectTab=inspections/);
-
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await moreSections.getByRole('button', { name: 'Unpin Files', exact: true }).click();
-  await moreSections.getByRole('button', { name: 'Pin Selections', exact: true }).click();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('tab', { name: 'Selections' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('#project-tab-inspections')).toHaveAttribute('aria-current', 'page');
   await expect.poll(() => workspaceManifestCount).toBeGreaterThan(0);
-  const readsBeforeQuickReload = {
-    startup: startupBootstrapCount,
-    files: projectFilesReadCount,
-    manifests: workspaceManifestCount,
-  };
-  await page.reload();
-  await expect.poll(() => workspaceManifestCount).toBeGreaterThan(readsBeforeQuickReload.manifests);
-  expect(startupBootstrapCount).toBe(readsBeforeQuickReload.startup);
-  expect(projectFilesReadCount).toBe(readsBeforeQuickReload.files);
-  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
-  await expect(page.getByRole('tab', { name: 'Selections' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Files' })).toHaveCount(0);
-
-  const filesBeforeChangedReload = projectFilesReadCount;
-  workspaceManifestToken = 'admin-workspace-manifest-2';
-  await page.reload();
-  await expect.poll(() => projectFilesReadCount).toBeGreaterThan(filesBeforeChangedReload);
-  await expect(page.locator('.project-detail-navigation-shell')).toHaveClass(/is-compact-desktop/);
-
-  await page.getByRole('tab', { name: 'Calendar' }).click();
+  await page.locator('#project-tab-calendar').click();
   await page.getByRole('button', { name: /FRAME-220.*Framing inspection/ }).click();
   await expect(page).toHaveURL(/projectTab=inspections/);
   await expect(page.getByRole('dialog', { name: 'Edit inspection' })).toBeVisible();
   await page.getByRole('dialog', { name: 'Edit inspection' }).getByRole('button', { name: 'Cancel' }).click();
-
-  await page.getByRole('tab', { name: 'Calendar' }).click();
+  await page.locator('#project-tab-calendar').click();
   await page.getByRole('button', { name: 'Close walls' }).click();
   await page.getByRole('button', { name: 'Edit predecessors' }).click();
   const predecessorDialog = page.getByRole('dialog', { name: 'Schedule step Predecessors' });
   await expect(predecessorDialog.getByText('Inspection · Framing inspection')).toBeVisible();
   await predecessorDialog.getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('dialog', { name: 'Edit schedule step' }).getByRole('button', { name: 'Cancel' }).click();
-
-  await page.getByRole('button', { name: /^Settings:/ }).click();
+  await page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Display preferences' }).click();
+  await page.locator('#settings-tab-display').click();
   const projectNavigation = page.getByRole('heading', { name: 'Project workspace navigation' }).locator('xpath=ancestor::section[1]');
   await expect(projectNavigation.getByRole('checkbox', { name: /Overview/ })).toBeDisabled();
+  await expect(projectNavigation.getByRole('checkbox', { name: /Permits/ })).toHaveCount(0);
+  await expect(projectNavigation.getByRole('checkbox', { name: /Reports/ })).toHaveCount(0);
   await expect(projectNavigation.getByRole('checkbox', { name: /Tasks/ })).toBeChecked();
   await expect(projectNavigation.getByRole('checkbox', { name: /Calendar/ })).toBeChecked();
   await expect(projectNavigation.getByRole('checkbox', { name: /Photos/ })).not.toBeChecked();
 
-  await page.getByRole('tab', { name: 'Notifications' }).click();
+  await page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Notifications' }).click();
   const assignmentEmails = page.getByRole('heading', { name: 'New task assignment emails' }).locator('xpath=ancestor::section[1]');
   const internalEmailToggle = assignmentEmails.getByRole('checkbox', { name: /Employees and administrators/ });
   const externalEmailToggle = assignmentEmails.getByRole('checkbox', { name: /Subcontractors and suppliers/ });

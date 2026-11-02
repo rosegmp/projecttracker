@@ -38,6 +38,8 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   const access = { project_id: projectId, user_id: appUserId, position: 0, version: 1 };
   let savedDailyLog = null;
   let savedInspectionPayload = null;
+  let savedInspectionRow = null;
+  let savedChecklistTaskPayload = null;
   const savedProjectPhotos = [];
   const uploadedStoragePaths = [];
 
@@ -72,7 +74,7 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
           files: [],
           photos: [],
           selections: [],
-          inspections: [],
+          inspections: savedInspectionRow ? [savedInspectionRow] : [],
         }),
       });
       return;
@@ -116,10 +118,26 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
       }
       if (url.pathname.endsWith('/rpc/save_project_inspection')) {
         savedInspectionPayload = request.postDataJSON();
+        savedInspectionRow = {
+          project_id: projectId,
+          id: savedInspectionPayload.p_inspection.id,
+          position: 0,
+          data: savedInspectionPayload.p_inspection,
+          version: 1,
+        };
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({ inspectionVersion: 1, fileVersions: { sticker: 1, report: 1 } }),
+        });
+        return;
+      }
+      if (url.pathname.endsWith('/rpc/save_task_with_attachments')) {
+        savedChecklistTaskPayload = request.postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ version: 1, normalizedVersions: { attachments: {} } }),
         });
         return;
       }
@@ -131,6 +149,7 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
     else if (url.pathname.endsWith('/app_users')) body = [appUser];
     else if (url.pathname.endsWith('/project_user_access')) body = [access];
     else if (url.pathname.endsWith('/project_core_records') || url.pathname.endsWith('/projects')) body = [project];
+    else if (url.pathname.endsWith('/project_inspections')) body = savedInspectionRow ? [savedInspectionRow] : [];
     else if (url.pathname.endsWith('/project_photos')) body = savedProjectPhotos.map((photo, position) => ({
       project_id: projectId, id: photo.id, position, data: photo, version: 1,
     }));
@@ -145,7 +164,9 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
 
   await page.goto('/?tab=projects');
   await page.getByRole('button', { name: 'Offline Field Project', exact: true }).click();
-  await page.getByRole('tab', { name: 'Daily logs' }).click();
+  await page.locator('#project-tab-photos').click();
+  await expect(page.locator('.project-photos-manager')).toBeVisible();
+  await page.locator('#project-tab-daily-logs').click();
   await expect(page.getByRole('button', { name: 'New daily log' })).toBeVisible();
 
   await context.setOffline(true);
@@ -209,9 +230,7 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await expect(page.getByText('Delete saved on device')).toHaveCount(0);
 
   uploadedStoragePaths.length = 0;
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByLabel('More project sections', { exact: true })
-    .getByRole('button', { name: 'Inspections', exact: true }).click();
+  await page.locator('#project-tab-inspections').click();
   await page.getByRole('button', { name: 'Add inspection' }).click();
   await page.getByRole('dialog', { name: 'Add inspection' }).getByRole('button', { name: 'Cancel' }).click();
   await context.setOffline(true);
@@ -220,6 +239,11 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await inspectionDialog.getByLabel('Subcode').selectOption('FOOT-101');
   await inspectionDialog.getByLabel('Inspection type').fill('Footing inspection');
   await inspectionDialog.getByLabel('Status').selectOption('failed');
+  await inspectionDialog.getByRole('button', { name: 'Add item' }).click();
+  await inspectionDialog.getByLabel('Checklist item 1', { exact: true }).fill('Check footing depth');
+  await inspectionDialog.getByRole('button', { name: 'Add item' }).click();
+  await inspectionDialog.getByLabel('Checklist item 2', { exact: true }).fill('Confirm rebar spacing');
+  await inspectionDialog.getByLabel('Complete checklist item 1').check();
   await inspectionDialog.getByLabel('Inspection sticker photo').setInputFiles({
     name: 'offline-sticker.jpg',
     mimeType: 'image/jpeg',
@@ -232,8 +256,11 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   });
   await inspectionDialog.getByRole('button', { name: 'Save inspection' }).click();
 
-  await expect(page.getByText('offline-sticker.jpg')).toBeVisible();
-  await expect(page.getByText('offline-report.pdf')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Footing inspection sticker' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download Footing inspection report' })).toBeVisible();
+  await expect(page.getByText('Checklist · 1 of 2 complete')).toBeVisible();
+  await page.getByText('Checklist · 1 of 2 complete').click();
+  await expect(page.getByText('Check footing depth')).toBeVisible();
   await expect(page.getByText('Saved on device').first()).toBeVisible();
   expect(uploadedStoragePaths).toHaveLength(0);
   await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
@@ -253,6 +280,21 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   await expect.poll(() => uploadedStoragePaths.length).toBe(2);
   expect(savedInspectionPayload.p_inspection.stickerFile.storagePath).toContain('inspection-sticker');
   expect(savedInspectionPayload.p_inspection.reportFile.storagePath).toContain('inspection-report');
+  expect(savedInspectionPayload.p_inspection.checklist).toMatchObject([
+    { text: 'Check footing depth', completed: true },
+    { text: 'Confirm rebar spacing', completed: false },
+  ]);
+  const firstChecklistItem = page.locator('.inspection-checklist-details li').filter({ hasText: 'Check footing depth' });
+  await firstChecklistItem.getByRole('button', { name: 'Create task' }).click();
+  await expect(firstChecklistItem.getByText('Task open')).toBeVisible();
+  expect(savedChecklistTaskPayload.p_task_data).toMatchObject({
+    projectId,
+    sourceInspectionId: savedInspectionPayload.p_inspection.id,
+    sourceInspectionProjectId: projectId,
+    sourceInspectionChecklistItemId: savedInspectionPayload.p_inspection.checklist[0].id,
+    done: false,
+  });
+  await expect(firstChecklistItem.getByRole('button', { name: 'Create task' })).toHaveCount(0);
   await expect(page.getByText('Saved on device')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
     const request = indexedDB.open('project-tracker-offline', 1);
@@ -266,9 +308,8 @@ test('daily log stays visible offline and synchronizes after reconnect', async (
   }))).toBe(0);
 
   uploadedStoragePaths.length = 0;
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByLabel('More project sections', { exact: true })
-    .getByRole('button', { name: 'Photos', exact: true }).click();
+  await page.locator('#project-tab-photos').click();
+  await expect(page.locator('.project-photos-manager')).toBeVisible();
   await context.setOffline(true);
   await page.locator('.project-photos-manager input[type="file"][multiple]').setInputFiles({
     name: 'offline-site-photo.jpg',

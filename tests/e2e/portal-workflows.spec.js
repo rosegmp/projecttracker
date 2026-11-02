@@ -143,7 +143,7 @@ test('customer approves a linked selection through the restricted response RPC',
   });
 
   await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
-  await page.getByRole('tab', { name: 'Selections' }).click();
+  await page.locator('#project-tab-selections').click();
   await expect(page.getByText('Countertop material')).toBeVisible({ timeout: 20_000 });
   await page.getByPlaceholder('Add a comment for the project team').fill('Quartz is approved.');
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -224,7 +224,7 @@ test('customer signs a version-bound change order approval from the portal', asy
   });
 
   await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
-  await page.getByRole('tab', { name: 'Portal' }).click();
+  await page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Portal' }).click();
   await expect(page.getByText('Issued terms · Version 3')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('$2,450.00')).toBeVisible();
   await expect(page.getByText('cabinet-elevation.pdf')).toBeVisible();
@@ -282,9 +282,7 @@ test('customer submits and then sees a warranty request through customer-only RP
   });
 
   await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByLabel('More project sections', { exact: true })
-    .getByRole('button', { name: 'Warranty', exact: true }).click();
+  await page.locator('#project-tab-warranty-closeout').click();
   await page.getByRole('button', { name: 'Submit request' }).click();
   const editor = page.getByRole('heading', { name: 'Submit a warranty request' }).locator('xpath=ancestor::section[1]');
   await editor.getByLabel('Title').fill('Leaking powder room faucet');
@@ -364,18 +362,37 @@ test('subcontractor stays inside shared portal, selection, and file boundaries',
   });
 
   await page.goto(`/?tab=projects&project=${PROJECT_ID}`);
-  await expect(page.getByRole('tab', { name: 'Portal' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Selections' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Files' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Warranty' })).toHaveCount(0);
+  await expect(page.locator('.hub-portal-header')).toContainText('Project Hub');
+  await expect(page.locator('#project-tab-portal')).toBeVisible();
+  await expect(page.locator('#project-tab-selections')).toBeVisible();
+  await expect(page.locator('#project-tab-files')).toBeVisible();
+  await expect(page.locator('#project-tab-tasks')).toHaveCount(0);
+  await expect(page.locator('#project-tab-warranty-closeout')).toHaveCount(0);
 
-  await page.getByRole('tab', { name: 'Portal' }).click();
+  await page.locator('#project-tab-portal').click();
   await expect(page.getByText('Confirm siding delivery')).toBeVisible();
-  await page.getByRole('tab', { name: 'Selections' }).click();
+  if (process.env.CAPTURE_HUB_SCREENSHOT) await page.screenshot({ path: 'test-results/subcontractor-portal-light.png' });
+  await page.getByRole('button', { name: 'Dark theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  if (process.env.CAPTURE_HUB_SCREENSHOT) {
+    await expect.poll(() => page.getByRole('button', { name: 'Respond' }).evaluate((button) => getComputedStyle(button).backgroundColor))
+      .toBe('rgb(16, 42, 61)');
+    await page.screenshot({ path: 'test-results/subcontractor-portal-dark.png' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: 'test-results/subcontractor-portal-mobile.png' });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Sections' }).click();
+  await expect(page.locator('.hub-sidebar.portal-open')).toBeVisible();
+  await page.locator('#project-tab-selections').click();
+  await expect(page.getByText('Shared siding color')).toBeVisible();
+  await expect(page.locator('.hub-sidebar.portal-open')).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.locator('#project-tab-selections').click();
   await expect(page.getByText('Shared siding color')).toBeVisible();
   await expect(page.getByText('Private selection')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Files' }).click();
+  await page.locator('#project-tab-files').click();
   await expect(page.getByText('Shared Plans')).toBeVisible();
   await expect(page.getByText('Shared elevation.pdf')).toBeVisible();
   await expect(page.getByText('Private Files')).toHaveCount(0);

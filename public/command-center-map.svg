@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 630">
+  <defs>
+    <pattern id="blocks" width="108" height="88" patternUnits="userSpaceOnUse" patternTransform="rotate(-13)">
+      <rect width="108" height="88" fill="#d5e5d2"/>
+      <path d="M0 0H108M0 44H108M0 88H108M0 0V88M54 0V88M108 0V88" stroke="#f5f4e9" stroke-width="9"/>
+      <path d="M8 8h36v25H8zm58 0h31v26H66zM8 55h32v25H8zm58 0h31v24H66z" fill="#c5dcba"/>
+      <path d="M13 12h8m6 0h10M70 13h19M12 61h20m37 0h19" stroke="#9dbf9b" stroke-width="2" opacity=".65"/>
+    </pattern>
+    <linearGradient id="shade" x2="0" y2="1"><stop stop-color="#cde9e4" stop-opacity=".08"/><stop offset="1" stop-color="#84bfc7" stop-opacity=".12"/></linearGradient>
+  </defs>
+  <rect width="960" height="630" fill="url(#blocks)"/>
+  <path d="M-60 424 1030 86M-35 445 1020 108" stroke="#e2b783" stroke-width="17" fill="none" opacity=".8"/>
+  <path d="M-50 412 1030 74M-25 457 1025 119" stroke="#fff8e8" stroke-width="3" fill="none" opacity=".8"/>
+  <path d="M250-30 594 660M270-30 614 660" stroke="#edd5a9" stroke-width="13" fill="none" opacity=".9"/>
+  <path d="M-20 156 980 580" stroke="#ead8ae" stroke-width="21" fill="none" opacity=".85"/>
+  <path d="M-20 145 980 569" stroke="#fff8e8" stroke-width="3" fill="none" opacity=".8"/>
+  <path d="M620 0 745 615" stroke="#88c4dc" stroke-width="15" opacity=".75"/>
+  <rect width="960" height="630" fill="url(#shade)"/>
+</svg>

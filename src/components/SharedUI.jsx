@@ -67,10 +67,10 @@ export function WorkspaceSplash({ message }) {
     <main className="app-splash" aria-live="polite" aria-busy="true">
       <div className="app-splash-content">
         <div className="app-splash-logo" aria-hidden="true">
-          <img src="/destiny-logo.png" alt="" />
+          <img className="hub-brand-mark" src="/project-hub-app-icon.svg" alt="" />
         </div>
         <div className="app-splash-copy">
-          <span>Destiny Homes</span>
+          <span>Command Center</span>
           <h1>Project Hub</h1>
           <p>{message}</p>
         </div>

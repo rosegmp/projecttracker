@@ -1,5 +1,5 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskAssigneeOptions, getVisibleProjectsForUser, getVisibleTasksForUser, normalizeProjectAccessUserIds } from '../utils/accessUi.js';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildTaskAssigneeOptions, getArchivedProjectsForUser, getVisibleProjectsForUser, getVisibleTasksForUser, normalizeProjectAccessUserIds } from '../utils/accessUi.js';
 import { createProject, deleteProject, updateProject, updateProjectAndTasks, updateProjectsAndTasks } from '../services/trackerData.js';
 import {
   cascadePhaseDates, cascadeStepDates, computeStepEndDate, normalizePreds, normalizeStartDate,
@@ -8,7 +8,6 @@ import {
 import { addDays, formatShortDate, toIsoDate } from '../utils/calendarUi.js';
 import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import ProjectCard from './ProjectCard.jsx';
-import { DashboardStat, PageStats } from './SharedUI.jsx';
 import SavedFiltersControls from './SavedFiltersControls.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import ResponsiveFilterMenu from './ResponsiveFilterMenu.jsx';
@@ -42,13 +41,15 @@ const TASK_COLOR_PALETTE = ['#2f6f8f', '#c54f7c', '#5f8f3d', '#b86a2f', '#6c5aa7
 function parseDateValue(iso) { if (!iso) return null; const date = new Date(`${iso}T00:00:00`); return Number.isNaN(date.getTime()) ? null : date; }
 function getNextTaskColor(projects = []) { const count = projects.reduce((total, project) => total + (project.phases || []).reduce((sum, phase) => sum + (phase.steps || []).length, 0), 0); return TASK_COLOR_PALETTE[count % TASK_COLOR_PALETTE.length]; }
 function getProjectIdFromLocation() { return String(getSearchParam('project') || '').trim(); }
-function syncProjectToLocation(projectId, { push = false } = {}) {
+function syncProjectToLocation(projectId, { push = false, projectTab = '' } = {}) {
   updateCurrentUrl((url) => {
     const normalizedProjectId = String(projectId || '').trim();
     const currentProjectId = String(url.searchParams.get('project') || '').trim();
     if (normalizedProjectId) url.searchParams.set('project', normalizedProjectId);
     else url.searchParams.delete('project');
-    if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
+    if (normalizedProjectId) url.searchParams.delete('view');
+    if (normalizedProjectId && projectTab) url.searchParams.set('projectTab', projectTab);
+    else if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
       url.searchParams.delete('projectTab');
     }
   }, { push });
@@ -71,6 +72,7 @@ export default function NativeProjectsView({
   users = [],
   homeSignal = 0,
   navigationTarget = null,
+  onNavigationChange = null,
   deferredDataLoading = false,
   offlineUserId = '',
   offlineOperations = [],
@@ -85,6 +87,8 @@ export default function NativeProjectsView({
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState('all');
   const [offlineOnly, setOfflineOnly] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(() => getSearchParam('view') === 'archive');
+  const [archivedProjectId, setArchivedProjectId] = useState('');
   const [offlineProjectRecords, setOfflineProjectRecords] = useState([]);
   const [offlineCopiesBusy, setOfflineCopiesBusy] = useState(false);
   const [expandedOverviewProjectIds, setExpandedOverviewProjectIds] = useState(() => new Set());
@@ -92,6 +96,7 @@ export default function NativeProjectsView({
   const previousSelectedProjectIdRef = useRef(getProjectIdFromLocation());
   const nextProjectHistoryModeRef = useRef('none');
   const previousHomeSignalRef = useRef(homeSignal);
+  const handledArchiveSectionTokenRef = useRef(null);
   const lastOfflineRefreshDataRef = useRef(null);
 
   useEffect(() => {
@@ -101,6 +106,11 @@ export default function NativeProjectsView({
     () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
     [activeUser, data.projects, data.settings],
   );
+  const archivedProjects = useMemo(
+    () => getArchivedProjectsForUser(data.projects, activeUser),
+    [activeUser, data.projects],
+  );
+  const archivedProject = archivedProjects.find((project) => project.id === archivedProjectId) || null;
   const visibleProjectTabs = useMemo(
     () => getVisibleProjectTabs(data.settings?.visibleProjectTabs, activeUser?.role),
     [activeUser?.role, data.settings?.visibleProjectTabs],
@@ -188,28 +198,17 @@ export default function NativeProjectsView({
     () => visibleTasks.filter((task) => task.projectId === selectedProjectId),
     [selectedProjectId, visibleTasks],
   );
+  useEffect(() => {
+    onNavigationChange?.({
+      projectId: archiveOpen ? archivedProjectId : selectedProjectId,
+      archived: archiveOpen,
+      sectionId: archiveOpen ? '' : String(getSearchParam('projectTab') || '').trim(),
+    });
+  }, [archiveOpen, archivedProjectId, onNavigationChange, selectedProjectId]);
+  const reportSectionChange = useCallback((sectionId) => {
+    onNavigationChange?.({ projectId: archiveOpen ? archivedProjectId : selectedProjectId, archived: archiveOpen, sectionId });
+  }, [archiveOpen, archivedProjectId, onNavigationChange, selectedProjectId]);
 
-  const totals = useMemo(() => {
-    const phases = overviewProjects.reduce(
-      (sum, project) => sum + (project.phases?.length || 0),
-      0,
-    );
-    const steps = overviewProjects.reduce(
-      (sum, project) =>
-        sum +
-        (project.phases || []).reduce(
-          (phaseSum, phase) => phaseSum + (phase.steps?.length || 0),
-          0,
-        ),
-      0,
-    );
-    const tasks = overviewProjects.reduce((sum, project) => sum + (taskCountByProject.get(project.id) || 0), 0);
-    const inspections = overviewProjects.reduce(
-      (sum, project) => sum + (project.inspections?.length || 0),
-      0,
-    );
-    return { phases, steps, tasks, inspections };
-  }, [overviewProjects, taskCountByProject]);
   const allOverviewProjectsExpanded =
     overviewProjects.length > 0 && overviewProjects.every((project) => expandedOverviewProjectIds.has(project.id));
 
@@ -239,6 +238,18 @@ export default function NativeProjectsView({
     setSelectedProjectId(String(projectId || '').trim());
   }
 
+  function showArchive(open) {
+    setArchiveOpen(open);
+    setArchivedProjectId('');
+    setSelectedProject('', 'replace');
+    updateCurrentUrl((url) => {
+      if (open) url.searchParams.set('view', 'archive');
+      else url.searchParams.delete('view');
+      url.searchParams.delete('project');
+      url.searchParams.delete('projectTab');
+    }, { push: true });
+  }
+
   useEffect(() => {
     if (selectedProjectId && !visibleProjects.some((project) => project.id === selectedProjectId)) {
       setSelectedProject('', 'replace');
@@ -254,11 +265,15 @@ export default function NativeProjectsView({
     if (previousHomeSignalRef.current === homeSignal) return;
     previousHomeSignalRef.current = homeSignal;
     setSelectedProject('', 'none');
+    setArchiveOpen(false);
+    setArchivedProjectId('');
   }, [homeSignal]);
 
   useEffect(() => {
     if (!navigationTarget?.projectId) return;
+    if (navigationTarget.action === 'archive-section') return;
     if (!visibleProjects.some((project) => project.id === navigationTarget.projectId)) return;
+    setArchiveOpen(false);
     setSelectedProject(navigationTarget.projectId, 'push');
   }, [navigationTarget, visibleProjects]);
 
@@ -268,16 +283,33 @@ export default function NativeProjectsView({
   }, [navigationTarget, readOnly]);
 
   useEffect(() => {
+    if (navigationTarget?.action !== 'archive') return;
+    setArchiveOpen(true);
+    setArchivedProjectId('');
+    setSelectedProject('', 'none');
+  }, [navigationTarget]);
+  useEffect(() => {
+    if (navigationTarget?.action !== 'archive-section') return;
+    if (handledArchiveSectionTokenRef.current === navigationTarget.token) return;
+    if (!archivedProjects.some((project) => project.id === navigationTarget.projectId)) return;
+    handledArchiveSectionTokenRef.current = navigationTarget.token;
+    setArchiveOpen(true);
+    setArchivedProjectId(navigationTarget.projectId);
+    setSelectedProject('', 'none');
+  }, [archivedProjects, navigationTarget]);
+
+  useEffect(() => {
     const previousProjectId = previousSelectedProjectIdRef.current;
     const historyMode = nextProjectHistoryModeRef.current;
+    const projectTab = navigationTarget?.projectId === selectedProjectId ? navigationTarget.detailTab || '' : '';
     nextProjectHistoryModeRef.current = 'none';
 
     if (previousProjectId === selectedProjectId) return;
 
     if (historyMode === 'replace') {
-      syncProjectToLocation(selectedProjectId, { push: false });
+      syncProjectToLocation(selectedProjectId, { push: false, projectTab });
     } else if (historyMode === 'push') {
-      syncProjectToLocation(selectedProjectId, { push: true });
+      syncProjectToLocation(selectedProjectId, { push: true, projectTab });
     }
 
     previousSelectedProjectIdRef.current = selectedProjectId;
@@ -287,6 +319,8 @@ export default function NativeProjectsView({
     function handleProjectPopState() {
       nextProjectHistoryModeRef.current = 'none';
       setSelectedProjectId(getProjectIdFromLocation());
+      setArchiveOpen(getSearchParam('view') === 'archive');
+      setArchivedProjectId('');
     }
 
     window.addEventListener('popstate', handleProjectPopState);
@@ -370,6 +404,7 @@ export default function NativeProjectsView({
       start: '',
       end: '',
       status: 'planning',
+      inactive: false,
       manager: '',
       address: '',
       permitNumber: '',
@@ -404,6 +439,7 @@ export default function NativeProjectsView({
       start: project.start || '',
       end: project.end || '',
       status: project.status || 'planning',
+      inactive: project.inactive === true,
       manager: project.manager || '',
       address: project.address || '',
       permitNumber: project.permitNumber || '',
@@ -521,9 +557,20 @@ export default function NativeProjectsView({
     if (!projectDraft?.name.trim()) return;
     if (projectDraft.id) {
       await runProjectMutation(['project', projectDraft.id], () => updateProject(data, projectDraft.id, projectDraft));
+      if (projectDraft.inactive) showArchive(true);
       return;
     }
     await runProjectMutation('project:create', () => createProject(data, projectDraft));
+  }
+
+  async function reactivateProject(project) {
+    if (readOnly || isMutating(['project', project.id, 'reactivate'])) return;
+    await runMutation(['project', project.id, 'reactivate'], async () => {
+      const nextState = await updateProject(dataRef.current, project.id, { ...project, inactive: false });
+      dataRef.current = nextState;
+      onStateChange(nextState);
+      setArchivedProjectId('');
+    });
   }
 
   async function handleDeleteProject() {
@@ -889,7 +936,7 @@ export default function NativeProjectsView({
       const removeStepFromPhase = (phase, inspections = project.inspections) => {
         const filteredSteps = (phase.steps || []).map((step) => ({
           ...step,
-          predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== stepDraft.stepId),
+          predecessors: normalizePreds(step.predecessors).filter((pred) => pred.type === 'inspection' || pred.id !== stepDraft.stepId),
           successors: Array.isArray(step.successors)
             ? step.successors.filter((successorId) => successorId !== stepDraft.stepId)
             : step.successors,
@@ -1013,7 +1060,7 @@ export default function NativeProjectsView({
             steps: (phase.steps || [])
               .map((step) => ({
                 ...step,
-                predecessors: normalizePreds(step.predecessors).filter((pred) => pred.id !== stepId),
+                predecessors: normalizePreds(step.predecessors).filter((pred) => pred.type === 'inspection' || pred.id !== stepId),
                 successors: Array.isArray(step.successors)
                   ? step.successors.filter((successorId) => successorId !== stepId)
                   : step.successors,
@@ -1065,7 +1112,42 @@ export default function NativeProjectsView({
 
   return (
     <section className="panel native-panel workspace-page">
-      {selectedProject ? (
+      {archiveOpen ? (
+        <section className="workspace-section project-archive-view">
+          <header className="project-archive-toolbar">
+            <p>Inactive projects and their history remain available here.</p>
+            <button className="button secondary" type="button" onClick={() => archivedProject ? setArchivedProjectId('') : showArchive(false)}>{archivedProject ? 'Back to archive' : 'Active projects'}</button>
+          </header>
+          {archivedProject ? (
+            <Suspense fallback={<div className="empty-state compact">Loading archived project…</div>}>
+              <ProjectDetailView
+                data={data}
+                project={archivedProject}
+                tasks={(data.tasks || []).filter((task) => task.projectId === archivedProject.id)}
+                settings={data.settings}
+                canEdit={false}
+                activeUser={activeUser}
+                deferredDataLoading={deferredDataLoading}
+                onEdit={() => {}}
+                onDateClick={() => {}}
+                onCalendarItemClick={() => {}}
+                onStateChange={onStateChange}
+                selectionNavigationRequest={navigationTarget}
+                onSectionChange={reportSectionChange}
+              />
+            </Suspense>
+          ) : archivedProjects.length ? (
+            <div className="project-archive-list">
+              {archivedProjects.map((project) => (
+                <div className="project-archive-row" key={project.id}>
+                  <button type="button" onClick={() => setArchivedProjectId(project.id)}><strong>{project.name}</strong><span>{project.address || 'No address'}</span></button>
+                  {!readOnly ? <button className="button secondary" type="button" onClick={() => void reactivateProject(project)} disabled={isMutating(['project', project.id, 'reactivate'])}>Reactivate</button> : null}
+                </div>
+              ))}
+            </div>
+          ) : <div className="empty-state compact"><h3>No inactive projects</h3><p>Projects you archive will appear here.</p></div>}
+        </section>
+      ) : selectedProject ? (
         <Suspense fallback={<div className="empty-state compact"><p>Loading project details...</p></div>}>
         <ProjectDetailView
           data={data}
@@ -1084,6 +1166,7 @@ export default function NativeProjectsView({
           onDateClick={readOnly ? () => {} : handleProjectDetailCalendarDateClick}
           onCalendarItemClick={readOnly ? () => {} : handleProjectDetailCalendarItemClick}
           onStateChange={onStateChange}
+          onSectionChange={reportSectionChange}
         />
         </Suspense>
       ) : (
@@ -1096,30 +1179,6 @@ export default function NativeProjectsView({
           {visibleProjects.length ? (
             <section className="workspace-section projects-overview-section">
               <div className="projects-overview-main">
-                  <div className="projects-overview-header">
-                    <div className="projects-overview-copy">
-                      <h2>Projects Overview</h2>
-                      <p>Live portfolio snapshot for the jobs that need attention today.</p>
-                    </div>
-                    <div className="projects-overview-stats">
-                      <div className="overview-stat-tile">
-                        <span>Projects</span>
-                        <strong>{overviewProjects.length}</strong>
-                      </div>
-                      <div className="overview-stat-tile">
-                        <span>Open tasks</span>
-                        <strong>{totals.tasks}</strong>
-                      </div>
-                      <div className="overview-stat-tile">
-                        <span>Inspections</span>
-                        <strong>{totals.inspections}</strong>
-                      </div>
-                      <div className="overview-stat-tile">
-                        <span>Phases / steps</span>
-                        <strong>{totals.phases} / {totals.steps}</strong>
-                      </div>
-                    </div>
-                  </div>
                   <section className="offline-projects-overview" aria-label="Offline projects">
                     <div className="offline-projects-overview-heading">
                       <div>
@@ -1172,6 +1231,10 @@ export default function NativeProjectsView({
                     )}
                   </section>
                   <div className="projects-filter-toolbar">
+                    <div className="projects-overview-actions">
+                      {!readOnly ? <button className="button primary" type="button" onClick={startCreate}>New project</button> : null}
+                      {['Admin', 'Edit', 'View Only'].includes(activeUser?.role) ? <button className="button secondary" type="button" onClick={() => showArchive(true)}>Archive ({archivedProjects.length})</button> : null}
+                    </div>
                     <ResponsiveFilterMenu label="Project filters">
                     <input
                       className="schedule-search-input projects-search-input"
@@ -1232,18 +1295,13 @@ export default function NativeProjectsView({
             <div className="empty-state">
               <h3>No projects loaded</h3>
               <p>Connect Supabase or create your first project to populate this view.</p>
+              {!readOnly ? <button className="button primary" type="button" onClick={startCreate}>New project</button> : null}
             </div>
           )}
         </>
       )}
       {!selectedProjectId ? (
         <>
-          <PageStats settings={data.settings}>
-            <DashboardStat label="Projects" value={overviewProjects.length} tone="brand" />
-            <DashboardStat label="Phases" value={totals.phases} />
-            <DashboardStat label="Schedule steps" value={totals.steps} />
-            <DashboardStat label="Standalone tasks" value={totals.tasks} />
-          </PageStats>
           <div className="page-refresh-footer">
             <button className="button secondary" type="button" onClick={refresh} disabled={loading}>
               {loading ? 'Refreshing...' : 'Refresh data'}

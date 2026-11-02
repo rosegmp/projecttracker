@@ -4,6 +4,9 @@ import App from './App.jsx';
 import { initializeObservability } from './services/observability.js';
 import './design-tokens.css';
 import './styles.css';
+import './project-hub-theme.css';
+import './compliance-workspace.css';
+import './command-center-home.css';
 
 async function startApplication() {
   await initializeObservability();

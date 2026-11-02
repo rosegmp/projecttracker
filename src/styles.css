@@ -367,25 +367,6 @@ a {
   font-weight: 700;
 }
 
-.inspection-thumbnail-button.is-loading {
-  position: relative;
-  cursor: progress;
-}
-
-.inspection-thumbnail-button.is-loading::after {
-  content: '';
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 22px;
-  height: 22px;
-  border: 3px solid rgba(255, 255, 255, 0.88);
-  border-right-color: var(--brand);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  transform: translate(-50%, -50%);
-  animation: button-spin 0.7s linear infinite;
-}
-
 .button:hover {
   transform: translateY(-1px);
 }
@@ -5380,6 +5361,22 @@ button.calendar-chip {
   gap: 18px;
 }
 
+.photo-folder-groups { display: grid; gap: 24px; }
+.photo-folder-group { min-width: 0; }
+.photo-folder-group + .photo-folder-group { padding-top: 18px; border-top: 1px solid var(--border); }
+.photo-folder-group-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.photo-folder-group-header h3 { margin: 0; font-size: 17px; }
+.photo-folder-group-header span { color: var(--muted); font-size: 12px; }
+.photo-folder-toolbar { display: grid; gap: 12px; margin: 16px 0; }
+.photo-folder-list, .photo-folder-actions, .photo-folder-form, .photo-folder-manage { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.photo-folder-button { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; }
+.photo-folder-button.active { border-color: var(--accent, #159ded); background: var(--surface-alt); font-weight: 700; }
+.photo-folder-button span { color: var(--muted); font-size: 12px; }
+.photo-folder-form input { min-width: 160px; max-width: 250px; }
+.photo-folder-field { display: grid; gap: 4px; min-width: 0; font-size: 12px; color: var(--muted); }
+.photo-folder-field select { width: 100%; min-width: 0; }
+.photo-folder-label { color: var(--muted); }
+
 @media (max-width: 720px) {
   .photos-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5411,6 +5408,7 @@ button.calendar-chip {
   position: relative;
   display: block;
   width: 100%;
+  aspect-ratio: 4 / 3;
   padding: 0;
   border: 1px solid rgba(61, 66, 120, 0.1);
   border-radius: 14px;
@@ -5420,18 +5418,22 @@ button.calendar-chip {
 }
 
 .photo-thumb {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 100%;
   object-fit: cover;
 }
 
 .photo-placeholder {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
   gap: 8px;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 100%;
   color: var(--muted);
 }
 
@@ -5793,7 +5795,7 @@ button.calendar-chip {
 
 .inspection-grid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .inspection-view-toolbar {
@@ -5851,23 +5853,14 @@ button.calendar-chip {
 
 .inspection-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'heading heading' 'details attachments' 'checklist checklist' 'notes notes';
+  gap: 3px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  background: linear-gradient(180deg, #fff 0%, var(--surface-alt) 100%);
-  box-shadow: 0 8px 20px rgba(19, 26, 56, 0.05);
-}
-
-.inspection-card.inspection-passed {
-  border-color: rgba(29, 158, 117, 0.28);
-  background: linear-gradient(180deg, rgba(29, 158, 117, 0.05), #fff);
-}
-
-.inspection-card.inspection-failed,
-.inspection-card.inspection-follow-up {
-  border-color: rgba(176, 59, 59, 0.24);
-  background: linear-gradient(180deg, rgba(176, 59, 59, 0.05), #fff);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  box-shadow: none;
 }
 
 .inspection-card.inspection-cancelled {
@@ -5876,16 +5869,21 @@ button.calendar-chip {
 }
 
 .inspection-card-header {
+  grid-area: heading;
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  align-items: start;
+  align-items: center;
 }
 
 .inspection-card-header h3 {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 14px;
-  line-height: 1.3;
+  line-height: 1.25;
+}
+
+.inspection-subcode {
+  color: var(--muted);
 }
 
 .inspection-type {
@@ -5894,10 +5892,23 @@ button.calendar-chip {
   font-size: 12px;
 }
 
+.inspection-name-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-align: left; cursor: pointer; }
+.inspection-name-button:hover { color: var(--brand); text-decoration: underline; }
+.inspection-name-button:disabled { cursor: wait; }
+.inspection-name-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+
+.inspection-status {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: capitalize;
+}
+
 .inspection-meta {
+  grid-area: details;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
 }
@@ -5905,58 +5916,82 @@ button.calendar-chip {
 .inspection-meta span {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(61, 66, 120, 0.05);
+  padding: 0;
+  background: transparent;
 }
+
+.inspection-meta span + span::before { content: '·'; margin: 0 6px; }
 
 .inspection-notes {
+  grid-area: notes;
   margin: 0;
-  padding-top: 12px;
-  border-top: 1px solid rgba(61, 66, 120, 0.12);
-  color: var(--text);
-  line-height: 1.55;
-  font-size: 14px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.inspection-thumbnail-row {
+.inspection-checklist-details { grid-area: checklist; color: var(--muted); font-size: 11px; }
+.inspection-checklist-details summary { width: fit-content; cursor: pointer; }
+.inspection-checklist-details summary:hover { color: var(--brand); }
+.inspection-checklist-details ul { display: grid; gap: 4px; margin: 6px 0 2px; padding: 0; list-style: none; }
+.inspection-checklist-details li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; color: var(--text); }
+.inspection-checklist-details li.is-complete .inspection-checklist-item-text { color: var(--muted); text-decoration: line-through; }
+.inspection-checklist-task-button { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--brand); font: inherit; font-weight: 600; cursor: pointer; }
+.inspection-checklist-task-button:hover { text-decoration: underline; }
+.inspection-checklist-task-button:disabled { opacity: .55; cursor: wait; }
+.inspection-checklist-task-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.inspection-checklist-task-status { margin-left: auto; color: var(--muted); }
+
+.inspection-checklist-editor { display: grid; gap: 10px; min-width: 0; }
+.inspection-checklist-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inspection-checklist-heading > div { display: grid; gap: 3px; }
+.inspection-checklist-heading strong { color: var(--text); font-size: 13px; }
+.inspection-checklist-heading small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.inspection-checklist-edit-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.inspection-form-grid .inspection-checklist-check { display: flex; align-items: center; }
+.inspection-form-grid .inspection-checklist-check input[type='checkbox'] { width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--brand); }
+.inspection-checklist-remove { padding: 8px 10px; }
+
+@media (max-width: 520px) {
+  .inspection-checklist-heading { align-items: flex-start; }
+  .inspection-checklist-edit-row { grid-template-columns: 20px minmax(0, 1fr); }
+  .inspection-checklist-remove { grid-column: 2; justify-self: start; }
+}
+
+.inspection-attachments {
+  grid-area: attachments;
   display: flex;
-  gap: 12px;
+  align-items: center;
+  justify-self: end;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.inspection-thumbnail-card {
-  display: grid;
-  gap: 8px;
-}
+.inspection-attachment-actions { display: inline-flex; align-items: center; gap: 5px; }
 
-.inspection-thumbnail-button {
-  display: grid;
-  gap: 8px;
-  justify-items: center;
-  width: 120px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--surface-alt);
-  color: var(--text);
+.inspection-attachment-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.inspection-thumbnail-actions {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-}
-
-.inspection-thumbnail-image {
-  width: 100%;
-  height: 84px;
-  object-fit: cover;
-  border-radius: 12px;
-  background: #fff;
-}
+.inspection-attachment-link:hover { text-decoration: underline; }
+.inspection-attachment-link:disabled { opacity: .55; cursor: wait; }
+.inspection-attachment-link:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.inspection-attachment-icon { display: inline-flex; align-items: center; padding: 2px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.inspection-attachment-icon:hover { color: var(--brand); }
+.inspection-attachment-icon:disabled { opacity: .45; cursor: not-allowed; }
+.inspection-attachment-icon:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
 .inspection-form-grid {
   display: grid;
@@ -6216,6 +6251,8 @@ button.calendar-chip {
   font-size: 12px;
   font-weight: 700;
 }
+
+.task-location-chip { background: rgba(32, 112, 153, 0.12); }
 
 .task-due-chip {
   display: inline-flex;
@@ -6569,6 +6606,25 @@ button.calendar-chip {
 
 .project-form-grid label.full {
   grid-column: 1 / -1;
+}
+
+.project-form-grid .checkbox-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.project-form-grid .checkbox-field input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
 }
 
 .project-form-field {
@@ -7084,19 +7140,6 @@ button.calendar-chip {
     padding: 8px;
   }
 
-  .projects-overview-header {
-    padding: 12px;
-  }
-
-  .projects-overview-copy h2 {
-    font-size: 15px;
-  }
-
-  .projects-overview-copy p {
-    font-size: 12px;
-    line-height: 1.35;
-  }
-
   .project-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -7116,10 +7159,6 @@ button.calendar-chip {
   .project-card-deadline {
     width: 100%;
     min-width: 0;
-  }
-
-  .projects-overview-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .project-card {

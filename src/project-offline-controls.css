@@ -1,0 +1,5 @@
+.project-offline-controls { margin-top: 16px; padding: 16px; }
+.project-offline-controls .panel-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.project-offline-asset-controls { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.project-offline-asset-controls label { display: inline-flex; align-items: center; gap: 6px; }
+.project-offline-asset-controls p { margin: 8px 0; }

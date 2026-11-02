@@ -254,7 +254,7 @@ test('task deep link opens the authorized project task and highlights it', async
 
   await page.goto(`/?tab=projects&project=${projectId}&projectTab=tasks&task=${taskId}`);
 
-  await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#project-tab-tasks')).toHaveAttribute('aria-current', 'page');
   const linkedTask = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
@@ -502,7 +502,7 @@ test('global search opens schedule and inspection records in context', async ({ 
   palette = page.getByRole('dialog', { name: 'Go anywhere' });
   await palette.getByRole('combobox').fill('PLUMB-101');
   await palette.getByRole('option', { name: /PLUMB-101/ }).click();
-  await expect(page.getByRole('tab', { name: 'Inspections' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#project-tab-inspections')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('article.inspection-card').filter({ hasText: 'PLUMB-101' })).toHaveClass(/highlighted/);
 });
 
@@ -542,7 +542,7 @@ test('global search loads files and daily logs on demand and opens exact records
   });
   await palette.getByRole('combobox').fill('Building Permit');
   await palette.getByRole('option', { name: /Building Permit\.pdf/ }).click();
-  await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#project-tab-files')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('.files-hierarchy-file-row').filter({ hasText: 'Building Permit.pdf' })).toHaveClass(/highlighted/);
 
   await page.keyboard.press('Control+K');
@@ -554,7 +554,7 @@ test('global search loads files and daily logs on demand and opens exact records
   const dailyLogResult = palette.getByRole('option', { name: /Foundation pour log/ });
   await expect(dailyLogResult).toBeVisible();
   await dailyLogResult.click();
-  await expect(page.getByRole('tab', { name: 'Daily Logs' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#project-tab-daily-logs')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('article.project-workflow-card').filter({ hasText: 'Foundation pour log' })).toHaveClass(/highlighted/);
 });
 
@@ -809,9 +809,7 @@ test('staff warranty updates save on device offline and synchronize after reconn
 
   await page.goto('/?tab=projects');
   await page.getByRole('button', { name: 'Staff Test Project', exact: true }).click();
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByLabel('More project sections', { exact: true })
-    .getByRole('button', { name: 'Warranty & Closeout', exact: true }).click();
+  await page.locator('#project-tab-warranty-closeout').click();
   await expect(page.getByText('WAR-001 · Original punch item')).toBeVisible();
   await context.setOffline(true);
   await page.getByRole('button', { name: 'Edit WAR-001' }).click();
@@ -898,6 +896,7 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
   projects[0].data.locations = ['Kitchen'];
   tasks[0].data.location = 'Kitchen';
   let createdTaskPayload = null;
+  let locationProjectOperation = null;
   let existingTaskSaveAttempts = 0;
 
   await mockStaffBackend(page, {
@@ -944,6 +943,7 @@ test('edit user creates a task and sees an actionable optimistic-conflict messag
   });
 
   await page.goto('/?tab=tasks');
+  await expect(page.locator('article.task-row-card').filter({ hasText: 'Existing staff task' }).getByTitle('Location: Kitchen')).toBeVisible();
   const createForm = page.locator('form.task-create-desktop');
   await createForm.getByPlaceholder('Task name').fill('Playwright created task');
   await createForm.locator('select').first().selectOption(projectId);
@@ -1002,9 +1002,7 @@ test('Takeoff drawing shapes support constrained geometry and editable styles', 
   });
 
   await page.goto(`/?tab=projects&project=${projectId}`);
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByLabel('More project sections', { exact: true })
-    .getByRole('button', { name: 'Takeoff', exact: true }).click();
+  await page.locator('#project-tab-takeoff').click();
   await page.locator('#pdfInput').setInputFiles({
     name: 'blank-plan.pdf',
     mimeType: 'application/pdf',

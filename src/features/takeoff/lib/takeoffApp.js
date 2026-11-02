@@ -61,6 +61,8 @@ const COUNT_SYMBOL_OPTIONS = [
 ];
 
 const SNAP_RADIUS_PX = 14;
+const MIN_ZOOM = 0.01;
+const MAX_ZOOM = 2.5;
 const SNAP_DARKNESS_THRESHOLD = 185;
 const DEFAULT_SESSION_STORAGE_KEY = "plan-takeoff:autosave";
 const SESSION_DB_NAME = "plan-takeoff-db";
@@ -197,6 +199,8 @@ function bindElements(root) {
     "pageLabel",
     "zoomOut",
     "zoomIn",
+    "fitPage",
+    "fitWidth",
     "zoomLabel",
     "undoAction",
     "redoAction",
@@ -289,6 +293,8 @@ function bindEvents() {
   on(els.nextPage, "click", () => setPage(state.pageNumber + 1));
   on(els.zoomOut, "click", () => setZoom(state.zoom - 0.1));
   on(els.zoomIn, "click", () => setZoom(state.zoom + 0.1));
+  on(els.fitPage, "click", () => { void fitPage().catch(handleRenderError); });
+  on(els.fitWidth, "click", () => { void fitPage("width").catch(handleRenderError); });
   on(els.undoAction, "click", undoAction);
   on(els.redoAction, "click", redoAction);
   on(els.viewer, "wheel", handleViewerWheel, { passive: false });
@@ -978,13 +984,30 @@ function setPage(pageNumber) {
 }
 
 function setZoom(zoom) {
-  state.zoom = clamp(Number(zoom.toFixed(2)), 0.5, 2.5);
+  state.zoom = clamp(Number(zoom.toFixed(2)), MIN_ZOOM, MAX_ZOOM);
   renderAll();
   renderPage().then(renderAll).catch(handleRenderError);
 }
 
+async function fitPage(mode = "page") {
+  if (!state.pdfDoc) return;
+  const pageNumber = state.pageNumber;
+  const page = await state.pdfDoc.getPage(pageNumber);
+  if (pageNumber !== state.pageNumber) return;
+  const viewport = page.getViewport({ scale: 1 });
+  const availableWidth = Math.max(1, els.viewer.clientWidth);
+  const availableHeight = Math.max(1, els.viewer.clientHeight);
+  const widthZoom = availableWidth / viewport.width;
+  const fitZoom = mode === "width" ? widthZoom : Math.min(widthZoom, availableHeight / viewport.height);
+  state.zoom = clamp(Math.floor(fitZoom * 1000) / 1000, MIN_ZOOM, MAX_ZOOM);
+  renderAll();
+  await renderPage();
+  els.viewer.scrollTo({ top: 0, left: 0 });
+  renderAll();
+}
+
 function handleViewerWheel(event) {
-  if (!state.pdfDoc || event.deltaY === 0) return;
+  if (!state.pdfDoc || !event.ctrlKey || event.deltaY === 0) return;
 
   event.preventDefault();
 
@@ -992,7 +1015,7 @@ function handleViewerWheel(event) {
   const pointerX = event.clientX - viewerRect.left + els.viewer.scrollLeft;
   const pointerY = event.clientY - viewerRect.top + els.viewer.scrollTop;
   const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
-  const nextZoom = clamp(Number((state.zoom * zoomFactor).toFixed(2)), 0.5, 2.5);
+  const nextZoom = clamp(Number((state.zoom * zoomFactor).toFixed(2)), MIN_ZOOM, MAX_ZOOM);
   if (nextZoom === state.zoom) return;
 
   const worldX = pointerX / state.zoom;
@@ -1819,7 +1842,7 @@ function pushUndoSnapshot(snapshot) {
 function applyHistorySnapshot(snapshot) {
   state.restoringHistory = true;
   state.pageNumber = clamp(Number(snapshot.pageNumber) || 1, 1, state.pdfDoc?.numPages || 1);
-  state.zoom = clamp(Number(snapshot.zoom) || 1, 0.5, 2.5);
+  state.zoom = clamp(Number(snapshot.zoom) || 1, MIN_ZOOM, MAX_ZOOM);
   state.tool = snapshot.tool || "select";
   state.snapToLine = Boolean(snapshot.snapToLine);
   state.measurements = Array.isArray(snapshot.measurements)
@@ -2155,7 +2178,7 @@ async function hydrateProject(project, options = {}) {
   state.pdfDataBase64 = project.pdfDataBase64;
   state.savedProjectId = project.id || "";
   state.pageNumber = clamp(Number(project.pageNumber) || 1, 1, pdfDoc.numPages);
-  state.zoom = clamp(Number(project.zoom) || 1, 0.5, 2.5);
+  state.zoom = clamp(Number(project.zoom) || 1, MIN_ZOOM, MAX_ZOOM);
   state.draft = [];
   state.previewPoint = null;
   state.measurements = Array.isArray(project.measurements)
@@ -2245,8 +2268,10 @@ function renderChrome() {
   els.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
   els.prevPage.disabled = !state.pdfDoc || state.pageNumber <= 1;
   els.nextPage.disabled = !state.pdfDoc || state.pageNumber >= pageTotal;
-  els.zoomOut.disabled = !state.pdfDoc || state.zoom <= 0.5;
-  els.zoomIn.disabled = !state.pdfDoc || state.zoom >= 2.5;
+  els.zoomOut.disabled = !state.pdfDoc || state.zoom <= MIN_ZOOM;
+  els.zoomIn.disabled = !state.pdfDoc || state.zoom >= MAX_ZOOM;
+  els.fitPage.disabled = !state.pdfDoc;
+  els.fitWidth.disabled = !state.pdfDoc;
   els.undoAction.disabled = readOnly || !state.undoStack.length;
   els.redoAction.disabled = readOnly || !state.redoStack.length;
   els.saveProjectButton.disabled = readOnly || !state.pdfDoc || !state.pdfDataBase64 || !state.savedProjectId;

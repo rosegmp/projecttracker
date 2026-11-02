@@ -296,6 +296,8 @@ export default function TakeoffWorkspace({ project, projectId, canEdit = true })
           <button id="zoomIn" className="icon-button" type="button" title="Zoom in" aria-label="Zoom in">
             <ZoomIn24Regular aria-hidden="true" />
           </button>
+          <button id="fitPage" className="button compact" type="button" title="Fit the whole page in the viewer">Fit page</button>
+          <button id="fitWidth" className="button compact" type="button" title="Fit the page to the viewer width">Fit width</button>
         </div>
       </header>
 

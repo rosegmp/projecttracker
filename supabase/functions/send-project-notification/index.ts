@@ -714,6 +714,9 @@ Deno.serve(async (request) => {
       admin.from('project_user_access').select('user_id').eq('project_id', projectId),
     ]);
     if (!project) return fail('Project not found.', 404, operation, 'project_not_found');
+    if (project.data?.inactive === true) {
+      return fail('Archived projects do not send notifications.', 409, operation, 'project_archived');
+    }
     const accessIds = new Set((accessRows || []).map((row) => row.user_id));
     const callerCanAccess = normalizeRole(callerAppUser.data?.role) === 'Admin'
       || (accessIds.size ? accessIds.has(callerAppUser.id) : normalizeRole(callerAppUser.data?.role) === 'Edit');

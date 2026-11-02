@@ -601,10 +601,16 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background:
     linear-gradient(90deg, rgba(23, 33, 29, 0.06) 1px, transparent 1px) 0 0 / 28px 28px,
     linear-gradient(0deg, rgba(23, 33, 29, 0.06) 1px, transparent 1px) 0 0 / 28px 28px,
     var(--workbench);
+}
+
+.takeoff-feature .viewer::-webkit-scrollbar {
+  display: none;
 }
 
 .takeoff-feature .viewer.has-plan {
@@ -1752,6 +1758,83 @@ body.takeoff-full-window-open {
   font-size: 13px;
 }
 
+/* Keep plan sheets on their original light canvas, while the editor chrome follows
+   the Project Hub theme. These colors are scoped to Takeoff so markup exports and
+   the light theme retain their existing appearance. */
+:root[data-theme='dark'] .takeoff-feature {
+  color-scheme: dark;
+  --ink: #f2f7ff;
+  --muted: #a7bfd4;
+  --line: rgba(104, 161, 195, .28);
+  --panel: #0a2031;
+  --panel-soft: #102a3d;
+  --workbench: #102638;
+  --brand: #087ec0;
+  --teal: #48c5ee;
+  --danger: #ff8585;
+  --shadow: 0 16px 36px rgba(0, 8, 16, .5);
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(
+  .topbar, .pages-pane, .takeoff-pane, .tool-strip, .statusbar,
+  .project-browser-dialog, .save-name-dialog, .scale-dialog,
+  .project-file-picker, .symbol-picker-menu
+) {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(
+  .button:not(.primary), .icon-button, .tool-button, .pane-toggle,
+  .page-thumb, .text-input, .symbol-picker-button, .symbol-option,
+  .measure-row, .project-browser-item, .project-browser-empty,
+  .project-file-picker-item, .color-input
+) {
+  background: var(--panel-soft);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(.symbol-picker-preview, .symbol-option-preview) {
+  background: var(--panel);
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(.symbol-option:hover, .symbol-option.active, .project-file-picker-item:hover) {
+  background: #123c55;
+  border-color: var(--teal);
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(.toggle-button.active, .page-thumb.active, .project-browser-item.active) {
+  background: #123c55;
+  border-color: var(--teal);
+  color: var(--ink);
+}
+
+:root[data-theme='dark'] .takeoff-feature .tool-button.active {
+  background: var(--brand);
+  border-color: var(--teal);
+  color: #fff;
+}
+
+:root[data-theme='dark'] .takeoff-feature .text-button:not(.danger) {
+  color: var(--teal);
+  background: transparent;
+}
+
+:root[data-theme='dark'] .takeoff-feature .takeoff-permission-notice {
+  background: #42351a;
+  color: #ffe0a1;
+  border-color: var(--line);
+}
+
+:root[data-theme='dark'] .takeoff-feature .project-file-picker-error {
+  background: #47282e;
+}
+
+:root[data-theme='dark'] .takeoff-feature :is(.blueprint-preview, .page-thumb canvas) {
+  color-scheme: light;
+}
+
 @media (max-width: 1100px) and (min-width: 821px) {
   .takeoff-feature .workspace.pages-collapsed {
     grid-template-columns: 44px minmax(0, 1fr) 280px;
@@ -1827,5 +1910,56 @@ body.takeoff-full-window-open {
   .takeoff-feature .app-shell {
     height: auto;
     min-height: 760px;
+  }
+}
+
+/* The project workspace already supplies the app header and navigation. */
+.project-hub-shell .workspace-content-main:has(#project-panel-takeoff) {
+  padding: 0;
+}
+
+.project-hub-shell .workspace-content-main:has(#project-panel-takeoff) > .workspace-page,
+.project-hub-shell .project-detail-page:has(#project-panel-takeoff) {
+  gap: 0;
+}
+
+.project-hub-shell #project-panel-takeoff {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.project-hub-shell #project-panel-takeoff .takeoff-feature .app-shell {
+  width: 100%;
+  margin: 0;
+}
+
+@media (min-width: 821px) {
+  .project-hub-shell #project-panel-takeoff .takeoff-feature:not(.is-full-window) {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: calc(100dvh - 77px);
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .project-hub-shell #project-panel-takeoff .takeoff-feature:not(.is-full-window) .app-shell {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .project-hub-shell #project-panel-takeoff .pages-pane {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .project-hub-shell #project-panel-takeoff .pages-list {
+    flex: 1;
+    height: auto;
+    min-height: 0;
   }
 }
