@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getRequestId, REQUEST_ID_HEADER } from '../_shared/requestCorrelation.ts';
 import {
-  API_VERSION, MCP_TOOLS, assertReadOnlyMethod, auditFilterNames, compactCitationItem, filterItems,
+  API_VERSION, MCP_TOOLS, assertReadOnlyMethod, auditFilterNames, compactCitationItem, filterActiveProjectRecords, filterItems,
   hashSafeError, isRisk, milestoneRecord, paginate, parseFilters, projectRecord, structuredError,
   taskRecord, validateTimezone, validateToolArguments, workflowRecord,
 } from './core.js';
@@ -81,21 +81,22 @@ async function loadRecords(admin: ReturnType<typeof createClient>, allowedProjec
   const failure = results.find((result) => result.error)?.error;
   if (failure) throw failure;
   const [projectRows, taskRows, phaseRows, stepRows, delayRows, logRows, rfiRows, submittalRows, selectionRows] = results.map((result) => result.data || []);
-  const projectItems = projectRows.map((row) => projectRecord(row, BASE_SITE_URL));
+  const active = filterActiveProjectRecords({ projectRows, taskRows, phaseRows, stepRows, delayRows, logRows, rfiRows, submittalRows, selectionRows });
+  const projectItems = active.projectRows.map((row) => projectRecord(row, BASE_SITE_URL));
   const projectMap = new Map(projectItems.map((item) => [item.id, item]));
   const projectAllowed = (projectId: string) => !allowedProjectIds.length || allowedProjectIds.includes(projectId);
-  const tasks = taskRows.map((row) => taskRecord(row, projectMap.get(String(row.data?.projectId || '')), BASE_SITE_URL)).filter((item) => projectAllowed(item.project_id));
+  const tasks = active.taskRows.map((row) => taskRecord(row, projectMap.get(String(row.data?.projectId || '')), BASE_SITE_URL)).filter((item) => projectAllowed(item.project_id));
   const milestones = [
-    ...phaseRows.map((row) => milestoneRecord(row, projectMap.get(row.project_id), 'phase', BASE_SITE_URL)),
-    ...stepRows.map((row) => milestoneRecord(row, projectMap.get(row.project_id), 'step', BASE_SITE_URL)),
+    ...active.phaseRows.map((row) => milestoneRecord(row, projectMap.get(row.project_id), 'phase', BASE_SITE_URL)),
+    ...active.stepRows.map((row) => milestoneRecord(row, projectMap.get(row.project_id), 'step', BASE_SITE_URL)),
   ];
   const updates = [
-    ...logRows.map((row) => workflowRecord({ ...row, status: 'published', due_date: row.log_date }, projectMap.get(row.project_id), 'daily_log', BASE_SITE_URL)),
-    ...rfiRows.map((row) => workflowRecord(row, projectMap.get(row.project_id), 'rfi', BASE_SITE_URL)),
-    ...submittalRows.map((row) => workflowRecord(row, projectMap.get(row.project_id), 'submittal', BASE_SITE_URL)),
+    ...active.logRows.map((row) => workflowRecord({ ...row, status: 'published', due_date: row.log_date }, projectMap.get(row.project_id), 'daily_log', BASE_SITE_URL)),
+    ...active.rfiRows.map((row) => workflowRecord(row, projectMap.get(row.project_id), 'rfi', BASE_SITE_URL)),
+    ...active.submittalRows.map((row) => workflowRecord(row, projectMap.get(row.project_id), 'submittal', BASE_SITE_URL)),
   ];
-  const delays = delayRows.map((row) => workflowRecord({ ...row, status: 'delayed', title: row.data?.reason || row.data?.notes || 'Schedule delay' }, projectMap.get(row.project_id), 'schedule_delay', BASE_SITE_URL));
-  const selections = selectionRows.map((row) => workflowRecord({ ...row, title: row.data?.itemName || row.data?.name, status: row.data?.status }, projectMap.get(row.project_id), 'selection', BASE_SITE_URL));
+  const delays = active.delayRows.map((row) => workflowRecord({ ...row, status: 'delayed', title: row.data?.reason || row.data?.notes || 'Schedule delay' }, projectMap.get(row.project_id), 'schedule_delay', BASE_SITE_URL));
+  const selections = active.selectionRows.map((row) => workflowRecord({ ...row, title: row.data?.itemName || row.data?.name, status: row.data?.status }, projectMap.get(row.project_id), 'selection', BASE_SITE_URL));
   return { projects: projectItems, tasks, milestones, updates, risks: [...tasks, ...delays, ...updates].filter(isRisk), selections };
 }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MCP_TOOLS, assertReadOnlyMethod, auditFilterNames, filterItems, paginate, parseFilters,
+  MCP_TOOLS, assertReadOnlyMethod, auditFilterNames, filterActiveProjectRecords, filterItems, isActiveProjectRecord, paginate, parseFilters,
   projectRecord, taskRecord, validateToolArguments,
 } from '../supabase/functions/projecthub-read-api/core.js';
 
@@ -44,6 +44,25 @@ test('record projections omit customer contact data and secret-like fields', () 
   const task = taskRecord({ id: 't-1', created_at: '2026-09-01T12:00:00Z', data: { projectId: 'p-1', label: 'Safe task', due: '2026-09-02', assignees: ['Owner'], attachment: { dataUrl: 'secret' } } }, project, 'https://projecthub.destinyhomesnj.com');
   assert.equal(task.due_date, '2026-09-02');
   assert.doesNotMatch(JSON.stringify(task), /dataUrl|secret/);
+});
+
+test('inactive projects and their related records are excluded from the read API', () => {
+  assert.equal(isActiveProjectRecord({ data: { inactive: true } }), false);
+  assert.equal(isActiveProjectRecord({ data: { inactive: 'true' } }), false);
+  assert.equal(isActiveProjectRecord({ data: { inactive: false } }), true);
+  assert.equal(isActiveProjectRecord({ data: {} }), true);
+  const activeProject = { id: 'active', data: { inactive: false } };
+  const archivedProject = { id: 'archived', data: { inactive: true } };
+  const scopedRows = Object.fromEntries(['phaseRows', 'stepRows', 'delayRows', 'logRows', 'rfiRows', 'submittalRows', 'selectionRows']
+    .map((key) => [key, [{ project_id: 'active' }, { project_id: 'archived' }]]));
+  const filtered = filterActiveProjectRecords({
+    projectRows: [activeProject, archivedProject],
+    taskRows: [{ data: { projectId: 'active' } }, { data: { projectId: 'archived' } }, { data: {} }],
+    ...scopedRows,
+  });
+  assert.deepEqual(filtered.projectRows, [activeProject]);
+  assert.equal(filtered.taskRows.length, 2);
+  for (const key of Object.keys(scopedRows)) assert.deepEqual(filtered[key], [{ project_id: 'active' }]);
 });
 
 test('filters validate input, filter exact fields, and paginate with opaque cursors', () => {
