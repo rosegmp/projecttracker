@@ -9,6 +9,12 @@ const STATUS_LABELS = {
   draft: 'Draft', published: 'Published', response_requested: 'Response requested', answered: 'Answered',
   approved: 'Approved', declined: 'Declined', closed: 'Closed',
 };
+const AUDIENCE_LABELS = { all: 'All portal users', customer: 'Customers', subcontractor: 'Subcontractors' };
+
+function portalAudience(record) {
+  const audience = String(record?.audience || '').trim().toLowerCase();
+  return Object.hasOwn(AUDIENCE_LABELS, audience) ? audience : '';
+}
 
 function nextNumber(records) {
   const highest = records.reduce((max, record) => Math.max(max, Number(String(record.number || '').match(/\d+/)?.[0]) || 0), 0);
@@ -49,7 +55,7 @@ export default function ProjectPortalManager({ project, activeUser, canEdit = tr
     void service.list('portalItems').then((result) => {
       if (cancelled) return;
       const audience = role.toLowerCase();
-      setRecords(portalUser ? result.records.filter((record) => ['all', audience].includes(record.audience)) : result.records);
+      setRecords(portalUser ? result.records.filter((record) => ['all', audience].includes(portalAudience(record))) : result.records);
       setLocalMode(!!result.local);
     }).catch((error) => {
       if (!cancelled) setMessage(error instanceof Error ? error.message : 'Unable to load portal items.');

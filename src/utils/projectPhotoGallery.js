@@ -113,3 +113,41 @@ export const PROJECT_PHOTO_WORKFLOW_TYPES = [
   'warrantyItems',
   'closeoutItems',
 ];
+
+const SOURCE_FOLDER_NAMES = {
+  files: 'Files', selections: 'Selections', inspections: 'Inspections', tasks: 'Tasks',
+  ...WORKFLOW_LABELS,
+};
+
+function getPhotoSourceFolder(photo) {
+  if (!photo?.gallerySourceType || photo.gallerySourceType === 'project') return null;
+  const name = SOURCE_FOLDER_NAMES[photo.gallerySourceType] || String(photo.gallerySource || '').split(' · ')[0].trim();
+  return name ? { id: `source:${photo.gallerySourceType}`, name, source: true } : null;
+}
+
+export function getProjectPhotoFolders(project, photos = []) {
+  const seen = new Set();
+  const folders = (Array.isArray(project?.photoFolders) ? project.photoFolders : []).filter((folder) => {
+    const id = String(folder?.id || '').trim();
+    const name = String(folder?.name || '').trim();
+    if (!id || !name || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  const names = new Set(folders.map((folder) => folder.name.trim().toLowerCase()));
+  photos.forEach((photo) => {
+    const folder = getPhotoSourceFolder(photo);
+    if (!folder || names.has(folder.name.toLowerCase())) return;
+    folders.push(folder);
+    names.add(folder.name.toLowerCase());
+  });
+  return folders;
+}
+
+export function getPhotoFolderId(project, photo, folders = getProjectPhotoFolders(project, [photo])) {
+  const assignedId = String(project?.photoFolderAssignments?.[photo.galleryKey] || '');
+  if (assignedId === '__unfiled__') return '';
+  if (folders.some((folder) => folder.id === assignedId)) return assignedId;
+  const sourceFolder = getPhotoSourceFolder(photo);
+  return folders.find((folder) => folder.name.trim().toLowerCase() === sourceFolder?.name.toLowerCase())?.id || '';
+}

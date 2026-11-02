@@ -22,6 +22,7 @@ import {
   buildTaskAssigneeDirectory,
   buildTaskAssigneeOptions,
   buildProjectAccessUpdates,
+  getArchivedProjectsForUser,
   getVisibleProjectsForUser,
   getVisibleTasksForUser,
   normalizeProjectAccessUserIds,
@@ -569,9 +570,9 @@ const tests = [
     name: 'top-level tab visibility preserves required navigation and safe defaults',
     run() {
       assert.deepEqual(normalizeVisibleTopLevelTabs(undefined), DEFAULT_VISIBLE_TOP_LEVEL_TABS);
-      assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'reports', 'settings']);
-      assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'reports', 'settings']);
-      assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'reports', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['home', 'tasks']), ['home', 'projects', 'tasks', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs(['unknown', 'calendar', 'calendar']), ['projects', 'calendar', 'settings']);
+      assert.deepEqual(normalizeVisibleTopLevelTabs([]), ['projects', 'settings']);
     },
   },
   {
@@ -830,7 +831,7 @@ const tests = [
       assert.match(workflowSource, /readOfflineWorkflowRecords/);
       assert.match(workflowSource, /updateOfflineProjectWorkflowRecords/);
       assert.match(detailSource, /workflows: offlineWorkflows/);
-      assert.match(detailSource, /Takeoff opens projects already saved on this device/);
+      assert.match(detailSource, /ProjectOfflineControls/);
     },
   },
   {
@@ -965,7 +966,7 @@ const tests = [
     },
   },
   {
-    name: 'project tabs render in configured order and survive page refresh',
+    name: 'project sections render in sidebar order and survive page refresh',
     async run() {
       const [detailSource, appSource, projectsSource] = await Promise.all([
         readFile(new URL('../src/components/ProjectDetailView.jsx', import.meta.url), 'utf8'),
@@ -974,9 +975,9 @@ const tests = [
       ]);
       assert.match(detailSource, /getSearchParam\('projectTab'\)/);
       assert.match(detailSource, /url\.searchParams\.set\('projectTab', activeDetailTab\)/);
-      assert.match(detailSource, /projectNavigation\.primaryTabs\.map\(\(tab\) =>/);
-      assert.match(detailSource, /id=\{`project-tab-\$\{tab\.id\}`\}/);
-      assert.match(detailSource, /aria-label="More project sections"/);
+      assert.match(appSource, /visibleProjectSections\.map\(\(section\) =>/);
+      assert.match(appSource, /id=\{`project-tab-\$\{section\.id\}`\}/);
+      assert.doesNotMatch(detailSource, /role="tablist"/);
       assert.match(detailSource, /aria-label="Project breadcrumb"/);
       assert.match(appSource, /url\.searchParams\.delete\('projectTab'\)/);
       assert.match(projectsSource, /url\.searchParams\.delete\('projectTab'\)/);
@@ -1560,6 +1561,9 @@ const tests = [
           steps: [
             { id: 'step-1', name: 'Plumbing', start: '2026-07-14', end: '2026-07-15', status: 'active' },
             { id: 'step-2', name: 'Electric', start: '2026-07-16', end: '2026-07-18', predecessors: [{ id: 'step-1', lag: 0 }] },
+            { id: 'step-3', name: 'Kitchen Install', start: '2026-07-16', end: '2026-07-18', status: 'active', predecessors: [{ id: 'step-1', lag: -17 }] },
+            { id: 'step-4', name: 'Overlap allowed', start: '2026-07-16', end: '2026-07-18', status: 'planning', predecessors: [{ id: 'step-1', lag: -2 }] },
+            { id: 'step-5', name: 'Already underway', start: '2026-07-16', end: '2026-07-18', status: 'active', predecessors: [{ id: 'step-1', lag: 0 }] },
           ],
         }],
       }];
@@ -1604,7 +1608,7 @@ const tests = [
       assert.match(homeSource, /Next 7 days/);
       assert.match(homeSource, /QuickTaskForm/);
       assert.match(homeSource, /Mark .* complete/);
-      assert.match(homeSource, /cx_home_weather_visible/);
+      assert.match(homeSource, /readWeatherPreference\(activeUser\)/);
     },
   },
   {
@@ -1675,7 +1679,8 @@ const tests = [
       assert.match(settingsSource, /schedulingSaving \? ' is-loading'/);
       assert.match(settingsSource, /Saving display settings\.\.\./);
       assert.match(inspectionsSource, /\['inspection-preview', inspection\.id, field\]/);
-      assert.match(inspectionsSource, /inspection-thumbnail-button\$\{isMutating/);
+      assert.match(inspectionsSource, /inspection-attachment-link/);
+      assert.match(inspectionsSource, /disabled=\{isMutating\(\['inspection-preview', inspection\.id, field\]\)\}/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*fetchAuthorizedSupabase\('\/functions\/v1\/create-auth-user'/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Your sign-in session is missing/);
       assert.match(trackerSource, /inviteAuthUser[\s\S]*Unable to reach the login invite service/);
@@ -1696,28 +1701,27 @@ const tests = [
       assert.match(trackerSource, /error_description/);
       assert.match(trackerSource, /Authentication callback error/);
       assert.match(styleSource, /\.button\.is-loading > \.fluent-icon/);
-      assert.match(styleSource, /\.inspection-thumbnail-button\.is-loading::after/);
+      assert.match(styleSource, /\.inspection-attachment-link:disabled/);
     },
   },
   {
     name: 'settings are divided into responsive administration sections',
     async run() {
-      const [settingsSource, styleSource] = await Promise.all([
+      const [settingsSource, sectionsSource, appSource, styleSource] = await Promise.all([
         readFile(new URL('../src/components/NativeSettingsView.jsx', import.meta.url), 'utf8'),
+        readFile(new URL('../src/utils/settingsSections.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
         readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
       ]);
       for (const section of ['scheduling', 'calendar', 'inspections', 'notifications', 'users', 'audit', 'display', 'system']) {
-        assert.match(settingsSource, new RegExp(`id: '${section}'`));
+        assert.match(sectionsSource, new RegExp(`id: '${section}'`));
         assert.match(settingsSource, new RegExp(`settings-panel-${section}`));
       }
-      assert.match(settingsSource, /role="tablist"\s+aria-label="Settings sections"/);
-      assert.match(settingsSource, /className="settings-section-select"/);
+      assert.match(appSource, /SETTINGS_SECTIONS\.filter\(\(section\) => capabilities\.canManageUsers \|\| \['display', 'reporting'\]\.includes\(section\.id\)\)\.map\(\(section\) => <button id=\{`settings-tab-\$\{section\.id\}`\}/);
+      assert.doesNotMatch(settingsSource, /settings-section-tabs/);
       assert.match(settingsSource, /activeSettingsSection !== 'audit'/);
       assert.match(settingsSource, /settings-system-status-grid/);
       assert.ok(settingsSource.indexOf('className="user-project-access"') < settingsSource.indexOf('className="user-role-actions"'));
-      assert.match(styleSource, /\.settings-section-tabs/);
-      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.settings-section-tabs[\s\S]*display: none;/);
-      assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.settings-section-select[\s\S]*display: grid;/);
       assert.match(styleSource, /@media \(max-width: 720px\)[\s\S]*\.user-role-actions[\s\S]*flex-wrap: nowrap;/);
     },
   },
@@ -1735,7 +1739,7 @@ const tests = [
       assert.doesNotMatch(dialogsSource, />Task color</);
       assert.match(scheduleSource, /Standalone tasks/);
       assert.match(scheduleSource, /label="Schedule steps"/);
-      assert.match(projectsSource, /label="Standalone tasks"/);
+      assert.match(projectsSource, /standalone tasks/);
       assert.match(settingsSource, /Show standalone task due dates in Gantt/);
     },
   },
@@ -1878,11 +1882,14 @@ const tests = [
         { id: 'open', accessUserIds: [] },
         { id: 'assigned', accessUserIds: ['user-1'] },
         { id: 'other', accessUserIds: ['user-2'] },
+        { id: 'archived', inactive: true, accessUserIds: ['user-1'] },
       ];
       const editVisible = getVisibleProjectsForUser(projects, {}, { id: 'user-1', role: 'Edit' });
       const customerVisible = getVisibleProjectsForUser(projects, {}, { id: 'user-1', role: 'Customer' });
       assert.deepEqual(editVisible.map((project) => project.id), ['open', 'assigned']);
       assert.deepEqual(customerVisible.map((project) => project.id), ['assigned']);
+      assert.deepEqual(getArchivedProjectsForUser(projects, { id: 'user-1', role: 'View Only' }).map((project) => project.id), ['archived']);
+      assert.deepEqual(getArchivedProjectsForUser(projects, { id: 'user-1', role: 'Customer' }), []);
       assert.deepEqual(
         getVisibleTasksForUser(
           [{ id: 'general', projectId: '' }, { id: 'visible', projectId: 'assigned' }, { id: 'hidden', projectId: 'other' }],
@@ -2412,6 +2419,29 @@ const tests = [
       assert.match(notifications[2].body, /1 overdue task/);
       assert.match(notifications[2].body, /1 overdue inspection/);
       notifications.forEach((notification) => assert.ok(notification.id >= 100_000_000 && notification.id <= 399_999_999));
+    },
+  },
+  {
+    name: 'archived projects cancel task and inspection reminders while active work remains',
+    run() {
+      const notifications = buildAndroidReminderNotifications({
+        data: {
+          settings: {},
+          projects: [
+            { id: 'active-project', name: 'Active job', inspections: [{ id: 'active-inspection', date: '2026-07-14', status: 'scheduled' }] },
+            { id: 'archived-project', name: 'Archived job', inactive: true, inspections: [{ id: 'archived-inspection', date: '2026-07-14', status: 'scheduled' }] },
+          ],
+          tasks: [
+            { id: 'active-task', projectId: 'active-project', label: 'Active task', due: '2026-07-14', done: false },
+            { id: 'archived-task', projectId: 'archived-project', label: 'Archived task', due: '2026-07-14', done: false },
+          ],
+        },
+        activeUser: { id: 'user-1', role: 'Admin' },
+        preferences: { enabled: true, upcomingTasks: true, inspections: true, overdueWork: true, reminderDays: 1, reminderTime: '08:00' },
+        now: new Date(2026, 6, 13, 7, 0, 0),
+      });
+      assert.equal(notifications.length, 2);
+      assert.ok(notifications.every((notification) => !JSON.stringify(notification).includes('archived-project')));
     },
   },
   {
@@ -5035,7 +5065,7 @@ const tests = [
       ]);
       assert.match(appSource, /normalizedRole === 'Customer' \|\| normalizedRole === 'Subcontractor'/);
       assert.match(appSource, /showTabs: !portalRole/);
-      assert.match(appSource, /className="portal-account-bar"/);
+      assert.match(appSource, /className="portal-account-bar hub-portal-header"/);
       assert.match(appSource, /portal-account-bar[\s\S]*handleSignOut/);
       assert.match(appSource, /loadCurrentAppUserProfile,[\s\S]*loadPortalTrackerData,[\s\S]*loadTrackerData/);
       assert.match(appSource, /loadTrackerStartupData/);
@@ -5127,10 +5157,9 @@ const tests = [
       assert.match(visibilityUpdatesSource, /grant execute on function public\.update_project_selection_visibility/);
       assert.match(trackerSource, /export async function updateProjectFolderVisibility/);
       assert.match(trackerSource, /export async function updateProjectSelectionVisibility/);
-      assert.match(styleSource, /\.portal-user-view > \.project-detail-tabs/);
-      assert.match(styleSource, /#project-tab-portal\):not\(#project-tab-selections\):not\(#project-tab-files\)/);
+      assert.match(appSource, /getVisibleProjectTabs\(trackerState\.settings\?\.visibleProjectTabs, activeUser\?\.role\)/);
+      assert.match(appSource, /className=\{`hub-sidebar\$\{portalSectionsOpen \? ' portal-open' : ''\}`\}/);
       assert.match(styleSource, /\.folder-visibility-controls/);
-      assert.match(styleSource, /\.customer-project-view > \.project-detail-tabs[\s\S]*#project-tab-overview[\s\S]*#project-tab-photos/);
       assert.match(styleSource, /\.portal-account-bar/);
       assert.match(styleSource, /\.project-portal-response-form/);
     },
@@ -5594,7 +5623,10 @@ const tests = [
       assert.match(migrationSource, /create table if not exists public\.insurance_certificates/);
       assert.match(migrationSource, /subcontractor_id text not null references public\.subs\(id\) on delete restrict/);
       assert.match(migrationSource, /create table if not exists public\.insurance_certificate_coverages/);
-      assert.match(migrationSource, /coverage_amount[\s\S]+effective_date date,[\s\S]+expiration_date date/);
+      assert.match(
+        migrationSource.match(/create table if not exists public\.insurance_certificate_coverages[\s\S]+?\n\);/)?.[0] || '',
+        /coverage_amount numeric\(14, 2\)/,
+      );
       assert.doesNotMatch(
         migrationSource.match(/create table if not exists public\.insurance_certificates[\s\S]+?\n\);/)?.[0] || '',
         /project_id/,
@@ -6446,7 +6478,8 @@ const tests = [
       assert.match(viewSource, /Print \/ Save PDF/);
       assert.match(viewSource, /Historical compliance trends and scored subcontractor performance/);
       assert.match(appSource, /!\['settings', 'reports'\]\.includes\(tab\.id\)/);
-      assert.match(navigationSource, /id: 'reports'.*required: true/);
+      assert.doesNotMatch(navigationSource, /id: 'reports'/);
+      assert.match(appSource, /settingsSection === 'reporting'/);
       assert.match(viewSource, /Capture today’s snapshot/);
       assert.match(viewSource, /Project Hub does not assign an opaque composite score/);
       assert.match(reportingService, /capture_management_reporting_snapshot/);

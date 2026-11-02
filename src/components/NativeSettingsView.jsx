@@ -20,6 +20,7 @@ import { normalizeVisibleProjectTabs, PROJECT_TAB_DEFS } from '../utils/projectT
 import { reorderSettingIds } from '../utils/settingsOrder.js';
 import { buildProjectTemplate, normalizeProjectTemplates } from '../utils/projectTemplates.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
+import { readWeatherPreference, saveWeatherPreference } from '../utils/weatherPreference.js';
 
 const DEFAULT_PEOPLE_LIST_COLUMNS = ['company', 'name', 'status', 'role', 'phone', 'email', 'tags'];
 const AUDIT_PAGE_SIZE = 50;
@@ -362,9 +363,11 @@ function buildNextTwelveMonthsJewishHolidays(today = new Date()) {
 }
 
 
-export default function NativeSettingsView({ data, onStateChange, refresh, loading, activeUser = null }) {
+export default function NativeSettingsView({ data, onStateChange, refresh, loading, activeUser = null, section = 'scheduling' }) {
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
-  const [activeSettingsSection, setActiveSettingsSection] = useState('scheduling');
+  const activeSettingsSection = SETTINGS_SECTIONS.some((item) => item.id === section) ? section : 'scheduling';
+  const [weatherVisible, setWeatherVisible] = useState(() => readWeatherPreference(activeUser));
+  useEffect(() => { setWeatherVisible(readWeatherPreference(activeUser)); }, [activeUser?.email, activeUser?.id]);
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState({ tone: '', message: '' });
   const [taskAssignmentEmailDraft, setTaskAssignmentEmailDraft] = useState(() => ({
@@ -1430,49 +1433,6 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
         </button>
       </div>
 
-      <div className="settings-section-navigation">
-        <div
-          className="settings-section-tabs"
-          role="tablist"
-          aria-label="Settings sections"
-          onKeyDown={(event) => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-            const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
-            const currentIndex = tabs.indexOf(event.target);
-            if (currentIndex < 0) return;
-            event.preventDefault();
-            const nextIndex = event.key === 'Home'
-              ? 0
-              : event.key === 'End'
-                ? tabs.length - 1
-                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-            tabs[nextIndex]?.focus();
-            tabs[nextIndex]?.click();
-          }}
-        >
-          {SETTINGS_SECTIONS.map((section) => (
-            <button
-              id={`settings-tab-${section.id}`}
-              key={section.id}
-              type="button"
-              role="tab"
-              aria-selected={activeSettingsSection === section.id ? 'true' : 'false'}
-              aria-controls={`settings-panel-${section.id}`}
-              tabIndex={activeSettingsSection === section.id ? 0 : -1}
-              onClick={() => setActiveSettingsSection(section.id)}
-            >
-              {section.label}
-            </button>
-          ))}
-        </div>
-        <label className="settings-section-select">
-          <span>Settings section</span>
-          <select value={activeSettingsSection} onChange={(event) => setActiveSettingsSection(event.target.value)}>
-            {SETTINGS_SECTIONS.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
-          </select>
-        </label>
-      </div>
-
       <div className="settings-sections">
         <section className="settings-section settings-primary-section" hidden={!['scheduling', 'calendar', 'inspections'].includes(activeSettingsSection)}>
           <div className="settings-section-header">
@@ -2321,10 +2281,14 @@ export default function NativeSettingsView({ data, onStateChange, refresh, loadi
           <div className="settings-section-header">
             <div>
               <h3>Display preferences</h3>
-              <p>Choose workspace navigation and the People columns used across the app.</p>
+              <p>Choose home screen content, workspace navigation, and the People columns used across the app.</p>
             </div>
           </div>
           <div className="settings-grid settings-grid-single">
+            <section className="settings-card">
+              <div className="settings-card-header"><div><h3>Home screen</h3><p>Choose the content shown on your home screen.</p></div></div>
+              <label className="settings-toggle"><input type="checkbox" checked={weatherVisible} onChange={(event) => { const visible = event.target.checked; setWeatherVisible(visible); saveWeatherPreference(activeUser, visible); }} /><span><strong>Show weather</strong><small>Display the four-day local forecast on Home.</small></span></label>
+            </section>
             <section className="settings-card">
               <div className="settings-card-header">
                 <div>

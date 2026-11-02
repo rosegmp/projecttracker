@@ -47,6 +47,10 @@ export function TaskModal({ draft, projects, locationOptions, assigneeOptions, c
               ))}
             </select>
           </label>
+          <div className="project-form-field">
+            <span>Location</span>
+            <TaskLocationField projectId={draft.projectId} locations={locationOptions} value={draft.location || ''} onChange={(value) => onChange('location', value)} onAddLocation={onAddLocation} disabled={saving} />
+          </div>
           <label>
             <span>Due date</span>
             <input type="date" value={draft.due} onChange={(event) => onChange('due', event.target.value)} />
@@ -99,7 +103,7 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
 
   return renderModalPortal(
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="inspection-modal-title" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card inspection-modal-card" role="dialog" aria-modal="true" aria-labelledby="inspection-modal-title" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Inspection</p>
@@ -171,6 +175,51 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
             <span>Notes</span>
             <textarea value={draft.notes} onChange={(event) => onChange('notes', event.target.value)} rows={4} />
           </label>
+          <section className="inspection-checklist-editor inspection-form-span" aria-label="Inspection checklist">
+            <div className="inspection-checklist-heading">
+              <div>
+                <strong>Checklist</strong>
+                <small>Track what needs checking. After saving, expand the checklist to create tasks from its items.</small>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => onChange('checklist', [
+                  ...(draft.checklist || []),
+                  { id: `check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text: '', completed: false },
+                ])}
+                disabled={saving}
+              >Add item</button>
+            </div>
+            {(draft.checklist || []).map((item, index) => (
+              <div className="inspection-checklist-edit-row" key={item.id}>
+                <label className="inspection-checklist-check">
+                  <input
+                    type="checkbox"
+                    checked={item.completed === true}
+                    onChange={(event) => onChange('checklist', draft.checklist.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, completed: event.target.checked } : entry))}
+                    aria-label={`Complete checklist item ${index + 1}`}
+                  />
+                </label>
+                <input
+                  type="text"
+                  value={item.text || ''}
+                  onChange={(event) => onChange('checklist', draft.checklist.map((entry, entryIndex) =>
+                    entryIndex === index ? { ...entry, text: event.target.value } : entry))}
+                  aria-label={`Checklist item ${index + 1}`}
+                  placeholder="What needs to be checked?"
+                />
+                <button
+                  className="button secondary inspection-checklist-remove"
+                  type="button"
+                  onClick={() => onChange('checklist', draft.checklist.filter((_, entryIndex) => entryIndex !== index))}
+                  disabled={saving}
+                  aria-label={`Remove checklist item ${index + 1}`}
+                >Remove</button>
+              </div>
+            ))}
+          </section>
           <label className="inspection-form-span">
             <span>Inspection sticker photo</span>
             <input type="file" accept="image/*,.pdf" onChange={(event) => onChange('stickerPendingFile', event.target.files?.[0] || null)} />
@@ -240,7 +289,7 @@ export function InspectionModal({ draft, project, projects, subcodes, saving, on
             className={`button primary${saving ? ' is-loading' : ''}`}
             type="button"
             onClick={onSave}
-            disabled={saving || !draft.subcode.trim() || !draft.inspectionType.trim()}
+            disabled={saving || !draft.subcode.trim() || !draft.inspectionType.trim() || (draft.checklist || []).some((item) => !String(item.text || '').trim())}
           >
             {saving ? 'Saving...' : 'Save inspection'}
           </button>

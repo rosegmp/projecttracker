@@ -41,6 +41,7 @@ const ProjectFilesManager = lazy(() => import('./ProjectFilesManager.jsx'));
 const ProjectBudgetCommitmentsManager = lazy(() => import('./ProjectBudgetCommitmentsManager.jsx'));
 const ProjectPhotosManager = lazy(() => import('./ProjectPhotosManager.jsx'));
 const ProjectPortalManager = lazy(() => import('./ProjectPortalManager.jsx'));
+const ProjectOfflineControls = lazy(() => import('./ProjectOfflineControls.jsx'));
 const ProjectRfiSubmittalsManager = lazy(() => import('./ProjectRfiSubmittalsManager.jsx'));
 const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.jsx'));
 const ProjectWarrantyCloseoutManager = lazy(() => import('./ProjectWarrantyCloseoutManager.jsx'));
@@ -157,6 +158,7 @@ export default function ProjectDetailView({
   onDateClick,
   onCalendarItemClick,
   onStateChange,
+  onSectionChange,
 }) {
   const externalPortalUser = ['Customer', 'Subcontractor'].includes(activeUser?.role);
   const customerReadOnly = activeUser?.role === 'Customer';
@@ -306,12 +308,13 @@ export default function ProjectDetailView({
 
   useEffect(() => {
     if (!visibleProjectTabIds.has(activeDetailTab)) return;
+    onSectionChange?.(activeDetailTab);
     updateCurrentUrl((url) => {
       if (String(url.searchParams.get('project') || '').trim() !== String(project.id || '').trim()) return;
       url.searchParams.set('projectTab', activeDetailTab);
       if (activeDetailTab !== 'tasks') url.searchParams.delete('task');
     });
-  }, [activeDetailTab, project.id, visibleProjectTabIds]);
+  }, [activeDetailTab, onSectionChange, project.id, visibleProjectTabIds]);
 
   useEffect(() => {
     if (activeDetailTab !== 'tasks') return;
@@ -344,6 +347,10 @@ export default function ProjectDetailView({
       setSelectionHighlightRequest(selectionNavigationRequest);
     }
   }, [project.id, selectionNavigationRequest, visibleProjectTabIds]);
+
+  useEffect(() => {
+    if (calendarInspectionEditRequest?.projectId === project.id && visibleProjectTabIds.has('inspections')) setActiveDetailTab('inspections');
+  }, [calendarInspectionEditRequest, project.id, visibleProjectTabIds]);
 
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -568,238 +575,10 @@ export default function ProjectDetailView({
           </div>
         </header>
 
-        <div className="project-detail-navigation">
-          <div
-            className="project-detail-tabs"
-            role="tablist"
-            aria-label={`${project.name} sections`}
-            onKeyDown={(event) => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-              const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'))
-                .filter((tab) => !tab.hidden && tab.offsetParent !== null);
-              const currentIndex = tabs.indexOf(event.target);
-              if (currentIndex < 0) return;
-              event.preventDefault();
-              const nextIndex =
-                event.key === 'Home'
-                  ? 0
-                  : event.key === 'End'
-                    ? tabs.length - 1
-                    : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-              tabs[nextIndex]?.focus();
-              tabs[nextIndex]?.click();
-            }}
-          >
-          {projectNavigation.primaryTabs.map((tab) => {
-            const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
-            return (
-              <button
-                key={tab.id}
-                id={`project-tab-${tab.id}`}
-                className={`react-tab${activeDetailTab === tab.id ? ' active' : ''}`}
-                type="button"
-                role="tab"
-                aria-selected={activeDetailTab === tab.id ? 'true' : 'false'}
-                aria-controls={`project-panel-${tab.id}`}
-                tabIndex={activeDetailTab === tab.id ? 0 : -1}
-                onClick={() => selectProjectSection(tab.id)}
-              >
-                {label}
-              </button>
-            );
-          })}
-          </div>
-
-          {projectNavigation.moreTabs.length ? (
-            <div className="project-detail-more" ref={moreSectionsRef}>
-            <button
-              ref={moreSectionsButtonRef}
-              className={`react-tab project-detail-more-button${showMoreSections ? ' active' : ''}`}
-              type="button"
-              aria-expanded={showMoreSections ? 'true' : 'false'}
-              onClick={() => setShowMoreSections((current) => !current)}
-            >
-              More <FluentIcon name="chevronDown" size={14} />
-            </button>
-            {showMoreSections ? (
-              <section className="project-detail-more-menu" aria-label="More project sections">
-                <div className="project-detail-more-heading">
-                  <strong>Project sections</strong>
-                  <small>Pin up to {MAX_PINNED_PROJECT_SECTIONS}</small>
-                </div>
-                <label className="project-detail-density-toggle">
-                  <input
-                    type="checkbox"
-                    checked={projectNavigation.compactDesktop}
-                    onChange={(event) => toggleCompactDesktopNavigation(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Compact desktop navigation</strong>
-                    <small>Use one tighter navigation row on wider screens.</small>
-                  </span>
-                </label>
-                <section className="project-detail-offline-card" aria-label="Offline access">
-                  <div className="project-detail-offline-heading">
-                    <span>
-                      <strong>Offline access</strong>
-                      <small>{offlineProjectRecord ? 'Available on this device' : 'Online only'}</small>
-                    </span>
-                    <span className={`status-pill${offlineProjectRecord ? ' success' : ''}`}>
-                      {isOnline ? 'Online' : 'Offline'}
-                    </span>
-                  </div>
-                  {offlineProjectRecord ? (
-                    <dl className="project-detail-offline-facts">
-                      <div><dt>Last synchronized</dt><dd>{formatActivityTime(offlineProjectRecord.lastSyncedAt)}</dd></div>
-                      <div><dt>Cached sections</dt><dd>{offlineProjectRecord.cachedSections.length}</dd></div>
-                      <div><dt>Storage</dt><dd>{formatOfflineProjectSize((offlineProjectRecord.byteSize || 0) + (offlineProjectRecord.assetSummary?.byteSize || 0))}</dd></div>
-                      <div><dt>Queued</dt><dd>{projectOfflineSummary.total}</dd></div>
-                      {projectOfflineSummary.needsAttention ? <div className="error"><dt>Needs attention</dt><dd>{projectOfflineSummary.needsAttention}</dd></div> : null}
-                    </dl>
-                  ) : (
-                    <p>Store core project details and every visible workflow section for field access without a connection. Takeoff opens projects already saved on this device.</p>
-                  )}
-                  <div className="project-detail-offline-sections">
-                    {(offlineProjectRecord?.cachedSections || []).map((sectionId) => (
-                      <span key={sectionId}>{visibleProjectTabs.find((tab) => tab.id === sectionId)?.label || sectionId}</span>
-                    ))}
-                  </div>
-                  <div className="project-detail-offline-actions">
-                    <button
-                      className={`button primary${offlineProjectBusy ? ' is-loading' : ''}`}
-                      type="button"
-                      onClick={() => void saveProjectOfflineCopy()}
-                      disabled={offlineProjectBusy || !isOnline || deferredDataLoading}
-                    >
-                      {offlineProjectRecord ? 'Update offline copy' : 'Make available offline'}
-                    </button>
-                    {offlineProjectRecord ? (
-                      <button className="button secondary" type="button" onClick={() => void removeProjectOfflineCopy()} disabled={offlineProjectBusy}>
-                        Remove copy
-                      </button>
-                    ) : null}
-                  </div>
-                  {!isOnline ? <small>Reconnect to update this offline copy.</small> : deferredDataLoading ? <small>Wait for project details to finish loading before saving.</small> : null}
-                  {offlineProjectRecord && (visibleProjectTabIds.has('files') || visibleProjectTabIds.has('photos')) ? (
-                    <section className="project-detail-offline-assets" aria-label="Offline files and photos">
-                      <div>
-                        <strong>Offline files &amp; photos</strong>
-                        <small>Choose what to keep on this device, including task, inspection, selection, workflow, warranty, closeout, and invoice attachments. The selection replaces the categories kept after a successful refresh.</small>
-                      </div>
-                      <div className="project-detail-offline-asset-options">
-                        {visibleProjectTabIds.has('files') ? (
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={offlineAssetSelection.files}
-                              onChange={(event) => setOfflineAssetSelection((current) => ({ ...current, files: event.target.checked }))}
-                              disabled={offlineAssetBusy}
-                            />
-                            Files ({offlineAssetCounts.files})
-                          </label>
-                        ) : null}
-                        {visibleProjectTabIds.has('photos') ? (
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={offlineAssetSelection.photos}
-                              onChange={(event) => setOfflineAssetSelection((current) => ({ ...current, photos: event.target.checked }))}
-                              disabled={offlineAssetBusy}
-                            />
-                            Photos ({offlineAssetCounts.photos})
-                          </label>
-                        ) : null}
-                      </div>
-                      <small>
-                        Up to {formatOfflineProjectSize(MAX_OFFLINE_ASSET_BYTES_PER_ITEM)} per item and {formatOfflineProjectSize(MAX_OFFLINE_ASSET_BYTES_PER_USER)} total per signed-in user.
-                      </small>
-                      {offlineProjectRecord.assetSummary?.count ? (
-                        <p>{offlineProjectRecord.assetSummary.count} downloaded · {formatOfflineProjectSize(offlineProjectRecord.assetSummary.byteSize)}</p>
-                      ) : null}
-                      {offlineProjectRecord.assetSummary?.staleKinds?.length ? (
-                        <p className="error" role="status">
-                          {offlineProjectRecord.assetSummary.staleKinds.map((kind) => kind === 'photos' ? 'Photos' : 'Files').join(' and ')} changed online. Update downloads before using that section offline.
-                        </p>
-                      ) : null}
-                      {offlineAssetProgress && offlineAssetBusy ? (
-                        <p role="status" aria-live="polite">
-                          Downloading {offlineAssetProgress.completed} of {offlineAssetProgress.total}{offlineAssetProgress.currentName ? ` · ${offlineAssetProgress.currentName}` : ''}
-                        </p>
-                      ) : null}
-                      {offlineAssetMessage ? <p role="status" aria-live="polite">{offlineAssetMessage}</p> : null}
-                      <div className="project-detail-offline-actions">
-                        <button
-                          className={`button secondary${offlineAssetBusy ? ' is-loading' : ''}`}
-                          type="button"
-                          onClick={() => void updateOfflineAssetDownloads()}
-                          disabled={offlineAssetBusy || !isOnline || (!offlineAssetSelection.files && !offlineAssetSelection.photos)}
-                        >
-                          {offlineProjectRecord.assetSummary?.count ? 'Update downloads' : 'Download selected'}
-                        </button>
-                        {offlineProjectRecord.assetSummary?.count ? (
-                          <button className="button secondary" type="button" onClick={() => void removeOfflineAssetDownloads()} disabled={offlineAssetBusy}>
-                            Remove downloads
-                          </button>
-                        ) : null}
-                      </div>
-                    </section>
-                  ) : null}
-                </section>
-                <p className="project-detail-more-group-label">Pinned</p>
-                {projectNavigation.primaryTabs.filter((tab) => projectNavigation.pinnedIds.includes(tab.id)).map((tab, index) => {
-                  const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
-                  return (
-                    <div className="project-detail-more-row" key={`pinned-${tab.id}`}>
-                      <button type="button" className="project-detail-more-link" onClick={() => selectProjectSection(tab.id)}>
-                        <span>{label}</span>
-                        {activeDetailTab === tab.id ? <small>Current</small> : null}
-                      </button>
-                      <button
-                        type="button"
-                        className="project-detail-pin-button is-pinned"
-                        aria-label={`Unpin ${label}`}
-                        title={index === 0 ? `${label} stays pinned` : `Unpin ${label}`}
-                        disabled={index === 0}
-                        onClick={() => toggleProjectSectionPin(tab.id)}
-                      >
-                        <FluentIcon name="pin" size={16} />
-                      </button>
-                    </div>
-                  );
-                })}
-                <p className="project-detail-more-group-label">More</p>
-                {projectNavigation.moreTabs.map((tab) => {
-                  const label = tab.id === 'warranty-closeout' && customerReadOnly ? 'Warranty' : tab.label;
-                  const isRecent = projectNavigation.recentIds.includes(tab.id);
-                  const atPinLimit = projectNavigation.pinnedIds.length >= MAX_PINNED_PROJECT_SECTIONS;
-                  return (
-                    <div className="project-detail-more-row" key={tab.id}>
-                      <button type="button" className="project-detail-more-link" onClick={() => selectProjectSection(tab.id)}>
-                        <span>{label}</span>
-                        {activeDetailTab === tab.id ? <small>Current</small> : isRecent ? <small>Recent</small> : null}
-                      </button>
-                      <button
-                        type="button"
-                        className="project-detail-pin-button"
-                        aria-label={`Pin ${label}`}
-                        title={atPinLimit ? `Unpin another section before pinning ${label}` : `Pin ${label}`}
-                        disabled={atPinLimit}
-                        onClick={() => toggleProjectSectionPin(tab.id)}
-                      >
-                        <FluentIcon name="pin" size={16} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </section>
-            ) : null}
-            </div>
-          ) : null}
-        </div>
       </div>
 
       {activeDetailTab === 'overview' ? (
-        <section id="project-panel-overview" className="project-detail-section project-detail-overview project-detail-overview-full" role="tabpanel" aria-labelledby="project-tab-overview">
+        <section id="project-panel-overview" className="project-detail-section project-detail-overview project-detail-overview-full" role="region" aria-labelledby="project-tab-overview">
           <div className="home-overview-shell project-overview-shell">
             <aside className="home-project-summary project-overview-summary">
               <p className="eyebrow">Project overview</p>
@@ -894,6 +673,7 @@ export default function ProjectDetailView({
               </section> : null}
             </aside>
           </div>
+          {!project.inactive ? <ProjectOfflineControls data={data} project={project} tasks={tasks} settings={settings} activeUser={activeUser} visibleTabs={visibleProjectTabs} userId={offlineUserId} /> : null}
         </section>
       ) : null}
 
@@ -901,7 +681,7 @@ export default function ProjectDetailView({
         <section
           id={`project-panel-${activeDetailTab}`}
           className="project-detail-section project-detail-subtab-panel"
-          role="tabpanel"
+          role="region"
           aria-labelledby={`project-tab-${activeDetailTab}`}
         >
           <div className="empty-state compact" role="status" aria-live="polite">
@@ -912,13 +692,16 @@ export default function ProjectDetailView({
       ) : (
       <Suspense fallback={<div className="empty-state compact"><p>Loading project workspace...</p></div>}>
       {activeDetailTab === 'portal' ? (
-        <section id="project-panel-portal" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-portal">
+        <section id="project-panel-portal" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-portal">
           <ProjectPortalManager project={project} activeUser={activeUser} canEdit={canEdit} />
         </section>
       ) : null}
       {activeDetailTab === 'tasks' ? (
-        <section id="project-panel-tasks" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-tasks">
-          <NativeTasksView
+        <section id="project-panel-tasks" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-tasks">
+          {project.inactive ? <div className="project-records-panel">
+            <header className="project-records-header"><div><p className="eyebrow">Project archive</p><h2>Tasks</h2><p>Saved work for this inactive project.</p></div></header>
+            {tasks.length ? <div className="project-records-list">{tasks.map((task) => <div className="project-records-row" key={task.id}><span><strong>{task.label || 'Untitled task'}</strong><small>{task.done ? 'Completed' : 'Open'} · {task.due ? `Due ${formatShortDate(task.due)}` : 'No due date'}</small></span></div>)}</div> : <div className="empty-state compact"><h3>No tasks</h3><p>This project has no saved tasks.</p></div>}
+          </div> : <NativeTasksView
             data={data}
             onStateChange={onStateChange}
             refresh={() => {}}
@@ -938,12 +721,12 @@ export default function ProjectDetailView({
                 token: `${selectionLink.selectionId}-${Date.now()}`,
               });
             }}
-          />
+          />}
         </section>
       ) : null}
 
       {activeDetailTab === 'calendar' ? (
-        <section id="project-panel-calendar" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-calendar">
+        <section id="project-panel-calendar" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-calendar">
           <ProjectDetailCalendar
             project={project}
             tasks={tasks}
@@ -955,7 +738,7 @@ export default function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'inspections' ? (
-        <section id="project-panel-inspections" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-inspections">
+        <section id="project-panel-inspections" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-inspections">
           <NativeInspectionsView
             data={data}
             refresh={() => {}}
@@ -970,12 +753,13 @@ export default function ProjectDetailView({
             highlightInspectionId={selectionNavigationRequest?.inspectionId || ''}
             highlightToken={selectionNavigationRequest?.token || ''}
             embedded
+            includeArchivedProject={Boolean(project.inactive)}
           />
         </section>
       ) : null}
 
       {activeDetailTab === 'selections' ? (
-        <section id="project-panel-selections" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-selections">
+        <section id="project-panel-selections" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-selections">
           <ProjectSelectionsManager
             data={data}
             project={project}
@@ -997,7 +781,7 @@ export default function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'files' ? (
-        <section id="project-panel-files" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-files">
+        <section id="project-panel-files" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-files">
           <ProjectFilesManager
             data={data}
             project={project}
@@ -1011,7 +795,7 @@ export default function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'daily-logs' ? (
-        <section id="project-panel-daily-logs" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-daily-logs">
+        <section id="project-panel-daily-logs" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-daily-logs">
           <ProjectWorkflowManager
             data={data}
             project={project}
@@ -1066,20 +850,20 @@ export default function ProjectDetailView({
       ) : null}
 
       {activeDetailTab === 'takeoff' ? (
-        <section id="project-panel-takeoff" className="project-detail-section project-detail-subtab-panel project-takeoff-panel" role="tabpanel" aria-labelledby="project-tab-takeoff">
+        <section id="project-panel-takeoff" className="project-detail-section project-detail-subtab-panel project-takeoff-panel" role="region" aria-labelledby="project-tab-takeoff">
           <TakeoffWorkspace project={project} projectId={project.id} canEdit={canEdit} />
         </section>
       ) : null}
 
       {activeDetailTab === 'photos' ? (
-        <section id="project-panel-photos" className="project-detail-section project-detail-subtab-panel" role="tabpanel" aria-labelledby="project-tab-photos">
+        <section id="project-panel-photos" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-photos">
           <ProjectPhotosManager
             data={data}
             project={project}
             onStateChange={onStateChange}
             readOnly={!canEdit}
             canAddPhotos={canEdit || customerReadOnly}
-            incomingPhotoRequest={selectionNavigationRequest?.detailAction === 'share-photo' ? selectionNavigationRequest : null}
+            incomingPhotoRequest={['share-photo', 'create-photo'].includes(selectionNavigationRequest?.detailAction) ? selectionNavigationRequest : null}
           />
         </section>
       ) : null}

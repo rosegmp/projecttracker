@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { getVisibleProjectsForUser } from '../utils/accessUi.js';
+import { getArchivedProjectsForUser, getVisibleProjectsForUser } from '../utils/accessUi.js';
 import {
-  deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
+  createTask, deleteProjectFileFromStorage, downloadProjectFileFromStorage, isSupabaseStorageConfigured,
   getStoredAuthSession, queueProjectInspectionDeleteOffline, queueProjectInspectionOffline, saveProjectInspection, updateProject, updateProjectsAndTasks, updateSettings, uploadProjectFileToStorage,
 } from '../services/trackerData.js';
 import { getOfflineOperations, isOfflineNetworkError, subscribeToOfflineOperations } from '../services/offlineOperations.js';
@@ -36,19 +36,18 @@ export default function NativeInspectionsView({
   highlightInspectionId = '',
   highlightToken = '',
   embedded = false,
+  includeArchivedProject = false,
 }) {
   const [inspectionDraft, setInspectionDraft] = useState(null);
   const [imageEditorDraft, setImageEditorDraft] = useState(null);
   const [subcodeDraft, setSubcodeDraft] = useState(null);
-  const [previewUrls, setPreviewUrls] = useState({});
+  const [groupBy, setGroupBy] = useState('none');
+  const [sortBy, setSortBy] = useState('date-desc');
   const [, setOfflineRevision] = useState(0);
-  const previewUrlsRef = useRef({});
   const lastCreateRequestTokenRef = useRef('');
   const lastEditRequestTokenRef = useRef('');
   const inspectionCardRefs = useRef({});
   const [activeHighlightInspectionId, setActiveHighlightInspectionId] = useState('');
-  const [groupBy, setGroupBy] = useState('none');
-  const [sortBy, setSortBy] = useState('date-desc');
   const { beginMutation, endMutation, isMutating } = useEntityMutations();
   const offlineUserId = String(getStoredAuthSession()?.user?.id || '').trim();
   const offlineOperations = getOfflineOperations(offlineUserId, { kind: 'inspection.save' });
@@ -62,10 +61,13 @@ export default function NativeInspectionsView({
     [offlineUserId],
   );
 
-  const visibleProjects = useMemo(
-    () => getVisibleProjectsForUser(data.projects, data.settings, activeUser),
-    [activeUser, data.projects, data.settings],
-  );
+  const visibleProjects = useMemo(() => {
+    const activeProjects = getVisibleProjectsForUser(data.projects, data.settings, activeUser);
+    if (!includeArchivedProject || !embedded || projectFilter === 'all') return activeProjects;
+    const archivedProject = getArchivedProjectsForUser(data.projects, activeUser)
+      .find((project) => project.id === projectFilter);
+    return archivedProject ? [...activeProjects, archivedProject] : activeProjects;
+  }, [activeUser, data.projects, data.settings, embedded, includeArchivedProject, projectFilter]);
 
   useEffect(() => {
     if (!visibleProjects.length) {
@@ -110,6 +112,13 @@ export default function NativeInspectionsView({
     [groupBy, inspections],
   );
 
+  const checklistTasks = useMemo(() => new Map((data.tasks || [])
+    .filter((task) => task.sourceInspectionId && task.sourceInspectionChecklistItemId)
+    .map((task) => [
+      `${task.sourceInspectionProjectId || task.projectId}:${task.sourceInspectionId}:${task.sourceInspectionChecklistItemId}`,
+      task,
+    ])), [data.tasks]);
+
   const statusCounts = useMemo(() => {
     return inspections.reduce(
       (counts, inspection) => {
@@ -120,80 +129,35 @@ export default function NativeInspectionsView({
     );
   }, [inspections]);
 
-  useEffect(() => {
-    previewUrlsRef.current = previewUrls;
-  }, [previewUrls]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, []);
-
-  useEffect(() => {
-    const keepIds = new Set();
-    inspections.forEach((inspection) => {
-      [inspection.stickerFile, inspection.reportFile].forEach((file) => {
-        if (file?.storagePath && isImageFile(file)) {
-          keepIds.add(file.id);
-        }
-      });
-    });
-    setPreviewUrls((current) => {
-      const next = {};
-      Object.entries(current).forEach(([fileId, url]) => {
-        if (keepIds.has(fileId)) {
-          next[fileId] = url;
-        } else {
-          URL.revokeObjectURL(url);
-        }
-      });
-      return next;
-    });
-  }, [inspections]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const imageFiles = inspections.flatMap((inspection) =>
-      [inspection.stickerFile, inspection.reportFile]
-        .filter((file) => (file?.storagePath || file?._offlineAttachmentId) && isImageFile(file)),
-    );
-
-    async function loadPreviews() {
-      for (const file of imageFiles) {
-        if (previewUrls[file.id]) continue;
-        try {
-          const blob = file._offlineAttachmentId
-            ? (await getOfflineAttachment(file._offlineAttachmentId))?.file
-            : await downloadProjectFileFromStorage(file);
-          if (!blob) continue;
-          const url = URL.createObjectURL(blob);
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          setPreviewUrls((current) => {
-            if (current[file.id]) {
-              URL.revokeObjectURL(url);
-              return current;
-            }
-            return { ...current, [file.id]: url };
-          });
-        } catch {
-          // Keep the card usable even if an image preview cannot be loaded.
-        }
+  async function createTaskFromChecklistItem(inspection, item) {
+    const projectId = selectedProject?.id || inspection.projectId;
+    if (!projectId || !inspection.id || !item?.id || !String(item.text || '').trim()) return;
+    const taskKey = `${projectId}:${inspection.id}:${item.id}`;
+    if (checklistTasks.has(taskKey)) return;
+    const mutationKey = ['inspection', inspection.id, 'checklist-task', item.id];
+    if (isMutating(mutationKey)) return;
+    beginMutation(mutationKey);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('Creating a task requires a connection. Reconnect and try again.');
       }
+      const nextState = await createTask(data, {
+        id: `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        label: `Inspection checklist: ${inspection.inspectionType || 'Inspection'} — ${item.text.trim()}`,
+        projectId,
+        due: inspection.date || '',
+        assignees: [],
+        sourceInspectionId: inspection.id,
+        sourceInspectionProjectId: projectId,
+        sourceInspectionChecklistItemId: item.id,
+        createdAt: new Date().toISOString(),
+      });
+      onStateChange(nextState);
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Unable to create task.', 'Task creation failed');
+    } finally {
+      endMutation(mutationKey);
     }
-
-    void loadPreviews();
-    return () => {
-      cancelled = true;
-    };
-  }, [inspections, previewUrls]);
-
-  function getInspectionAttachmentPreview(file) {
-    if (!file || !isImageFile(file)) return '';
-    return file.dataUrl || previewUrls[file.id] || '';
   }
 
   async function createInspectionAttachmentRecord(projectId, kind, file) {
@@ -228,11 +192,12 @@ export default function NativeInspectionsView({
       date: '',
       agency: '',
       notes: '',
+      checklist: [],
+      attemptHistory: [],
       stickerFile: null,
       reportFile: null,
       stickerPendingFile: null,
       reportPendingFile: null,
-      attemptHistory: [],
     });
   }
 
@@ -271,11 +236,12 @@ export default function NativeInspectionsView({
       date: inspection.date || '',
       agency: inspection.agency || '',
       notes: inspection.notes || '',
+      checklist: Array.isArray(inspection.checklist) ? inspection.checklist.map((item) => ({ ...item })) : [],
+      attemptHistory: inspection.attemptHistory || [],
       stickerFile: inspection.stickerFile || null,
       reportFile: inspection.reportFile || null,
       stickerPendingFile: null,
       reportPendingFile: null,
-      attemptHistory: inspection.attemptHistory || [],
     });
   }
 
@@ -334,7 +300,7 @@ export default function NativeInspectionsView({
     const mutationKey = ['inspection-preview', inspection.id, field];
     beginMutation(mutationKey);
     try {
-      let src = attachment.dataUrl || previewUrls[attachment.id] || '';
+      let src = attachment.dataUrl || '';
       let revokeOnClose = false;
       if (!src && attachment._offlineAttachmentId) {
         const record = await getOfflineAttachment(attachment._offlineAttachmentId);
@@ -372,7 +338,7 @@ export default function NativeInspectionsView({
     const mutationKey = ['inspection-preview', inspection.id, field];
     beginMutation(mutationKey);
     try {
-      let previewSource = attachment.dataUrl || previewUrls[attachment.id] || '';
+      let previewSource = attachment.dataUrl || '';
       if (!previewSource && attachment._offlineAttachmentId) {
         previewSource = (await getOfflineAttachment(attachment._offlineAttachmentId))?.file || '';
       }
@@ -492,6 +458,9 @@ export default function NativeInspectionsView({
         date: inspectionDraft.date,
         agency: inspectionDraft.agency.trim(),
         notes: inspectionDraft.notes.trim(),
+        checklist: (inspectionDraft.checklist || [])
+          .map((item) => ({ id: item.id, text: String(item.text || '').trim(), completed: item.completed === true }))
+          .filter((item) => item.text),
         stickerFile: nextStickerFile,
         reportFile: ['failed', 'follow-up'].includes(inspectionDraft.status) ? nextReportFile : null,
         attemptHistory: inspectionDraft.attemptHistory || [],
@@ -733,124 +702,64 @@ export default function NativeInspectionsView({
                     >
                       <div className="inspection-card-header">
                         <div>
-                          <p className="project-status">{inspection.status}</p>
+                          <h3>{readOnly || operation?.action === 'delete'
+                            ? inspection.inspectionType || 'No inspection type'
+                            : <button
+                                className="inspection-name-button"
+                                type="button"
+                                onClick={() => startEdit(inspection)}
+                                disabled={isMutating(['inspection', inspection.id])}
+                                title="Edit inspection"
+                              >{inspection.inspectionType || 'No inspection type'}</button>}</h3>
                           {operation ? <span className={`status-pill offline-${operation.status}`}>{operation.status === 'needs-attention' ? 'Needs attention' : operation.action === 'delete' ? 'Delete saved on device' : 'Saved on device'}</span> : null}
-                          <h3>{inspection.subcode || 'No subcode'}</h3>
-                          <p className="inspection-type">{inspection.inspectionType || 'No inspection type'}</p>
                         </div>
-                        <button
-                          className={`button secondary gantt-icon-button${isMutating(['inspection', inspection.id]) ? ' is-loading' : ''}`}
-                          type="button"
-                          onClick={() => startEdit(inspection)}
-                          disabled={isMutating(['inspection', inspection.id]) || readOnly || operation?.action === 'delete'}
-                          title="Edit inspection"
-                          aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'}`}
-                          aria-busy={isMutating(['inspection', inspection.id])}
-                        >
-                          <FluentIcon name="edit" />
-                        </button>
                       </div>
                       <div className="inspection-meta">
-                        {!selectedProject ? <span>Project: {inspection.projectName || 'Not set'}</span> : null}
-                        <span>Date: {inspection.date ? formatTooltipDate(inspection.date) : 'Not set'}</span>
-                        <span>Agency: {inspection.agency || 'Not set'}</span>
-                        <span>Sticker: {inspection.stickerFile?.originalName || 'Not uploaded'}</span>
-                        {['failed', 'follow-up'].includes(inspection.status) ? (
-                          <span>Report: {inspection.reportFile?.originalName || 'Not uploaded'}</span>
-                        ) : null}
+                        <span className="inspection-subcode">{inspection.subcode || 'No subcode'}</span>
+                        <span>{inspection.date ? formatTooltipDate(inspection.date) : 'No date'}</span>
+                        <span className="inspection-status">{inspection.status}</span>
+                        {inspection.agency ? <span>{inspection.agency}</span> : null}
+                        {!selectedProject ? <span>{inspection.projectName || 'No project'}</span> : null}
                       </div>
-                      {(
-                        (inspection.stickerFile && isImageFile(inspection.stickerFile)) ||
-                        (inspection.reportFile && isImageFile(inspection.reportFile))
-                      ) ? (
-                        <div className="inspection-thumbnail-row">
-                          {inspection.stickerFile && isImageFile(inspection.stickerFile) ? (
-                            <div className="inspection-thumbnail-card">
-                              <button
-                                type="button"
-                                className={`inspection-thumbnail-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
-                                onClick={() => void openInspectionImage(inspection, 'stickerFile')}
-                                disabled={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
-                                title="Open sticker image"
-                                aria-busy={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
-                              >
-                                <img
-                                  className="inspection-thumbnail-image"
-                                  src={getInspectionAttachmentPreview(inspection.stickerFile)}
-                                  alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} sticker`}
-                                  loading="lazy"
-                                  decoding="async"
-                                />
-                                <span>Sticker</span>
-                              </button>
-                              <div className="inspection-thumbnail-actions">
-                                <button
-                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
-                                  type="button"
-                                  onClick={() => downloadInspectionAttachment(inspection, 'stickerFile')}
-                                  title="Download sticker image"
-                                  aria-label={`Download ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
-                                >
-                                  <FluentIcon name="download" />
-                                </button>
-                                <button
-                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'stickerFile']) ? ' is-loading' : ''}`}
-                                  type="button"
-                                  onClick={() => void openInspectionImageEditor(inspection, 'stickerFile')}
-                                  disabled={!!inspection.stickerFile?._offlineAttachmentId || isMutating(['inspection-preview', inspection.id, 'stickerFile']) || isMutating(['inspection', inspection.id]) || readOnly}
-                                  title={inspection.stickerFile?._offlineAttachmentId ? 'Sync this inspection before editing its sticker image' : 'Edit sticker image'}
-                                  aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} sticker image`}
-                                  aria-busy={isMutating(['inspection-preview', inspection.id, 'stickerFile'])}
-                                >
-                                  <FluentIcon name="edit" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-                          {inspection.reportFile && isImageFile(inspection.reportFile) ? (
-                            <div className="inspection-thumbnail-card">
-                              <button
-                                type="button"
-                                className={`inspection-thumbnail-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
-                                onClick={() => void openInspectionImage(inspection, 'reportFile')}
-                                disabled={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
-                                title="Open report image"
-                                aria-busy={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
-                              >
-                                <img
-                                  className="inspection-thumbnail-image"
-                                  src={getInspectionAttachmentPreview(inspection.reportFile)}
-                                  alt={`${inspection.subcode || inspection.inspectionType || 'Inspection'} report`}
-                                  loading="lazy"
-                                  decoding="async"
-                                />
-                                <span>Report</span>
-                              </button>
-                              <div className="inspection-thumbnail-actions">
-                                <button
-                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
-                                  type="button"
-                                  onClick={() => downloadInspectionAttachment(inspection, 'reportFile')}
-                                  title="Download report image"
-                                  aria-label={`Download ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
-                                >
-                                  <FluentIcon name="download" />
-                                </button>
-                                <button
-                                  className={`button secondary gantt-icon-button${isMutating(['inspection-preview', inspection.id, 'reportFile']) ? ' is-loading' : ''}`}
-                                  type="button"
-                                  onClick={() => void openInspectionImageEditor(inspection, 'reportFile')}
-                                  disabled={!!inspection.reportFile?._offlineAttachmentId || isMutating(['inspection-preview', inspection.id, 'reportFile']) || isMutating(['inspection', inspection.id]) || readOnly}
-                                  title={inspection.reportFile?._offlineAttachmentId ? 'Sync this inspection before editing its report image' : 'Edit report image'}
-                                  aria-label={`Edit ${inspection.subcode || inspection.inspectionType || 'inspection'} report image`}
-                                  aria-busy={isMutating(['inspection-preview', inspection.id, 'reportFile'])}
-                                >
-                                  <FluentIcon name="edit" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
+                      {inspection.stickerFile || inspection.reportFile ? (
+                        <div className="inspection-attachments">
+                          {['stickerFile', 'reportFile'].map((field) => inspection[field] ? (
+                            <span className="inspection-attachment-actions" key={field}><button
+                              type="button"
+                              className="inspection-attachment-link"
+                              onClick={() => isImageFile(inspection[field])
+                                ? void openInspectionImage(inspection, field)
+                                : void downloadInspectionAttachment(inspection, field)}
+                              disabled={isMutating(['inspection-preview', inspection.id, field])}
+                              title={inspection[field].originalName || inspection[field].name || (field === 'stickerFile' ? 'Sticker' : 'Report')}
+                              aria-label={`${isImageFile(inspection[field]) ? 'Open' : 'Download'} ${inspection.inspectionType || 'inspection'} ${field === 'stickerFile' ? 'sticker' : 'report'}`}
+                            >
+                              <FluentIcon name={isImageFile(inspection[field]) ? 'eye' : 'document'} size={15} />
+                              {field === 'stickerFile' ? 'Sticker' : 'Report'}
+                            </button>
+                            {isImageFile(inspection[field]) ? <>
+                              <button className="inspection-attachment-icon" type="button" onClick={() => void downloadInspectionAttachment(inspection, field)} title={`Download ${field === 'stickerFile' ? 'sticker' : 'report'}`} aria-label={`Download ${inspection.inspectionType || 'inspection'} ${field === 'stickerFile' ? 'sticker' : 'report'}`}><FluentIcon name="download" size={15} /></button>
+                              {!readOnly ? <button className="inspection-attachment-icon" type="button" onClick={() => void openInspectionImageEditor(inspection, field)} disabled={!!inspection[field]?._offlineAttachmentId || isMutating(['inspection-preview', inspection.id, field]) || isMutating(['inspection', inspection.id])} title={inspection[field]?._offlineAttachmentId ? 'Sync this inspection before editing its image' : 'Edit image'} aria-label={`Edit ${inspection.inspectionType || 'inspection'} ${field === 'stickerFile' ? 'sticker' : 'report'} image`}><FluentIcon name="edit" size={15} /></button> : null}
+                            </> : null}</span>
+                          ) : null)}
                         </div>
+                      ) : null}
+                      {inspection.checklist?.length ? (
+                        <details className="inspection-checklist-details">
+                          <summary>Checklist · {inspection.checklist.filter((item) => item.completed).length} of {inspection.checklist.length} complete</summary>
+                          <ul>
+                            {inspection.checklist.map((item) => {
+                              const projectId = selectedProject?.id || inspection.projectId;
+                              const linkedTask = checklistTasks.get(`${projectId}:${inspection.id}:${item.id}`);
+                              const creatingTask = isMutating(['inspection', inspection.id, 'checklist-task', item.id]);
+                              return <li key={item.id} className={item.completed ? 'is-complete' : ''}>
+                                <span aria-hidden="true">{item.completed ? '✓' : '○'}</span>
+                                <span className="inspection-checklist-item-text">{item.text}</span>
+                                {linkedTask ? <span className="inspection-checklist-task-status" title={linkedTask.label}>{linkedTask.done ? 'Task complete' : 'Task open'}</span> : !readOnly ? <button className="inspection-checklist-task-button" type="button" onClick={() => void createTaskFromChecklistItem(inspection, item)} disabled={creatingTask || !!operation}>{creatingTask ? 'Creating...' : 'Create task'}</button> : null}
+                              </li>;
+                            })}
+                          </ul>
+                        </details>
                       ) : null}
                       {inspection.notes ? <p className="inspection-notes">{inspection.notes}</p> : null}
                       {inspection.attemptHistory?.length ? (

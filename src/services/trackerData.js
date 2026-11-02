@@ -1,6 +1,7 @@
 import { getCurrentUrl, updateCurrentUrl } from '../platform/platformAdapter.js';
 import { trackerQueryClient } from './queryClient.js';
 import { reportError } from './observability.js';
+import { getOfflineProjectAssetByReference } from './offlineProjectAssetStore.js';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from '../utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS, normalizeVisibleProjectTabs } from '../utils/projectTabs.js';
 import { is1099ReportingCompanyType, normalizeCompanyType } from '../utils/companyType.js';
@@ -22,7 +23,6 @@ import {
   reconcileOfflineAttachments,
   removeOfflineAttachments,
 } from './offlineAttachmentStore.js';
-import { getOfflineProjectAssetByReference } from './offlineProjectAssetStore.js';
 import {
   normalizeAppRuntimeStatus,
   throwIfAppWriteFrozen,
@@ -612,6 +612,15 @@ function normalizeProjectInspection(inspection, index = 0) {
     status: String(inspection?.status || 'scheduled'),
     agency: String(inspection?.agency || '').trim(),
     notes: String(inspection?.notes || '').trim(),
+    checklist: Array.isArray(inspection?.checklist)
+      ? inspection.checklist
+        .map((item, itemIndex) => ({
+          id: String(item?.id || `check-${index}-${itemIndex}`),
+          text: String(item?.text || '').trim(),
+          completed: item?.completed === true,
+        }))
+        .filter((item) => item.text)
+      : [],
     stickerFile: inspection?.stickerFile ? normalizeProjectFile(inspection.stickerFile, index) : null,
     reportFile: inspection?.reportFile ? normalizeProjectFile(inspection.reportFile, index + 1000) : null,
     attemptHistory: normalizeInspectionAttemptHistory(
@@ -1070,6 +1079,9 @@ function normalizeTask(task = {}) {
     sourceSelectionId: String(task?.sourceSelectionId || '').trim(),
     sourceSelectionProjectId: String(task?.sourceSelectionProjectId || '').trim(),
     sourceSelectionLabel: String(task?.sourceSelectionLabel || '').trim(),
+    sourceInspectionId: String(task?.sourceInspectionId || '').trim(),
+    sourceInspectionProjectId: String(task?.sourceInspectionProjectId || '').trim(),
+    sourceInspectionChecklistItemId: String(task?.sourceInspectionChecklistItemId || '').trim(),
     done: !!task?.done,
     createdAt: resolveTaskCreatedAt(task),
     attachments: Array.isArray(task?.attachments)
@@ -3009,6 +3021,9 @@ export async function createTask(currentState, payload, options = {}) {
     sourceSelectionId: payload.sourceSelectionId || '',
     sourceSelectionProjectId: payload.sourceSelectionProjectId || '',
     sourceSelectionLabel: payload.sourceSelectionLabel || '',
+    sourceInspectionId: payload.sourceInspectionId || '',
+    sourceInspectionProjectId: payload.sourceInspectionProjectId || '',
+    sourceInspectionChecklistItemId: payload.sourceInspectionChecklistItemId || '',
     createdAt: payload.createdAt || new Date().toISOString(),
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   });
@@ -3174,6 +3189,7 @@ export async function createProject(currentState, payload) {
     end: payload.end || '',
     budget: Number(payload.budget) || 0,
     status: payload.status || 'planning',
+    inactive: false,
     manager: payload.manager?.trim() || '',
     address: payload.address?.trim() || '',
     permitNumber: payload.permitNumber?.trim() || '',

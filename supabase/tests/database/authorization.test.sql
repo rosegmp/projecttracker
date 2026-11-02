@@ -1,6 +1,6 @@
 begin;
 
-select plan(136);
+select plan(145);
 
 select ok(
   pg_get_functiondef('public.save_normalized_project_sections(text,jsonb,jsonb)'::regprocedure)
@@ -77,6 +77,22 @@ insert into public.subcontractor_tax_identifiers (
   'Authorized Subcontractor LLC', '', '123 Test Street, Trenton, NJ 08608', 'w9_extraction', 'High'
 );
 
+select ok(
+  not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename in ('employees', 'projects', 'settings', 'subs', 'tasks')
+      and policyname = 'allow all'
+  ),
+  'tracker base tables no longer have public allow-all policies'
+);
+
+set local role anon;
+select is((select count(*) from public.projects), 0::bigint, 'anonymous users cannot read projects');
+select is((select count(*) from public.tasks), 0::bigint, 'anonymous users cannot read tasks');
+select is((select count(*) from public.subs), 0::bigint, 'anonymous users cannot read subcontractors');
+reset role;
+
 set local role authenticated;
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","email":"admin@test.local","role":"authenticated"}';
@@ -137,6 +153,11 @@ delete from public.tasks where id = 'template-task-admin';
 delete from public.projects where id = 'template-project-admin';
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000002","email":"editor@test.local","role":"authenticated"}';
+select results_eq(
+  $$update public.projects set data = data where id = 'auth-project-b' returning id$$,
+  array[]::text[],
+  'editors cannot update an unassigned project through the base table'
+);
 select results_eq(
   $$select vendor_name from public.vendor_1099_import_rows where tax_year = 2026$$,
   array[]::text[],
@@ -351,6 +372,11 @@ select results_eq(
 );
 
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000003","email":"viewer@test.local","role":"authenticated"}';
+select results_eq(
+  $$update public.projects set data = data where id = 'auth-project-a' returning id$$,
+  array[]::text[],
+  'view-only staff cannot update projects through the base table'
+);
 select ok(not public.app_user_can_edit(), 'view-only users do not receive edit capability');
 select throws_ok(
   $$select public.add_project_photos(
@@ -475,6 +501,29 @@ select ok(
   not public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/old-plan.pdf'),
   'portal users cannot download an archived file'
 );
+reset role;
+update public.projects
+set data = data || '{"inactive":true}'::jsonb
+where id = 'auth-project-a';
+set local role authenticated;
+select is(
+  jsonb_array_length(public.get_project_portal_bootstrap()->'projects'),
+  0,
+  'inactive projects disappear from the customer portal bootstrap'
+);
+select ok(
+  not public.app_user_can_view_project('auth-project-a'),
+  'customers cannot read an inactive project through project authorization'
+);
+select ok(
+  not public.portal_storage_object_is_visible('auth-project-a', 'projects/auth-project-a/files/current-plan.pdf'),
+  'customers cannot download files from an inactive project'
+);
+reset role;
+update public.projects
+set data = data - 'inactive'
+where id = 'auth-project-a';
+set local role authenticated;
 select results_eq(
   'select count(*)::bigint from public.certificate_renewal_requests',
   array[0::bigint],

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { addProjectTaskLocation, createTask, loadAuditEvents, updateTask } from '../services/trackerData.js';
 import { loadInsuranceCertificates, loadSubcontractorComplianceDocuments } from '../services/insuranceCertificates.js';
 import { loadPortalItemsForProjects, loadWorkflowItemsForProjects } from '../services/constructionWorkflows.js';
@@ -24,10 +25,12 @@ import {
   groupRecentAuditChanges,
 } from '../utils/homeView.js';
 import { loadFourDayForecast } from '../utils/weather.js';
+import { readWeatherPreference } from '../utils/weatherPreference.js';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import useSubcontractorComplianceWarnings from '../hooks/useSubcontractorComplianceWarnings.js';
 import { getVisibleProjectTabs } from '../utils/projectTabs.js';
 import FluentIcon from './FluentIcon.jsx';
+import CommandCenterHome from './CommandCenterHome.jsx';
 import TaskLocationField from './TaskLocationField.jsx';
 
 const HOME_LIST_LIMIT = 5;
@@ -58,19 +61,6 @@ function getItemDateLabel(item) {
     return `${formatCompactDate(item.start)}–${formatCompactDate(item.end)}`;
   }
   return formatCompactDate(item.start || item.end);
-}
-
-function weatherPreferenceKey(activeUser) {
-  return `cx_home_weather_visible:${activeUser?.id || activeUser?.email || 'default'}`;
-}
-
-function readWeatherPreference(activeUser) {
-  if (typeof window === 'undefined') return true;
-  try {
-    return window.localStorage.getItem(weatherPreferenceKey(activeUser)) !== 'false';
-  } catch {
-    return true;
-  }
 }
 
 function HomeList({
@@ -302,6 +292,7 @@ function MyDayWorkspace({ summary, activeUser, canEdit, offline, onOpen, onCompl
 
 export default function NativeHomeView({
   data,
+  headerTargets = [],
   activeUser,
   refresh,
   loading,
@@ -600,12 +591,6 @@ export default function NativeHomeView({
 
   useEffect(() => { if (weatherVisible) void refreshWeather(false); }, [refreshWeather, weatherVisible]);
 
-  function toggleWeather() {
-    const next = !weatherVisible;
-    setWeatherVisible(next);
-    try { window.localStorage.setItem(weatherPreferenceKey(activeUser), String(next)); } catch { /* Keep the in-memory preference. */ }
-  }
-
   async function refreshHome() {
     await Promise.all([
       refresh({ force: true }),
@@ -685,15 +670,28 @@ export default function NativeHomeView({
     window.setTimeout(() => document.getElementById('home-quick-task-name')?.focus(), 250);
   }
 
+  const renderHomeHeader = (integrated = false) => (
+    <header className={`home-page-header${integrated ? ' home-page-header-integrated' : ''}`}>
+      <div><p className="eyebrow">Daily command center</p><h1>Home</h1><p><span>{formatDayHeading(now)}</span><span className="home-header-range"> · Next 7 days through {formatDayHeading(addLocalDays(now, 7))}</span></p></div>
+      <div className="home-page-actions"><button className="button secondary home-refresh-button" type="button" onClick={() => void refreshHome()} disabled={loading || auditLoading}><FluentIcon name="replace" />{loading || auditLoading ? 'Refreshing…' : 'Refresh'}</button></div>
+    </header>
+  );
+
   return (
     <section className="panel native-panel workspace-page home-page">
-      <header className="home-page-header">
-        <div><p className="eyebrow">Daily command center</p><h1>Home</h1><p>{formatDayHeading(now)} · Next 7 days through {formatDayHeading(addLocalDays(now, 7))}</p></div>
-        <div className="home-page-actions">
-          <button className="button secondary" type="button" onClick={toggleWeather}>{weatherVisible ? 'Hide weather' : 'Show weather'}</button>
-          <button className="button secondary home-refresh-button" type="button" onClick={() => void refreshHome()} disabled={loading || auditLoading}><FluentIcon name="replace" />{loading || auditLoading ? 'Refreshing…' : 'Refresh'}</button>
-        </div>
-      </header>
+      {headerTargets.length ? headerTargets.map((target) => createPortal(renderHomeHeader(true), target, target.className)) : renderHomeHeader()}
+
+      <CommandCenterHome
+        projects={visibleProjects}
+        projectHealth={projectHealth}
+        openTasks={scopedOpenTasks}
+        attention={attention}
+        todaySummary={todaySummary}
+        nextSevenSummary={nextSevenSummary}
+        changes={changes}
+        onOpenItem={onOpenItem}
+        onOpenCollection={onOpenCollection}
+      />
 
       <MyDayWorkspace
         summary={myDaySummary}
@@ -705,17 +703,6 @@ export default function NativeHomeView({
         onAddTask={focusQuickTask}
         onQuickAction={onQuickAction}
       />
-
-      <section className="home-health-section">
-        <header className="home-changes-heading"><div><p className="eyebrow">Portfolio</p><h2>Project health</h2></div><span>Based on overdue and blocked work</span></header>
-        <div className="home-health-grid">
-          {projectHealth.map(({ project, health }) => (
-            <button className={`home-health-card tone-${health.tone}`} type="button" key={project.id} onClick={() => onOpenItem({ ...project, type: 'project' })}>
-              <span>{project.name}</span><strong>{health.label}</strong><FluentIcon name="chevronRight" size={16} />
-            </button>
-          ))}
-        </div>
-      </section>
 
       <ActionCenter
         actions={actionCenterItems}

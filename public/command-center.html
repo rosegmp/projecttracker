@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#041523" />
+  <title>Command Center Preview · Project Hub</title>
+  <link rel="stylesheet" href="/command-center.css" />
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10h-6v-7H9v7H3z"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4v18M12 8h7v13M8 8v2m0 3v2m0 3v2m7-9v2m3-2v2m-3 3v2m3-2v2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v12H3zM3 8V5h8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M9 3h6v4H9zm-1 8h8m-8 4h6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M5 2h9l5 5v15H5zM14 2v6h5M8 12h8m-8 4h8"/></symbol>
+    <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2 20v-2a7 7 0 0 1 14 0v2zm14-14a3 3 0 0 1 0 6m1 2a6 6 0 0 1 5 6"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zM10 20h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h5l3-8 4 16 3-8h5"/></symbol>
+    <symbol id="i-hardhat" viewBox="0 0 24 24"><path d="M3 16h18v3H3zM5 16v-3a7 7 0 0 1 14 0v3M10 6v7m4-7v7"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m12 2 10 19H2zM12 9v5m0 3v1"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6h12v11H2zm12 4h4l4 4v3h-8zM6 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm12 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <a class="brand" href="/command-center.html" aria-label="Command Center preview home"><span class="brand-mark"><svg><use href="#i-building"/></svg></span><span><strong>Project<span> Hub</span></strong><small>COMMAND CENTER</small></span></a>
+    <div class="page-name"><h1>Command Center</h1><p>Projects <b>•</b> People <b>•</b> Progress <b>•</b> Possibilities</p></div>
+    <div class="top-actions"><label class="search"><svg><use href="#i-search"/></svg><input id="dashboard-search" type="search" placeholder="Search projects, tasks, RFIs, or documents..." aria-label="Search preview content" /></label><button class="bell" type="button" aria-label="3 notifications" title="Preview notifications"><svg><use href="#i-bell"/></svg><span>3</span></button><div class="user"><span class="avatar">JD</span><span><strong>John Doe⌄</strong><small>Project Manager⌄</small></span></div><div class="date"><strong id="today-date">Today</strong><small>Make progress today.</small></div></div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <nav>
+        <a class="selected" href="/command-center.html"><svg><use href="#i-home"/></svg>Dashboard</a>
+        <a href="/?tab=projects"><svg><use href="#i-folder"/></svg>Projects</a>
+        <a href="/?tab=tasks"><svg><use href="#i-check"/></svg>Tasks</a>
+        <a href="/?tab=calendar"><svg><use href="#i-calendar"/></svg>Calendar</a>
+        <a href="/?tab=projects"><svg><use href="#i-clipboard"/></svg>Inspections</a>
+        <a href="/?tab=projects"><svg><use href="#i-file"/></svg>Daily Logs</a>
+        <a href="/?tab=projects"><svg><use href="#i-clipboard"/></svg>RFIs</a>
+        <a href="/?tab=people"><svg><use href="#i-people"/></svg>Subcontractors</a>
+        <a href="/?tab=projects"><svg><use href="#i-folder"/></svg>Procurement</a>
+        <a href="/?tab=projects"><svg><use href="#i-file"/></svg>Permits</a>
+        <a href="/?tab=projects"><svg><use href="#i-folder"/></svg>Files</a>
+        <a href="/?tab=projects"><svg><use href="#i-folder"/></svg>Photos</a>
+      </nav>
+      <div class="sidebar-bottom"><div class="side-photo" role="img" aria-label="Illustration of a building under construction"></div><p>Build Better<br>Together.</p><span>People<br>Projects<br>Communities</span><i></i></div>
+    </aside>
+
+    <main class="dashboard">
+      <div class="preview-note">LAYOUT PREVIEW · SAMPLE DATA</div>
+      <section class="summary-grid" aria-label="Summary">
+        <article class="stat-card"><span class="stat-icon blue"><svg><use href="#i-building"/></svg></span><div><h2>Active Projects</h2><strong>5</strong><p><em>↑ 25%</em><span>vs. last month</span></p></div></article>
+        <article class="stat-card"><span class="stat-icon green"><svg><use href="#i-check"/></svg></span><div><h2>Open Tasks</h2><strong>139</strong><p><em>↑ 12%</em><span>vs. last month</span></p></div></article>
+        <article class="stat-card"><span class="stat-icon blue"><svg><use href="#i-clipboard"/></svg></span><div><h2>Upcoming Inspections</h2><strong>12</strong><p><em>↑ 33%</em><span>vs. last month</span></p></div></article>
+        <article class="stat-card"><span class="stat-icon green"><svg><use href="#i-pulse"/></svg></span><div><h2>Schedule Health</h2><strong>94%</strong><p><em>↑ 6%</em><span>vs. last month</span></p></div></article>
+        <article class="quote-card"><blockquote>“Disciplined execution<br>builds extraordinary places.”</blockquote><i></i></article>
+      </section>
+
+      <section class="main-grid">
+        <article class="panel map-panel"><div class="panel-head"><h2>Project Map &amp; Portfolio</h2><div class="segmented" role="group" aria-label="Project display"><button class="active" type="button" data-view="map" aria-pressed="true">Map</button><button type="button" data-view="list" aria-pressed="false">List</button></div></div><div class="map-body" id="map-body"><div class="map-canvas" role="img" aria-label="Illustrated map of five sample project locations"><a class="pin green-pin" style="left:13%;top:14%" href="/?tab=projects"><i></i><span><strong>105 Destiny Way</strong><small>Finishes 78%</small></span></a><a class="pin blue-pin" style="left:45%;top:25%" href="/?tab=projects"><i></i><span><strong>6 Crocus</strong><small>Framing 62%</small></span></a><a class="pin purple-pin" style="left:73%;top:42%" href="/?tab=projects"><i></i><span><strong>Creative Cove</strong><small>Planning 15%</small></span></a><a class="pin orange-pin" style="left:17%;top:65%" href="/?tab=projects"><i></i><span><strong>630 Hope Chapel</strong><small>MEP 48%</small></span></a><a class="pin yellow-pin" style="left:52%;top:72%" href="/?tab=projects"><i></i><span><strong>Donors Fund Phase 1</strong><small>Site Work 32%</small></span></a><div class="map-controls"><span>N<br>⌃</span><button type="button" aria-label="Zoom in">+</button><button type="button" aria-label="Zoom out">−</button></div><div class="map-legend"><span><i class="green"></i>On Track</span><span><i class="yellow"></i>At Risk</span><span><i class="orange"></i>Delayed</span><span><i class="blue"></i>Not Started</span></div></div><div class="map-list" hidden><div><strong>105 Destiny Way</strong><span>Finishes · 78%</span></div><div><strong>6 Crocus</strong><span>Framing · 62%</span></div><div><strong>Donors Fund Phase 1</strong><span>Site Work · 32%</span></div><div><strong>630 Hope Chapel</strong><span>MEP · 48%</span></div><div><strong>Creative Cove</strong><span>Planning · 15%</span></div></div></div></article>
+
+        <article class="panel projects-panel"><div class="panel-head"><h2>Active Projects</h2><a href="/?tab=projects">View All <svg><use href="#i-arrow"/></svg></a></div><div class="project-list">
+          <a class="project-row" href="/?tab=projects"><img src="/command-center-house.svg" alt=""/><div class="project-info"><strong>105 Destiny Way</strong><span>Custom Residence</span><div class="progress"><i style="width:78%;background:#17c782"></i></div></div><span class="percent">78%</span><em class="status on-track">On Track</em></a>
+          <a class="project-row" href="/?tab=projects"><img src="/command-center-house.svg" alt=""/><div class="project-info"><strong>6 Crocus</strong><span>Residential</span><div class="progress"><i style="width:62%;background:#159ff3"></i></div></div><span class="percent">62%</span><em class="status on-track">On Track</em></a>
+          <a class="project-row" href="/?tab=projects"><img src="/command-center-house.svg" alt=""/><div class="project-info"><strong>Donors Fund Phase 1</strong><span>Community</span><div class="progress"><i style="width:32%;background:#f2b63b"></i></div></div><span class="percent">32%</span><em class="status at-risk">At Risk</em></a>
+          <a class="project-row" href="/?tab=projects"><img src="/command-center-house.svg" alt=""/><div class="project-info"><strong>630 Hope Chapel</strong><span>Commercial</span><div class="progress"><i style="width:48%;background:#ff812d"></i></div></div><span class="percent">48%</span><em class="status attention">Needs Attention</em></a>
+          <a class="project-row" href="/?tab=projects"><img src="/command-center-house.svg" alt=""/><div class="project-info"><strong>Creative Cove</strong><span>Mixed Use</span><div class="progress"><i style="width:15%;background:#9755e7"></i></div></div><span class="percent">15%</span><em class="status planning">Planning</em></a>
+        </div></article>
+
+        <article class="panel focus-panel"><div class="panel-head"><h2>Today's Focus</h2><a href="/?tab=calendar">View Calendar <svg><use href="#i-arrow"/></svg></a></div><ol class="focus-list"><li><time>8:00 AM</time><i class="green"></i><div><strong>Site Walk – 105 Destiny Way</strong><span>105 Destiny Way</span></div></li><li><time>10:00 AM</time><i class="blue"></i><div><strong>Electrical Rough Inspection</strong><span>6 Crocus</span></div></li><li><time>1:00 PM</time><i class="orange"></i><div><strong>Subcontractor Coordination</strong><span>630 Hope Chapel</span></div></li><li><time>3:00 PM</time><i class="purple"></i><div><strong>Design Review</strong><span>Creative Cove</span></div></li><li><time>4:30 PM</time><i class="violet"></i><div><strong>Daily Log Review</strong><span>All Projects</span></div></li></ol></article>
+      </section>
+
+      <section class="panel timeline-panel"><div class="panel-head"><h2>Construction Timeline – 105 Destiny Way</h2><a href="/?tab=schedule">View Full Schedule <svg><use href="#i-arrow"/></svg></a></div><div class="timeline"><div class="timeline-track"></div><div class="milestone complete"><i>✓</i><strong>Site Prep</strong><span>✓ Complete</span></div><div class="milestone complete"><i>✓</i><strong>Framing</strong><span>✓ Complete</span></div><div class="milestone complete"><i>✓</i><strong>MEP Rough</strong><span>✓ Complete</span></div><div class="milestone current"><i>▣</i><strong>Drywall</strong><span>In Progress<br>72%</span></div><div class="milestone"><i>▦</i><strong>Tiles</strong><span>Upcoming</span></div><div class="milestone"><i>▧</i><strong>Granite</strong><span>Upcoming</span></div><div class="milestone"><i>▦</i><strong>Vanity Install</strong><span>Upcoming</span></div><div class="milestone"><i>▣</i><strong>Plumbing Finals</strong><span>Upcoming</span></div><div class="milestone"><i>◉</i><strong>Painting</strong><span>Upcoming</span></div><div class="milestone"><i>✧</i><strong>Final Inspection</strong><span>Upcoming</span></div></div></section>
+
+      <section class="bottom-grid"><article class="panel operations-panel"><div class="panel-head"><h2>Field Operations</h2></div><div class="operation-cards"><a href="/?tab=people" class="operation green-op"><span><svg><use href="#i-hardhat"/></svg></span><strong>8</strong><small>Crews On Site</small><em>+2 today</em></a><a href="/?tab=tasks" class="operation orange-op"><span><svg><use href="#i-alert"/></svg></span><strong>3</strong><small>Items Need Attention</small><em>View Details →</em></a><a href="/?tab=projects" class="operation blue-op"><span><svg><use href="#i-clipboard"/></svg></span><strong>12</strong><small>Upcoming Inspections</small><em>Next 7 days</em></a><a href="/?tab=projects" class="operation purple-op"><span><svg><use href="#i-folder"/></svg></span><strong>5</strong><small>Material Deliveries</small><em>This Week</em></a></div></article>
+      <article class="panel activity-panel"><div class="panel-head"><h2>Recent Activity</h2><a href="/?tab=projects">View All <svg><use href="#i-arrow"/></svg></a></div><div class="activity-list"><div><i><svg><use href="#i-truck"/></svg></i><p><strong>Tile delivery received</strong><span>105 Destiny Way</span></p><time>45 min ago</time></div><div><i><svg><use href="#i-file"/></svg></i><p><strong>RFI #0421 responded</strong><span>630 Hope Chapel</span></p><time>2 hours ago</time></div><div><i><svg><use href="#i-check"/></svg></i><p><strong>Inspection passed</strong><span>6 Crocus</span></p><time>5 hours ago</time></div><div><i><svg><use href="#i-clipboard"/></svg></i><p><strong>Daily log submitted</strong><span>Creative Cove</span></p><time>Yesterday</time></div></div></article>
+      <article class="panel documents-panel"><div class="panel-head"><h2>Project Documents</h2><a href="/?tab=projects">View All <svg><use href="#i-arrow"/></svg></a></div><div class="document-list"><a href="/?tab=projects"><svg><use href="#i-file"/></svg><p><strong>Site Plan – 105 Destiny Way</strong><span>PDF · 2.4 MB · Apr 22, 2025</span></p><b>⋮</b></a><a href="/?tab=projects"><svg><use href="#i-file"/></svg><p><strong>Electrical Drawings – 6 Crocus</strong><span>PDF · 4.1 MB · Apr 21, 2025</span></p><b>⋮</b></a><a href="/?tab=projects"><svg><use href="#i-file"/></svg><p><strong>Permits – 630 Hope Chapel</strong><span>PDF · 1.8 MB · Apr 20, 2025</span></p><b>⋮</b></a><a href="/?tab=projects"><svg><use href="#i-file"/></svg><p><strong>Specifications – Creative Cove</strong><span>PDF · 3.2 MB · Apr 18, 2025</span></p><b>⋮</b></a></div></article></section>
+    </main>
+  </div>
+  <footer class="footer"><span><svg><use href="#i-building"/></svg> Project Hub</span><small>CONSTRUCTION INTELLIGENCE FOR A BRIGHTER TOMORROW</small><small>PEOPLE | PLACES | PROGRESS | IMPACT</small></footer>
+  <script src="/command-center.js" defer></script>
+</body>
+</html>

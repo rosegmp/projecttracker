@@ -14,10 +14,8 @@ export function SignInView({ loading, recoveryLoading, error, recoveryMessage, o
       <section className="hero hero-compact">
         <div className="hero-copy auth-hero-copy">
           <div className="hero-brand">
-            <div className="hero-logo" aria-hidden="true">
-              <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-            </div>
-            <h1>Destiny Project Hub</h1>
+            <div className="hero-logo hub-auth-mark" aria-hidden="true">PH</div>
+            <h1>Project Hub</h1>
           </div>
         </div>
       </section>
@@ -105,10 +103,8 @@ export function PasswordResetView({ loading, error, onSavePassword, onSignOut })
       <section className="hero hero-compact">
         <div className="hero-copy auth-hero-copy">
           <div className="hero-brand">
-            <div className="hero-logo" aria-hidden="true">
-              <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-            </div>
-            <h1>Destiny Project Hub</h1>
+            <div className="hero-logo hub-auth-mark" aria-hidden="true">PH</div>
+            <h1>Project Hub</h1>
           </div>
         </div>
       </section>

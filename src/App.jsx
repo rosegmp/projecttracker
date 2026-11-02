@@ -1,7 +1,9 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import AppDialogHost, { showAppAlert, showAppConfirm } from './components/AppDialogs.jsx';
-import FluentIcon from './components/FluentIcon.jsx';
 import GlobalCommandPalette from './components/GlobalCommandPalette.jsx';
+import './global-search.css';
+import './feature-port.css';
+import FluentIcon from './components/FluentIcon.jsx';
 import { PasswordResetView, SignInView } from './components/AuthViews.jsx';
 import { getVisibleProjectsForUser, getVisibleTasksForUser } from './utils/accessUi.js';
 import {
@@ -13,7 +15,10 @@ import { getProjectOperationalHealth } from './utils/homeView.js';
 import { AppErrorBoundary, WorkspaceSplash } from './components/SharedUI.jsx';
 import { DEFAULT_VISIBLE_TOP_LEVEL_TABS, normalizeVisibleTopLevelTabs } from './utils/navigationTabs.js';
 import { DEFAULT_VISIBLE_PROJECT_TABS, getVisibleProjectTabs } from './utils/projectTabs.js';
+import { SETTINGS_SECTIONS } from './utils/settingsSections.js';
 import { reportError } from './services/observability.js';
+import { consumeDigitalApprovalToken } from './services/digitalApprovals.js';
+import { consumeVendor1099RecipientToken } from './services/vendor1099Recipient.js';
 import {
   applyQueuedInspectionOperations,
   applyQueuedProjectPhotoOperations,
@@ -34,8 +39,6 @@ import {
   maintenanceDisplayMessage,
 } from './services/runtimeStatus.js';
 import * as trackerDataModule from './services/trackerData.js';
-import { consumeDigitalApprovalToken } from './services/digitalApprovals.js';
-import { consumeVendor1099RecipientToken } from './services/vendor1099Recipient.js';
 
 function applyQueuedFieldOperations(state, operations) {
   return applyQueuedProjectPhotoOperations(
@@ -52,9 +55,10 @@ const NativePeopleView = lazy(() => import('./components/NativePeopleView.jsx'))
 const NativeCertificatesView = lazy(() => import('./components/NativeCertificatesView.jsx'));
 const ManagementReportingView = lazy(() => import('./components/ManagementReportingView.jsx'));
 const NativeSettingsView = lazy(() => import('./components/NativeSettingsView.jsx'));
-const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
 const DigitalApprovalPage = lazy(() => import('./components/DigitalApprovalPage.jsx'));
 const Vendor1099RecipientPage = lazy(() => import('./components/Vendor1099RecipientPage.jsx'));
+const PersonalDisplaySettings = lazy(() => import('./components/PersonalDisplaySettings.jsx'));
+const AndroidNotificationPreferences = lazy(() => import('./components/AndroidNotificationPreferences.jsx'));
 const NativeFilesView = lazy(() =>
   import('./components/ProjectAssetsViews.jsx').then((module) => ({ default: module.NativeFilesView })),
 );
@@ -156,6 +160,18 @@ const tabs = [
   },
 ];
 
+const PROJECT_SECTION_ICONS = {
+  overview: 'appsList', portal: 'chat', tasks: 'clipboardTask', calendar: 'calendar',
+  inspections: 'clipboardCheckmark',
+  selections: 'checkboxChecked', 'daily-logs': 'bookOpen', 'change-orders': 'documentEdit',
+  'rfis-submittals': 'questionCircle', 'budget-commitments': 'cart',
+  'warranty-closeout': 'shieldCheckmark', takeoff: 'ruler', files: 'folderOpen', photos: 'image',
+};
+const PROJECT_SECTION_LABELS = { 'rfis-submittals': 'RFIs', 'budget-commitments': 'Procurement' };
+const SETTINGS_SECTION_ICONS = { scheduling: 'timeline', calendar: 'calendar', inspections: 'clipboardCheckmark', templates: 'document', notifications: 'warning', users: 'people', audit: 'clock', reporting: 'documentData', display: 'appsList', system: 'wrench' };
+const TAB_ICONS = { home: 'home', projects: 'building', schedule: 'timeline', calendar: 'calendar', tasks: 'clipboardTask', people: 'people', certificates: 'certificate', settings: 'settings' };
+const THEME_STORAGE_KEY = 'project-hub:theme';
+
 const SESSION_PROJECT_FILTER_KEY = 'cx_session_project_filter';
 const EMPTY_WORKFLOW_SEARCH_RECORDS = {
   dailyLogs: [],
@@ -168,7 +184,7 @@ const WORKFLOW_SEARCH_CACHE_TTL_MS = 60_000;
 const LAST_ACTIVE_TAB_KEY = 'cx_last_active_tab';
 const PROJECT_SCOPED_TAB_IDS = new Set(['schedule', 'calendar', 'tasks']);
 const validTabIds = new Set(tabs.map((tab) => tab.id));
-const NON_EDITOR_TAB_IDS = ['home', 'projects', 'calendar', 'certificates'];
+const NON_EDITOR_TAB_IDS = ['home', 'projects', 'calendar', 'certificates', 'settings'];
 
 function normalizeAppUserRole(role) {
   return USER_ROLE_OPTIONS.includes(role) ? role : 'View Only';
@@ -184,7 +200,7 @@ function getUserCapabilities(role) {
       ? ['projects']
       : NON_EDITOR_TAB_IDS;
   const allowedTabs =
-    normalizedRole === 'Admin'
+    normalizedRole === 'Admin' || normalizedRole === 'Edit'
       ? tabs.map((tab) => tab.id)
       : normalizedRole === 'Edit'
         ? tabs.filter((tab) => !['settings', 'reports'].includes(tab.id)).map((tab) => tab.id)
@@ -194,7 +210,7 @@ function getUserCapabilities(role) {
     role: normalizedRole,
     canEdit,
     canManageUsers,
-    canAccessSettings: canManageUsers,
+    canAccessSettings: !portalRole,
     showTabs: !portalRole,
     allowedTabs,
   };
@@ -245,13 +261,15 @@ function syncTabToLocation(tab, { push = false } = {}) {
   }, { push });
 }
 
-function syncProjectToLocation(projectId, { push = false } = {}) {
+function syncProjectToLocation(projectId, { push = false, projectTab = '' } = {}) {
   updateCurrentUrl((url) => {
     const normalizedProjectId = String(projectId || '').trim();
     const currentProjectId = String(url.searchParams.get('project') || '').trim();
     if (normalizedProjectId) url.searchParams.set('project', normalizedProjectId);
     else url.searchParams.delete('project');
-    if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
+    if (normalizedProjectId) url.searchParams.delete('view');
+    if (normalizedProjectId && projectTab) url.searchParams.set('projectTab', projectTab);
+    else if (!normalizedProjectId || normalizedProjectId !== currentProjectId) {
       url.searchParams.delete('projectTab');
       url.searchParams.delete('task');
     }
@@ -260,9 +278,13 @@ function syncProjectToLocation(projectId, { push = false } = {}) {
 
 
 export default function App() {
-  const nativeAndroid = isNativeAndroidApp();
   const [digitalApprovalToken] = useState(() => consumeDigitalApprovalToken());
   const [vendor1099RecipientToken] = useState(() => consumeVendor1099RecipientToken());
+  const nativeAndroid = isNativeAndroidApp();
+  const [theme, setTheme] = useState(() => {
+    try { return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; }
+    catch { return 'light'; }
+  });
   const [activeTab, setActiveTab] = useState(() => nativeAndroid ? 'home' : getTabFromLocation());
   const [projectsHomeSignal, setProjectsHomeSignal] = useState(0);
   const [projectNavigationTarget, setProjectNavigationTarget] = useState(null);
@@ -315,6 +337,14 @@ export default function App() {
   const [showAndroidAccountMenu, setShowAndroidAccountMenu] = useState(false);
   const [showAndroidNotificationSettings, setShowAndroidNotificationSettings] = useState(false);
   const [projectDrawerOpen, setProjectDrawerOpen] = useState(false);
+  const [projectSectionPrompt, setProjectSectionPrompt] = useState(null);
+  const [projectWorkspaceContext, setProjectWorkspaceContext] = useState(() => ({
+    projectId: getSearchParam('project') || '', archived: getSearchParam('view') === 'archive', sectionId: getSearchParam('projectTab') || '',
+  }));
+  const [settingsSection, setSettingsSection] = useState('scheduling');
+  const [portalSectionsOpen, setPortalSectionsOpen] = useState(false);
+  const [desktopHomeHeaderTarget, setDesktopHomeHeaderTarget] = useState(null);
+  const [mobileHomeHeaderTarget, setMobileHomeHeaderTarget] = useState(null);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [recentSearchItemIds, setRecentSearchItemIds] = useState([]);
   const [workflowSearchData, setWorkflowSearchData] = useState({
@@ -340,6 +370,11 @@ export default function App() {
   useEffect(() => {
     trackerStateRef.current = trackerState;
   }, [trackerState]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* Keep the current choice for this session. */ }
+  }, [theme]);
 
   useEffect(() => {
     if (!nativeAndroid) return undefined;
@@ -394,6 +429,12 @@ export default function App() {
         loadTrackerData,
         loadTrackerStartupData,
       } = await loadTrackerDataModule();
+      const saveWorkspaceCache = (state) => {
+        if (!state || state.storageMode !== 'supabase') return;
+        void loadWorkspaceCacheManifest()
+          .then((manifest) => writeWorkspaceCache({ userId: authSession?.user?.id, state, manifestToken: manifest.token }))
+          .catch((cacheError) => reportError(cacheError, { operation: 'workspace.cache.write' }));
+      };
       if (initialLoad) {
         if (quickCache?.state) {
           let manifest = null;
@@ -975,6 +1016,25 @@ export default function App() {
     setAndroidProjectPrompt(null);
     setActiveTab('projects');
   }
+
+  function openHomeQuickAction(actionType) {
+    if (!capabilities.canEdit || !['create-daily-log', 'create-photo'].includes(actionType)) return;
+    const requiredTab = actionType === 'create-daily-log' ? 'daily-logs' : 'photos';
+    const allowedTabs = getVisibleProjectTabs(trackerState.settings?.visibleProjectTabs, activeUser?.role);
+    if (!allowedTabs.some((tab) => tab.id === requiredTab)) {
+      void showAppAlert('That project workspace is hidden by the administrator.', 'Quick action unavailable');
+      return;
+    }
+    if (!visibleProjects.length) {
+      void showAppAlert('No editable project is available for this action.', 'Project required');
+      return;
+    }
+    const locationProjectId = getProjectIdFromLocation();
+    const preferredProjectId = visibleProjects.find((project) => project.id === locationProjectId)?.id
+      || visibleProjects.find((project) => project.id === sessionProjectFilter)?.id
+      || visibleProjects[0].id;
+    setAndroidProjectPrompt({ type: actionType, projectId: preferredProjectId, token: `home-quick-${Date.now()}` });
+  }
   const railTaskCountByProject = useMemo(() => {
     const counts = new Map();
     (trackerState.tasks || []).forEach((task) => {
@@ -997,6 +1057,13 @@ export default function App() {
   const visibleTabs = useMemo(
     () => tabs.filter((tab) => capabilities.allowedTabs.includes(tab.id)),
     [capabilities.allowedTabs],
+  );
+  const visibleProjectSections = useMemo(
+    () => getVisibleProjectTabs(trackerState.settings?.visibleProjectTabs, activeUser?.role).map((section) => ({
+      ...section, label: PROJECT_SECTION_LABELS[section.id] || section.label,
+      detailTab: section.id, icon: PROJECT_SECTION_ICONS[section.id] || 'folder',
+    })),
+    [activeUser?.role, trackerState.settings?.visibleProjectTabs],
   );
   const visibleProjectTabIds = useMemo(
     () => new Set(getVisibleProjectTabs(trackerState.settings?.visibleProjectTabs, activeUser?.role).map((tab) => tab.id)),
@@ -1080,6 +1147,15 @@ export default function App() {
     () => visibleTabs.find((tab) => tab.id === activeTab) || tabs.find((tab) => tab.id === activeTab) || tabs[0],
     [visibleTabs, activeTab],
   );
+  const pageHeaderLabel = activeTab === 'projects'
+    ? projectWorkspaceContext.archived && !projectWorkspaceContext.projectId
+      ? 'Archive'
+      : (railActiveProjectId || (projectWorkspaceContext.archived && projectWorkspaceContext.projectId))
+        ? visibleProjectSections.find((section) => section.id === projectWorkspaceContext.sectionId)?.label || 'Overview'
+        : 'Projects'
+    : activeTab === 'settings'
+      ? SETTINGS_SECTIONS.find((section) => section.id === (capabilities.canManageUsers || settingsSection === 'reporting' ? settingsSection : 'display'))?.label || 'Settings'
+      : activeTabMeta?.label || 'Workspace';
   const sharedScopeEnabled = PROJECT_SCOPED_TAB_IDS.has(activeTab) && visibleProjects.length > 0;
   const sharedScopeProject = useMemo(
     () =>
@@ -1195,6 +1271,7 @@ export default function App() {
   }, [activeTab, activeUser?.id, capabilities.showTabs, projectNavigationTarget?.token, railSelectedProjectId]);
 
   function goToProjectsHome() {
+    updateCurrentUrl((url) => { url.searchParams.delete('view'); }, { push: false });
     if (activeTab === 'projects' && getProjectIdFromLocation()) {
       syncProjectToLocation('', { push: true });
     }
@@ -1211,6 +1288,47 @@ export default function App() {
     setShowAndroidNavMenu(false);
     setShowAndroidAccountMenu(false);
     setProjectDrawerOpen(false);
+  }
+
+  function openProjectSection(projectId, detailTab) {
+    setSessionProjectFilter(projectId);
+    setProjectWorkspaceContext({ projectId, archived: false, sectionId: detailTab });
+    setProjectNavigationTarget({ projectId, detailTab, token: `${projectId}-${detailTab}-${Date.now()}` });
+    syncProjectToLocation(projectId, { push: true, projectTab: detailTab });
+    setActiveTab('projects');
+    setProjectSectionPrompt(null);
+    setShowAndroidNavMenu(false);
+    setPortalSectionsOpen(false);
+  }
+
+  function requestProjectSection(section) {
+    if (activeTab === 'projects' && projectWorkspaceContext.archived && projectWorkspaceContext.projectId) {
+      setProjectWorkspaceContext({ ...projectWorkspaceContext, sectionId: section.detailTab });
+      setProjectNavigationTarget({ action: 'archive-section', projectId: projectWorkspaceContext.projectId, detailTab: section.detailTab, token: Date.now() });
+      setShowAndroidNavMenu(false);
+      setPortalSectionsOpen(false);
+      return;
+    }
+    const rememberedId = projectWorkspaceContext.projectId || railActiveProjectId || (sessionProjectFilter !== 'all' ? sessionProjectFilter : '') || (!capabilities.showTabs && visibleProjects.length === 1 ? visibleProjects[0].id : '');
+    if (visibleProjects.some((project) => project.id === rememberedId)) {
+      openProjectSection(rememberedId, section.detailTab);
+      return;
+    }
+    setProjectSectionPrompt(section);
+  }
+
+  function openProjectArchive() {
+    setProjectWorkspaceContext({ projectId: '', archived: true, sectionId: '' });
+    updateCurrentUrl((url) => {
+      url.searchParams.set('tab', 'projects');
+      url.searchParams.set('view', 'archive');
+      url.searchParams.delete('project');
+      url.searchParams.delete('projectTab');
+    }, { push: true });
+    setProjectNavigationTarget({ action: 'archive', token: `archive-${Date.now()}` });
+    setActiveTab('projects');
+    setShowAndroidNavMenu(false);
+    setPortalSectionsOpen(false);
   }
 
   function handleGlobalSearchSelect(item) {
@@ -1350,7 +1468,7 @@ export default function App() {
       return;
     }
     if (item.type === 'project') {
-      setProjectNavigationTarget({ projectId: item.id, token: `${item.id}-${Date.now()}` });
+      setProjectNavigationTarget({ projectId: item.id, detailTab: item.detailTab, token: `${item.id}-${Date.now()}` });
       syncProjectToLocation(item.id, { push: true });
       setActiveTab('projects');
       return;
@@ -1680,6 +1798,7 @@ export default function App() {
       return (
         <NativeHomeView
           data={trackerState}
+          headerTargets={nativeAndroid ? [] : [desktopHomeHeaderTarget, mobileHomeHeaderTarget].filter(Boolean)}
           activeUser={activeUser}
           refresh={refreshData}
           loading={loading}
@@ -1706,6 +1825,7 @@ export default function App() {
           users={users}
           homeSignal={projectsHomeSignal}
           navigationTarget={projectNavigationTarget}
+          onNavigationChange={setProjectWorkspaceContext}
           deferredDataLoading={deferredDataLoading}
           offlineUserId={authSession?.user?.id}
           offlineOperations={offlineReviewOperations}
@@ -1740,10 +1860,10 @@ export default function App() {
           loading={loading}
           onStateChange={setTrackerState}
           view="schedule"
+          navigationTarget={scheduleNavigationTarget}
           activeUser={activeUser}
           projectFilter={sessionProjectFilter}
           onProjectFilterChange={setSessionProjectFilter}
-          navigationTarget={scheduleNavigationTarget}
         />
       );
     }
@@ -1792,23 +1912,36 @@ export default function App() {
     }
 
     if (activeTab === 'settings') {
-      return (
+      if (settingsSection === 'reporting') return <ManagementReportingView data={trackerState} activeUser={activeUser} />;
+      return capabilities.canManageUsers ? (
         <NativeSettingsView
           data={trackerState}
           onStateChange={setTrackerState}
           refresh={refreshData}
           loading={loading}
           activeUser={activeUser}
+          section={settingsSection}
         />
-      );
+      ) : <PersonalDisplaySettings activeUser={activeUser} />;
     }
 
     return null;
   })();
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell project-hub-shell${capabilities.showTabs ? '' : ' hub-portal-shell'}`}>
       <AppDialogHost />
+      {projectSectionPrompt ? (
+        <div className="modal-backdrop" onClick={() => setProjectSectionPrompt(null)}>
+          <div className="modal-card compact-modal-card" role="dialog" aria-modal="true" aria-labelledby="hub-project-picker-title" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header"><div><p className="eyebrow">Project Hub</p><h2 id="hub-project-picker-title">Select a project for {projectSectionPrompt.label}</h2></div></div>
+            <div className="hub-project-picker-options">
+              {visibleProjects.map((project) => <button className="button secondary" key={project.id} type="button" onClick={() => openProjectSection(project.id, projectSectionPrompt.detailTab)}>{project.name}<FluentIcon name="chevronRight" /></button>)}
+            </div>
+            <div className="modal-actions"><button className="button secondary" type="button" onClick={() => setProjectSectionPrompt(null)}>Cancel</button></div>
+          </div>
+        </div>
+      ) : null}
       <GlobalCommandPalette
         open={showGlobalSearch}
         items={globalSearchItems}
@@ -1931,7 +2064,7 @@ export default function App() {
                   <FluentIcon name="navigation" size={24} className="android-material-navigation-icon" />
                   <span className="android-nav-trigger-copy android-wide-nav-trigger-copy">
                     <span className="android-nav-trigger-label">Navigate</span>
-                    <strong>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
+                    <strong>{activeTabMeta?.label || 'Project Hub'}</strong>
                   </span>
                   <FluentIcon name="arrowDown" className="android-wide-navigation-arrow" />
                 </button>
@@ -1940,7 +2073,7 @@ export default function App() {
                   <button className="android-nav-backdrop" type="button" onClick={() => setShowAndroidNavMenu(false)} aria-label="Close navigation menu" />
                   <div className="android-nav-menu" role="menu" aria-label="Navigation">
                     <div className="android-nav-drawer-header">
-                      <strong>Destiny Project Hub</strong>
+                      <strong>Project Hub</strong>
                       <button type="button" onClick={() => setShowAndroidNavMenu(false)} aria-label="Close navigation menu">×</button>
                     </div>
                     {visibleTabs.map((tab) => (
@@ -1968,12 +2101,26 @@ export default function App() {
                         {activeTab === tab.id ? <FluentIcon name="check" /> : null}
                       </button>
                     ))}
+                    <div className="hub-mobile-nav-divider" />
+                    {visibleProjectSections.map((section) => (
+                      <button key={section.id} className="android-nav-menu-item" type="button" role="menuitem" onClick={() => requestProjectSection(section)}>
+                        <span className="android-nav-menu-item-copy"><strong>{section.label}</strong><small>Project section</small></span>
+                      </button>
+                    ))}
+                    <button className="android-nav-menu-item" type="button" role="menuitem" onClick={() => { openProjectArchive(); setShowAndroidNavMenu(false); }}>
+                      <span className="android-nav-menu-item-copy"><strong>Archive</strong><small>Inactive projects</small></span>
+                    </button>
+                    {activeTab === 'settings' ? SETTINGS_SECTIONS.filter((section) => capabilities.canManageUsers || ['display', 'reporting'].includes(section.id)).map((section) => (
+                      <button key={section.id} className="android-nav-menu-item" type="button" role="menuitem" onClick={() => { setSettingsSection(section.id); setShowAndroidNavMenu(false); }}>
+                        <span className="android-nav-menu-item-copy"><strong>{section.label}</strong><small>Settings</small></span>
+                      </button>
+                    )) : null}
                   </div>
                   </>
                 ) : null}
               </div>
             ) : null}
-            <strong className={`android-shell-title android-material-title${capabilities.showTabs ? ' has-navigation' : ''}`}>{activeTabMeta?.label || 'Destiny Project Hub'}</strong>
+            <strong className={`android-shell-title android-material-title${capabilities.showTabs ? ' has-navigation' : ''}`}>{pageHeaderLabel}</strong>
             {sharedScopeEnabled ? (
               <label className="android-material-project-filter">
                 <span className="sr-only">Project</span>
@@ -2015,6 +2162,7 @@ export default function App() {
               </button>
             </div>
           </div>
+          {!nativeAndroid && activeTab === 'home' ? <div className="hub-mobile-home-header-slot" ref={setMobileHomeHeaderTarget} /> : null}
           {sharedScopeEnabled ? (
             <div className="workspace-scope-bar android-scope-bar android-wide-scope-bar">
               <div className="workspace-scope-meta">
@@ -2066,6 +2214,13 @@ export default function App() {
                 Notification settings
               </button>
               <button
+                className="button secondary hub-mobile-theme-button"
+                type="button"
+                onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+              >
+                {theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              </button>
+              <button
                 className="button secondary android-signout-button"
                 type="button"
                 onClick={() => void handleSignOut()}
@@ -2078,11 +2233,17 @@ export default function App() {
       ) : null}
 
       {!nativeAndroid && !capabilities.showTabs ? (
-        <section className="portal-account-bar" aria-label="Portal account">
-          <div>
+        <section className="portal-account-bar hub-portal-header" aria-label="Portal account">
+          <div className="hub-portal-brand">
+            <img className="hub-brand-mark" src="/project-hub-app-icon.svg" alt="" />
+            <span><strong>Project Hub</strong><small>Project portal</small></span>
+          </div>
+          <div className="hub-portal-account">
             <strong>{signedInUserName}</strong>
             {signedInUserEmail ? <span>{signedInUserEmail}</span> : null}
           </div>
+          <button className="button secondary hub-portal-sections-button" type="button" onClick={() => setPortalSectionsOpen(true)} aria-controls="hub-portal-sections" aria-expanded={portalSectionsOpen}>Sections</button>
+          <button className="button secondary" type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</button>
           <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
             <FluentIcon name="signOut" size={16} />Sign out
           </button>
@@ -2159,35 +2320,10 @@ export default function App() {
               aria-label="Go to home"
               title="Home"
             >
-              <div className="workspace-logo workspace-strip-logo" aria-hidden="true">
-                <img src="/destiny-logo.png" alt="Destiny Homes logo" />
-              </div>
+              <img className="hub-brand-mark" src="/project-hub-app-icon.svg" alt="" />
             </button>
-            <nav className="react-tabs" aria-label="Destiny Project Hub navigation">
-              {visibleTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={`react-tab${activeTab === tab.id ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => {
-                    if (tab.id === 'home') {
-                      goToHome();
-                      return;
-                    }
-                    if (tab.id === 'projects') {
-                      goToProjectsHome();
-                      return;
-                    }
-                    setActiveTab(tab.id);
-                  }}
-                  title={tab.description}
-                  aria-label={`${tab.label}: ${tab.description}`}
-                  aria-current={activeTab === tab.id ? 'page' : undefined}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
+            <div className="hub-header-heading"><strong>Project Hub</strong><span>Command Center</span></div>
+            {activeTab === 'home' ? <div className="hub-desktop-home-header-slot" ref={setDesktopHomeHeaderTarget} /> : <div className="hub-page-header"><h1>{pageHeaderLabel}</h1></div>}
             <button
               className="workspace-global-search-trigger"
               type="button"
@@ -2198,7 +2334,12 @@ export default function App() {
               <span>Search</span>
               <kbd>Ctrl K</kbd>
             </button>
+            {activeTab === 'projects' && visibleProjects.length ? <div className="hub-project-switcher">
+              <div className="hub-current-project" aria-live="polite"><span>Current project</span><strong title={visibleProjects.find((project) => project.id === railActiveProjectId)?.name || 'No project selected'}>{visibleProjects.find((project) => project.id === railActiveProjectId)?.name || 'No project selected'}</strong></div>
+              <button className="button secondary hub-project-switch" type="button" onClick={() => setProjectSectionPrompt({ label: 'Projects', detailTab: projectWorkspaceContext.sectionId || getSearchParam('projectTab') || 'overview' })}>Switch project</button>
+            </div> : null}
             <div className="workspace-user-controls workspace-strip-user">
+              <button className="button secondary hub-theme-button" type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>{theme === 'dark' ? '☀ Light' : '☾ Dark'}</button>
               <div className="workspace-user-card">
                 <div className="workspace-user-avatar" aria-hidden="true">
                   {signedInUserName.slice(0, 1).toUpperCase()}
@@ -2240,7 +2381,7 @@ export default function App() {
           ) : null}
         </section>
       ) : null}
-      {capabilities.showTabs && visibleProjects.length ? (
+      {capabilities.showTabs && visibleProjects.length && activeTab !== 'home' ? (
         <button
           className="button secondary mobile-project-drawer-trigger"
           type="button"
@@ -2285,8 +2426,27 @@ export default function App() {
       {projectDrawerOpen ? (
         <button className="project-drawer-backdrop" type="button" onClick={() => setProjectDrawerOpen(false)} aria-label="Close projects drawer" />
       ) : null}
-      <div className={`workspace-content-shell${capabilities.showTabs && visibleProjects.length ? ' has-project-rail' : ''}`}>
-        {capabilities.showTabs && visibleProjects.length ? (
+      {portalSectionsOpen ? <button className="hub-portal-sidebar-backdrop" type="button" onClick={() => setPortalSectionsOpen(false)} aria-label="Close sections" /> : null}
+      <div className={`workspace-content-shell${capabilities.showTabs && visibleProjects.length && activeTab !== 'home' ? ' has-project-rail' : ''}${!nativeAndroid ? ' has-hub-sidebar' : ''}`}>
+        {!nativeAndroid ? (
+          <nav id="hub-portal-sections" className={`hub-sidebar${portalSectionsOpen ? ' portal-open' : ''}`} aria-label="Project Hub navigation">
+            <button className="hub-sidebar-close" type="button" onClick={() => setPortalSectionsOpen(false)}>Close sections</button>
+            {capabilities.showTabs ? visibleTabs.map((tab) => (
+              <button key={tab.id} className={`hub-nav-item${activeTab === tab.id ? ' active' : ''}`} type="button" onClick={() => {
+                if (tab.id === 'home') goToHome();
+                else if (tab.id === 'projects') goToProjectsHome();
+                else setActiveTab(tab.id);
+              }} aria-current={activeTab === tab.id ? 'page' : undefined}>
+                <FluentIcon name={TAB_ICONS[tab.id]} />{tab.label}
+              </button>
+            )) : null}
+            {capabilities.showTabs ? <hr className="hub-nav-divider" /> : null}
+            {visibleProjectSections.map((section) => <button id={`project-tab-${section.id}`} className={`hub-nav-item hub-nav-subitem${activeTab === 'projects' && projectWorkspaceContext.sectionId === section.id ? ' active' : ''}`} key={section.id} type="button" onClick={() => requestProjectSection(section)} aria-current={activeTab === 'projects' && projectWorkspaceContext.sectionId === section.id ? 'page' : undefined}><FluentIcon name={section.icon} />{section.label}</button>)}
+            {capabilities.showTabs ? <button className={`hub-nav-item hub-nav-subitem${projectWorkspaceContext.archived && activeTab === 'projects' ? ' active' : ''}`} type="button" onClick={openProjectArchive}><FluentIcon name="archive" />Archive</button> : null}
+            {activeTab === 'settings' && capabilities.canAccessSettings ? <><div className="hub-nav-group-label">Settings</div>{SETTINGS_SECTIONS.filter((section) => capabilities.canManageUsers || ['display', 'reporting'].includes(section.id)).map((section) => <button id={`settings-tab-${section.id}`} className={`hub-nav-item hub-nav-subitem${(capabilities.canManageUsers || settingsSection === 'reporting' ? settingsSection : 'display') === section.id ? ' active' : ''}`} key={section.id} type="button" onClick={() => setSettingsSection(section.id)} aria-current={(capabilities.canManageUsers || settingsSection === 'reporting' ? settingsSection : 'display') === section.id ? 'page' : undefined}><FluentIcon name={SETTINGS_SECTION_ICONS[section.id]} />{section.label}</button>)}</> : null}
+          </nav>
+        ) : null}
+        {capabilities.showTabs && visibleProjects.length && activeTab !== 'home' ? (
           <aside id="workspace-projects-drawer" className={`projects-rail workspace-projects-rail${projectDrawerOpen ? ' drawer-open' : ''}`}>
             <div className="projects-rail-header">
               <strong>Projects</strong>
@@ -2318,14 +2478,16 @@ export default function App() {
                     className={`projects-rail-item${isActive ? ' active' : ''}`}
                     type="button"
                     onClick={() => {
+                      const detailTab = activeTab === 'projects' ? projectWorkspaceContext.sectionId || getSearchParam('projectTab') || 'overview' : 'overview';
                       setProjectNavigationTarget({
                         projectId: project.id,
+                        detailTab,
                         token: `${project.id}-${Date.now()}`,
                       });
                       if (activeTab !== 'projects') {
                         setActiveTab('projects');
                       }
-                      syncProjectToLocation(project.id, { push: true });
+                      syncProjectToLocation(project.id, { push: true, projectTab: detailTab });
                       setProjectDrawerOpen(false);
                     }}
                     aria-pressed={isActive}

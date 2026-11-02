@@ -33,7 +33,12 @@ export function canUserViewProject(project, activeUser) {
 }
 
 export function getVisibleProjectsForUser(projects, settings, activeUser) {
-  return (projects || []).filter((project) => canUserViewProject(project, activeUser));
+  return (projects || []).filter((project) => project?.inactive !== true && canUserViewProject(project, activeUser));
+}
+
+export function getArchivedProjectsForUser(projects, activeUser) {
+  if (!['Admin', 'Edit', 'View Only'].includes(activeUser?.role)) return [];
+  return (projects || []).filter((project) => project?.inactive === true && canUserViewProject(project, activeUser));
 }
 
 export function getVisibleTasksForUser(tasks, settings, visibleProjects) {

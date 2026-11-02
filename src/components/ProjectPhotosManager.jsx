@@ -9,7 +9,7 @@ import { showAppAlert, showAppConfirm, showUndoAction } from './AppDialogs.jsx';
 import FluentIcon from './FluentIcon.jsx';
 import { useEntityMutations } from '../hooks/useEntityMutations.js';
 import { createConstructionWorkflowService } from '../services/constructionWorkflows.js';
-import { buildProjectPhotoGallery, groupProjectPhotosBySource, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
+import { buildProjectPhotoGallery, getPhotoFolderId, getProjectPhotoFolders, PROJECT_PHOTO_WORKFLOW_TYPES } from '../utils/projectPhotoGallery.js';
 
 export default function ProjectPhotosManager({
   data,
@@ -27,6 +27,9 @@ export default function ProjectPhotosManager({
   const [workflowRecords, setWorkflowRecords] = useState([]);
   const [workflowPhotosLoading, setWorkflowPhotosLoading] = useState(false);
   const [photoUploadDragActive, setPhotoUploadDragActive] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState('all');
+  const [folderNameDraft, setFolderNameDraft] = useState('');
+  const [editingFolderId, setEditingFolderId] = useState('');
   const previewUrlsRef = useRef({});
   const dataRef = useRef(data);
   const uploadInputRef = useRef(null);
@@ -43,8 +46,20 @@ export default function ProjectPhotosManager({
     }),
     [data?.tasks, project, workflowRecords],
   );
-  const photoGroups = useMemo(() => groupProjectPhotosBySource(photos), [photos]);
+  const customPhotoFolders = useMemo(() => getProjectPhotoFolders(project), [project]);
+  const photoFolders = useMemo(() => getProjectPhotoFolders(project, photos), [project, photos]);
+  const filteredPhotos = useMemo(() => activeFolderId === 'all' ? photos : photos.filter((photo) => getPhotoFolderId(project, photo, photoFolders) === (activeFolderId === 'unfiled' ? '' : activeFolderId)), [activeFolderId, photoFolders, photos, project]);
+  const photoGroups = useMemo(() => {
+    if (activeFolderId !== 'all') return [{ id: activeFolderId, name: activeFolderId === 'unfiled' ? 'Unfiled' : photoFolders.find((folder) => folder.id === activeFolderId)?.name || 'Photos', photos: filteredPhotos }];
+    const grouped = new Map(photoFolders.map((folder) => [folder.id, []]));
+    grouped.set('', []);
+    photos.forEach((photo) => grouped.get(getPhotoFolderId(project, photo, photoFolders) || '')?.push(photo));
+    return [...photoFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: grouped.get(folder.id) || [] })), { id: 'unfiled', name: 'Unfiled', photos: grouped.get('') || [] }].filter((group) => group.photos.length);
+  }, [activeFolderId, filteredPhotos, photoFolders, photos, project]);
   const mainPhotoId = String(project?.mainPhotoId || '');
+
+  useEffect(() => { setActiveFolderId('all'); setEditingFolderId(''); setFolderNameDraft(''); }, [project?.id]);
+  useEffect(() => { if (activeFolderId !== 'all' && activeFolderId !== 'unfiled' && !photoFolders.some((folder) => folder.id === activeFolderId)) setActiveFolderId('all'); }, [activeFolderId, photoFolders]);
 
   useEffect(() => {
     dataRef.current = data;
@@ -135,13 +150,64 @@ export default function ProjectPhotosManager({
 
   async function runPhotosMutation(key, buildNextProject) {
     if (!project?.id) return;
-    return runMutation(key, async () => {
-      const currentProject = data.projects.find((item) => item.id === project.id);
-      if (!currentProject) return;
-      const nextProject = buildNextProject(currentProject);
-      const nextState = await updateProject(data, project.id, nextProject);
-      onStateChange(nextState);
-      return nextState;
+    try {
+      return await runMutation(key, async () => {
+        const currentState = dataRef.current;
+        const currentProject = currentState.projects.find((item) => item.id === project.id);
+        if (!currentProject) return;
+        const nextProject = buildNextProject(currentProject);
+        const nextState = await updateProject(currentState, project.id, nextProject);
+        dataRef.current = nextState;
+        onStateChange(nextState);
+        return nextState;
+      });
+    } catch (error) {
+      await showAppAlert(error instanceof Error ? error.message : 'Failed to save photo changes.', 'Save failed');
+      return null;
+    }
+  }
+
+  async function saveFolder(event) {
+    event.preventDefault();
+    if (readOnly || !project?.id) return;
+    const name = folderNameDraft.trim();
+    if (!name) return;
+    if (photoFolders.some((folder) => folder.name.trim().toLowerCase() === name.toLowerCase() && folder.id !== editingFolderId)) {
+      await showAppAlert('A photo folder with that name already exists.', 'Folder name in use');
+      return;
+    }
+    const folderId = editingFolderId || `photo-folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const nextState = await runPhotosMutation(['project', project.id, 'photo-folders'], (currentProject) => ({
+      ...currentProject,
+      photoFolders: editingFolderId
+        ? getProjectPhotoFolders(currentProject).map((folder) => folder.id === folderId ? { ...folder, name } : folder)
+        : [...getProjectPhotoFolders(currentProject), { id: folderId, name }],
+    }));
+    if (nextState) { setFolderNameDraft(''); setEditingFolderId(''); setActiveFolderId(folderId); }
+  }
+
+  async function deleteFolder() {
+    if (readOnly || !project?.id || ['all', 'unfiled'].includes(activeFolderId)) return;
+    const folder = customPhotoFolders.find((item) => item.id === activeFolderId);
+    if (!folder) return;
+    const confirmed = await showAppConfirm(`Delete the “${folder.name}” folder? Its photos will return to their source folders or Unfiled.`, { title: 'Delete photo folder', confirmLabel: 'Delete folder', tone: 'danger' });
+    if (!confirmed) return;
+    const nextState = await runPhotosMutation(['project', project.id, 'photo-folders'], (currentProject) => ({
+      ...currentProject,
+      photoFolders: getProjectPhotoFolders(currentProject).filter((item) => item.id !== folder.id),
+      photoFolderAssignments: Object.fromEntries(Object.entries(currentProject.photoFolderAssignments || {}).filter(([, folderId]) => folderId !== folder.id)),
+    }));
+    if (nextState) { setActiveFolderId('all'); setEditingFolderId(''); setFolderNameDraft(''); }
+  }
+
+  async function assignPhotoToFolder(photo, folderId) {
+    if (readOnly || !project?.id) return;
+    await runPhotosMutation(['photo', photo.galleryKey, 'folder'], (currentProject) => {
+      const assignments = { ...(currentProject.photoFolderAssignments || {}) };
+      if (folderId) assignments[photo.galleryKey] = folderId;
+      else if (photo.gallerySourceType !== 'project') assignments[photo.galleryKey] = '__unfiled__';
+      else delete assignments[photo.galleryKey];
+      return { ...currentProject, photoFolderAssignments: assignments };
     });
   }
 
@@ -514,12 +580,31 @@ export default function ProjectPhotosManager({
         </div> : null}
       </div>
 
-      {photos.length ? (
-        <div className="photo-source-groups">
+      <div className="photo-folder-toolbar">
+        <div className="photo-folder-list" role="group" aria-label="Photo folders">
+          <button className={`photo-folder-button${activeFolderId === 'all' ? ' active' : ''}`} type="button" onClick={() => setActiveFolderId('all')} aria-pressed={activeFolderId === 'all'}>All photos <span>{photos.length}</span></button>
+          <button className={`photo-folder-button${activeFolderId === 'unfiled' ? ' active' : ''}`} type="button" onClick={() => setActiveFolderId('unfiled')} aria-pressed={activeFolderId === 'unfiled'}>Unfiled <span>{photos.filter((photo) => !getPhotoFolderId(project, photo, photoFolders)).length}</span></button>
+          {photoFolders.map((folder) => <button key={folder.id} className={`photo-folder-button${activeFolderId === folder.id ? ' active' : ''}`} type="button" onClick={() => setActiveFolderId(folder.id)} aria-pressed={activeFolderId === folder.id}><FluentIcon name="folder" size={16} />{folder.name}<span>{photos.filter((photo) => getPhotoFolderId(project, photo, photoFolders) === folder.id).length}</span></button>)}
+        </div>
+        {!readOnly ? <div className="photo-folder-actions">
+          <form className="photo-folder-form" onSubmit={(event) => void saveFolder(event)}>
+            <input type="text" aria-label={editingFolderId ? 'Rename photo folder' : 'New photo folder name'} placeholder={editingFolderId ? 'Rename folder' : 'New folder name'} value={folderNameDraft} onChange={(event) => setFolderNameDraft(event.target.value)} maxLength={80} />
+            <button className="button secondary" type="submit" disabled={!folderNameDraft.trim() || isMutating(['project', project.id, 'photo-folders'])}>{editingFolderId ? 'Save name' : 'Add folder'}</button>
+            {editingFolderId ? <button className="button secondary" type="button" onClick={() => { setEditingFolderId(''); setFolderNameDraft(''); }}>Cancel</button> : null}
+          </form>
+          {customPhotoFolders.some((folder) => folder.id === activeFolderId) ? <div className="photo-folder-manage">
+            <button className="button secondary gantt-icon-button" type="button" title="Rename folder" aria-label="Rename folder" onClick={() => { setEditingFolderId(activeFolderId); setFolderNameDraft(photoFolders.find((folder) => folder.id === activeFolderId)?.name || ''); }}><FluentIcon name="edit" /></button>
+            <button className="button secondary gantt-icon-button gantt-trash-button" type="button" title="Delete folder" aria-label="Delete folder" disabled={isMutating(['project', project.id, 'photo-folders'])} onClick={() => void deleteFolder()}><FluentIcon name="delete" /></button>
+          </div> : null}
+        </div> : null}
+      </div>
+
+      {filteredPhotos.length ? (
+        <div className="photo-folder-groups">
           {photoGroups.map((group, groupIndex) => (
-            <section key={group.key} className="photo-source-group" aria-labelledby={`photo-source-heading-${groupIndex}`}>
-              <div className="photo-source-group-header">
-                <h3 id={`photo-source-heading-${groupIndex}`}>{group.label}</h3>
+            <section key={group.id} className="photo-folder-group" aria-label={`${group.name} photos`}>
+              <div className="photo-folder-group-header">
+                <h3 id={`photo-source-heading-${groupIndex}`}>{group.name}</h3>
                 <span>{group.photos.length} photo{group.photos.length === 1 ? '' : 's'}</span>
               </div>
               <div className="photos-grid">
@@ -572,7 +657,8 @@ export default function ProjectPhotosManager({
                 ) : (
                   <strong>{getDisplayPhotoName(photo)}</strong>
                 )}
-                {photo.gallerySourceItem !== group.label ? <small className="photo-source-caption">{photo.gallerySourceItem}</small> : null}
+                <small className="photo-source-caption">{photo.gallerySourceItem || photo.gallerySource}</small>
+                {!readOnly ? <label className="photo-folder-field"><span>Folder</span><select aria-label={`Folder for ${getDisplayPhotoName(photo)}`} value={getPhotoFolderId(project, photo, photoFolders)} onChange={(event) => void assignPhotoToFolder(photo, event.target.value)} disabled={isMutating(['photo', photo.galleryKey, 'folder'])}><option value="">Unfiled</option>{photoFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label> : getPhotoFolderId(project, photo, photoFolders) ? <small className="photo-folder-label">{photoFolders.find((folder) => folder.id === getPhotoFolderId(project, photo, photoFolders))?.name}</small> : null}
                 <small className="photo-meta">
                   {photo.size ? `${formatFileSize(photo.size)}` : ''}
                   {photo.uploadedAt ? ` • ${new Date(photo.uploadedAt).toLocaleDateString('en-US')}` : ''}
@@ -668,8 +754,8 @@ export default function ProjectPhotosManager({
         </div>
       ) : (
         <div className="empty-state compact">
-          <h3>No photos yet</h3>
-          <p>{canAddPhotos ? 'Add progress photos, site photos, and finish photos for this project.' : 'Photos uploaded by the project team will appear here.'}</p>
+          <h3>{photos.length ? 'No photos in this folder' : 'No photos yet'}</h3>
+          <p>{photos.length ? 'Choose another folder or assign photos here from All photos.' : canAddPhotos ? 'Add progress photos, site photos, and finish photos for this project.' : 'Photos uploaded by the project team will appear here.'}</p>
         </div>
       )}
     </div>

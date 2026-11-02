@@ -642,6 +642,7 @@ export default function ProjectSelectionsManager({
 
       {approvalNotice ? <div className="project-workflow-notice" role="status">{approvalNotice}</div> : null}
 
+      <div className="selection-controls">
       <div className="files-toolbar project-files-toolbar">
         <div className="files-toolbar-actions">
           <span className="project-photos-count">
@@ -691,6 +692,7 @@ export default function ProjectSelectionsManager({
           />
         </label>
         </ResponsiveFilterMenu>
+      </div>
       </div>
 
       {filteredSelections.length ? (

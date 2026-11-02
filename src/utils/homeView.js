@@ -49,8 +49,8 @@ function predecessorRefs(value) {
   const source = Array.isArray(value) ? value : value ? [value] : [];
   return source
     .map((item) => typeof item === 'string'
-      ? { id: String(item).trim(), type: 'step' }
-      : { id: String(item?.id || '').trim(), type: item?.type === 'inspection' ? 'inspection' : 'step' })
+      ? { id: String(item).trim(), type: 'step', lag: 0 }
+      : { id: String(item?.id || '').trim(), type: item?.type === 'inspection' ? 'inspection' : 'step', lag: Number(item?.lag) || 0 })
     .filter((item) => item.id);
 }
 
@@ -63,12 +63,14 @@ function buildProjectBlockedSteps(project, todayIso) {
     (phase.steps || []).forEach((step) => {
       if (isStepComplete(step)) return;
       const delayed = String(step.status || '').toLowerCase() === 'delayed';
-      const waitingOnPredecessor = predecessorRefs(step.predecessors).some(({ id, type }) => {
+      const waitingOnPredecessor = predecessorRefs(step.predecessors).some(({ id, type, lag }) => {
+        if (lag < 0) return false;
         const predecessor = type === 'inspection' ? inspectionMap.get(id) : stepMap.get(id);
         return predecessor && (type === 'inspection' ? !isCompleteStatus(predecessor.status) : !isStepComplete(predecessor));
       });
       const shouldHaveStarted = !!step.start && step.start <= todayIso;
-      if (!delayed && !(waitingOnPredecessor && shouldHaveStarted)) return;
+      const alreadyActive = String(step.status || '').toLowerCase() === 'active';
+      if (!delayed && (alreadyActive || !waitingOnPredecessor || !shouldHaveStarted)) return;
       blocked.push({
         ...step,
         type: 'step',

@@ -223,7 +223,7 @@ export default function TaskRow({
       </div>
 
       <div className="task-meta">
-        {task.location ? <span className="task-location-chip">{task.location}</span> : null}
+        {task.location ? <span className="task-location-chip" title={`Location: ${task.location}`}>{task.location}</span> : null}
         <span className="task-assignee-chip">{assigneeLabel || 'Unassigned'}</span>
         <div className="task-date-meta">
           {task.due ? (

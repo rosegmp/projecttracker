@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 300" role="img" aria-labelledby="title">
+  <title id="title">Project Hub stacked logo</title>
+  <g transform="translate(142 22)" fill="#173B5F">
+    <rect x="4" y="4" width="26" height="26" rx="7"/>
+    <rect x="35" y="4" width="26" height="26" rx="7"/>
+    <rect x="66" y="4" width="26" height="26" rx="7"/>
+    <rect x="4" y="35" width="26" height="26" rx="7"/>
+    <rect x="66" y="35" width="26" height="26" rx="7"/>
+    <rect x="4" y="66" width="26" height="26" rx="7"/>
+    <rect x="35" y="66" width="26" height="26" rx="7"/>
+    <rect x="66" y="66" width="26" height="26" rx="7"/>
+  </g>
+  <rect x="176" y="56" width="28" height="28" rx="8" fill="#FF6B00"/>
+  <text x="190" y="201" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="53" font-weight="800" letter-spacing="-2"><tspan fill="#173B5F">Project</tspan><tspan dx="7" fill="#FF6B00">Hub</tspan></text>
+  <text x="190" y="232" text-anchor="middle" fill="#728295" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="600" letter-spacing="3.2">BUILD A CLEARER TOMORROW</text>
+</svg>

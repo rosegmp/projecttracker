@@ -59,6 +59,16 @@ export default function ProjectModal({ draft, templates = [], users, onChange, o
               <option value="done">Done</option>
             </select>
           </label>
+          {isEditing ? (
+            <label className="project-lifecycle-field">
+              <span>Project visibility</span>
+              <select value={draft.inactive ? 'inactive' : 'active'} onChange={(event) => onChange('inactive', event.target.value === 'inactive')}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive (archive)</option>
+              </select>
+              <small>Inactive projects appear only in the staff archive and stop pending reminders.</small>
+            </label>
+          ) : null}
           <label><span>Start date</span><input type="date" value={draft.start} onChange={(event) => onChange('start', event.target.value)} /></label>
           <label><span>End date</span><input type="date" value={draft.end} onChange={(event) => onChange('end', event.target.value)} /></label>
           <label><span>Project manager</span><input value={draft.manager || ''} onChange={(event) => onChange('manager', event.target.value)} /></label>
