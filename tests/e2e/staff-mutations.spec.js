@@ -366,7 +366,7 @@ test('projectless task deep link opens the top-level task and highlights it', as
 
   await page.goto(`/?tab=tasks&task=${taskId}`);
 
-  await expect(page.getByRole('button', { name: /^Tasks:/ })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Tasks', exact: true }).first()).toHaveAttribute('aria-current', 'page');
   const linkedTask = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
@@ -425,7 +425,7 @@ test('global search opens from the keyboard and navigates to an exact task', asy
   await search.fill('Existing staff task');
   await palette.getByRole('option', { name: /Existing staff task/ }).click();
 
-  await expect(page.getByRole('button', { name: /^Tasks:/ })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Tasks', exact: true }).first()).toHaveAttribute('aria-current', 'page');
   const taskCard = page.getByText('Existing staff task').locator('xpath=ancestor::article[1]');
   await expect(taskCard).toHaveClass(/highlighted/);
   await page.keyboard.press('Control+K');
@@ -497,7 +497,7 @@ test('global search opens schedule and inspection records in context', async ({ 
   let palette = page.getByRole('dialog', { name: 'Go anywhere' });
   await palette.getByRole('combobox').fill('Rough plumbing');
   await palette.getByRole('option', { name: /Rough plumbing/ }).click();
-  await expect(page.getByRole('button', { name: /^Schedule:/ })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation', { name: 'Project Hub navigation' }).getByRole('button', { name: 'Schedule', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('searchbox', { name: 'Search schedule' })).toHaveValue('Rough plumbing');
 
   await page.keyboard.press('Control+K');
