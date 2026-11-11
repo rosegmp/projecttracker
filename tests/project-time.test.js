@@ -29,7 +29,13 @@ test('local time entries persist across service instances and edits', async () =
   assert.equal((await createProjectTimeService('time-test-project').list()).length, 1);
   const saved = await service.update(entry.id, { ...entry, ended_at: '2026-11-11T14:00:00Z' });
   assert.equal(timeEntryMinutes(saved), 60);
-  await service.remove(entry.id);
+  const moved = await service.update(entry.id, { ...saved, project_id: 'time-test-destination', task_id: null });
+  assert.equal(moved.project_id, 'time-test-destination');
+  assert.equal(moved.task_id, null);
   assert.deepEqual(await service.list(), []);
+  const destination = createProjectTimeService('time-test-destination');
+  assert.deepEqual((await destination.list()).map((item) => item.id), [entry.id]);
+  await destination.remove(entry.id);
+  assert.deepEqual(await destination.list(), []);
   delete globalThis.localStorage;
 });

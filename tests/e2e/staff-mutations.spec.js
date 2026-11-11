@@ -259,6 +259,52 @@ test('task deep link opens the authorized project task and highlights it', async
   await expect(linkedTask).toHaveClass(/highlighted/);
 });
 
+test('a recorded time entry can move to another project and select one of its tasks', async ({ page }) => {
+  const appUserId = 'time-entry-admin';
+  const authUserId = '40000000-0000-4000-8000-000000000091';
+  const sourceId = 'time-project-a';
+  const destinationId = 'time-project-b';
+  const source = projectRow(sourceId, appUserId);
+  const destination = projectRow(destinationId, appUserId);
+  source.data.name = 'First project';
+  destination.data.name = 'Second project';
+  const rows = [{
+    id: '50000000-0000-4000-8000-000000000091', project_id: sourceId, task_id: 'time-task-a',
+    user_id: authUserId, user_email: 'time-entry-admin@example.test', description: 'Site visit',
+    started_at: '2026-11-11T13:00:00Z', ended_at: '2026-11-11T14:00:00Z',
+  }];
+  let savedPayload = null;
+  await mockStaffBackend(page, {
+    role: 'Admin', email: 'time-entry-admin@example.test', appUserId, authUserId,
+    projects: [source, destination],
+    tasks: [taskRow('time-task-a', sourceId), { ...taskRow('time-task-b', destinationId), data: { ...taskRow('time-task-b', destinationId).data, label: 'Destination task' } }],
+    handleRest: async ({ request, url }) => {
+      if (!url.pathname.endsWith('/project_time_entries')) return null;
+      if (request.method() === 'PATCH') {
+        savedPayload = request.postDataJSON();
+        Object.assign(rows[0], savedPayload);
+        return { status: 200, body: [rows[0]] };
+      }
+      const projectId = url.searchParams.get('project_id')?.replace(/^eq\./, '');
+      return { status: 200, body: rows.filter((entry) => entry.project_id === projectId) };
+    },
+  });
+
+  await page.goto(`/?tab=projects&project=${sourceId}&projectTab=time`);
+  await page.locator('.project-time-entry').filter({ hasText: 'Site visit' }).getByRole('button', { name: 'Edit' }).click();
+  const form = page.getByRole('heading', { name: 'Edit time entry' }).locator('xpath=ancestor::form[1]');
+  await form.locator('select').first().selectOption(destinationId);
+  await expect(form.locator('select').nth(1)).toHaveValue('');
+  await form.locator('select').nth(1).selectOption('time-task-b');
+  await form.getByRole('button', { name: 'Save entry' }).click();
+
+  await expect(page.getByText('Entry moved to Second project.')).toBeVisible();
+  await expect(page.locator('.project-time-entry')).toHaveCount(0);
+  expect(savedPayload).toMatchObject({ project_id: destinationId, task_id: 'time-task-b' });
+  await page.goto(`/?tab=projects&project=${destinationId}&projectTab=time`);
+  await expect(page.locator('.project-time-entry').filter({ hasText: 'Site visit' })).toContainText('Destination task');
+});
+
 test('selection dialog saves a new selection and preserves its draft on backdrop clicks', async ({ page }) => {
   const appUserId = 'selection-admin';
   const projectId = 'selection-project';

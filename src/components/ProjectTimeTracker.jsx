@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getStoredAuthSession } from '../services/trackerData.js';
 import { createProjectTimeService, formatTrackedDuration, timeEntryMinutes } from '../services/projectTime.js';
+import { getVisibleProjectsForUser } from '../utils/accessUi.js';
 import { showAppConfirm } from './AppDialogs.jsx';
 import './project-time.css';
 
@@ -15,17 +16,17 @@ function dateLabel(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
-function draftFromEntry(entry) {
+function draftFromEntry(entry, projectId) {
   const defaultEnd = new Date();
   const defaultStart = new Date(defaultEnd.getTime() - 60 * 60000);
   return {
-    id: entry?.id || '', task_id: entry?.task_id || '', description: entry?.description || '',
+    id: entry?.id || '', project_id: entry?.project_id || projectId, task_id: entry?.task_id || '', description: entry?.description || '',
     started_at: entry ? localDateTime(entry.started_at) : localDateTime(defaultStart),
     ended_at: entry ? localDateTime(entry.ended_at) : localDateTime(defaultEnd),
   };
 }
 
-export default function ProjectTimeTracker({ project, tasks = [], activeUser, canEdit = true }) {
+export default function ProjectTimeTracker({ project, tasks = [], data, activeUser, canEdit = true }) {
   const service = useMemo(() => createProjectTimeService(project.id), [project.id]);
   const userId = getStoredAuthSession()?.user?.id || activeUser?.id || '';
   const [entries, setEntries] = useState([]);
@@ -56,6 +57,9 @@ export default function ProjectTimeTracker({ project, tasks = [], activeUser, ca
   const running = entries.find((entry) => !entry.ended_at && entry.user_id === userId);
   const completed = entries.filter((entry) => entry.ended_at);
   const taskNames = useMemo(() => new Map(tasks.map((task) => [String(task.id), task.label || 'Untitled task'])), [tasks]);
+  const availableProjects = useMemo(() => getVisibleProjectsForUser(data?.projects, data?.settings, activeUser)
+    .slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))), [activeUser, data?.projects, data?.settings]);
+  const draftTasks = useMemo(() => (data?.tasks || tasks).filter((task) => task.projectId === draft?.project_id), [data?.tasks, draft?.project_id, tasks]);
   const totalMinutes = completed.reduce((sum, entry) => sum + timeEntryMinutes(entry), 0);
   const myMinutes = completed.filter((entry) => entry.user_id === userId).reduce((sum, entry) => sum + timeEntryMinutes(entry), 0);
 
@@ -98,8 +102,14 @@ export default function ProjectTimeTracker({ project, tasks = [], activeUser, ca
       setError('End time must be after start time.');
       return;
     }
-    const changes = { task_id: draft.task_id, description: draft.description, started_at: start.toISOString(), ended_at: end.toISOString(), user_id: userId, user_email: activeUser?.email };
-    if (await perform(() => draft.id ? service.update(draft.id, changes) : service.create(changes), draft.id ? 'Entry updated.' : 'Time added.')) setDraft(null);
+    if (draft.id && !availableProjects.some((item) => item.id === draft.project_id)) {
+      setError('Choose a project you can access.');
+      return;
+    }
+    const changes = { project_id: draft.project_id, task_id: draft.task_id, description: draft.description, started_at: start.toISOString(), ended_at: end.toISOString(), user_id: userId, user_email: activeUser?.email };
+    const moved = draft.id && draft.project_id !== project.id;
+    const destination = availableProjects.find((item) => item.id === draft.project_id);
+    if (await perform(() => draft.id ? service.update(draft.id, changes) : service.create(changes), moved ? `Entry moved to ${destination?.name || 'the selected project'}.` : draft.id ? 'Entry updated.' : 'Time added.')) setDraft(null);
   }
 
   async function deleteEntry(entry) {
@@ -127,11 +137,12 @@ export default function ProjectTimeTracker({ project, tasks = [], activeUser, ca
         <label>Description <input value={timerDescription} maxLength={1000} onChange={(event) => setTimerDescription(event.target.value)} placeholder="What are you working on?" /></label>
         <button type="submit" className="primary" disabled={busy || loading}>Start timer</button>
       </form>}
-      <button type="button" disabled={busy} onClick={() => { setDraft(draftFromEntry(null)); setError(''); }}>Add time manually</button>
+      <button type="button" disabled={busy} onClick={() => { setDraft(draftFromEntry(null, project.id)); setError(''); }}>Add time manually</button>
     </div> : null}
     {draft ? <form className="project-time-panel project-time-form" onSubmit={saveDraft}>
       <h3>{draft.id ? 'Edit time entry' : 'Add time'}</h3>
-      <label>Task <select value={draft.task_id} onChange={(event) => setDraft({ ...draft, task_id: event.target.value })}><option value="">General project work</option>{tasks.map((task) => <option key={task.id} value={task.id}>{task.label || 'Untitled task'}</option>)}</select></label>
+      {draft.id ? <label>Project <select value={draft.project_id} onChange={(event) => setDraft({ ...draft, project_id: event.target.value, task_id: '' })}>{availableProjects.map((item) => <option key={item.id} value={item.id}>{item.name || 'Untitled project'}</option>)}</select></label> : null}
+      <label>Task <select value={draft.task_id} onChange={(event) => setDraft({ ...draft, task_id: event.target.value })}><option value="">General project work</option>{draftTasks.map((task) => <option key={task.id} value={task.id}>{task.label || 'Untitled task'}</option>)}</select></label>
       <label>Start <input type="datetime-local" required value={draft.started_at} onChange={(event) => setDraft({ ...draft, started_at: event.target.value })} /></label>
       <label>End <input type="datetime-local" required value={draft.ended_at} onChange={(event) => setDraft({ ...draft, ended_at: event.target.value })} /></label>
       <label>Description <input value={draft.description} maxLength={1000} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
@@ -141,7 +152,7 @@ export default function ProjectTimeTracker({ project, tasks = [], activeUser, ca
       {loading ? <p role="status">Loading time entries…</p> : entries.length ? <div className="project-time-list">{entries.map((entry) => <div className="project-time-entry" key={entry.id}>
         <div><strong>{entry.description || taskNames.get(String(entry.task_id)) || 'General project work'}</strong><span>{dateLabel(entry.started_at)}{entry.ended_at ? ` – ${dateLabel(entry.ended_at)}` : ' · Running'}{entry.user_email ? ` · ${entry.user_email}` : ''}</span>{entry.task_id && entry.description ? <small>{taskNames.get(String(entry.task_id)) || 'Task'}</small> : null}</div>
         <strong>{formatTrackedDuration(timeEntryMinutes(entry, now))}</strong>
-        {canManage(entry) && entry.ended_at ? <div className="project-time-actions"><button type="button" disabled={busy} onClick={() => setDraft(draftFromEntry(entry))}>Edit</button><button type="button" disabled={busy} onClick={() => deleteEntry(entry)}>Delete</button></div> : null}
+        {canManage(entry) && entry.ended_at ? <div className="project-time-actions"><button type="button" disabled={busy} onClick={() => setDraft(draftFromEntry(entry, project.id))}>Edit</button><button type="button" disabled={busy} onClick={() => deleteEntry(entry)}>Delete</button></div> : null}
       </div>)}</div> : <p>No time recorded yet.</p>}
     </div>
   </div>;

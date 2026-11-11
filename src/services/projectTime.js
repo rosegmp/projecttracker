@@ -73,13 +73,26 @@ export function createProjectTimeService(projectId) {
       return (await readResponse(response, 'Unable to save project time.'))?.[0];
     },
     async update(entryId, changes) {
-      const row = { task_id: changes.task_id || null, description: changes.description.trim(), started_at: changes.started_at, ended_at: changes.ended_at || null };
+      const destinationId = String(changes.project_id || id).trim();
+      if (!destinationId) throw new Error('Choose a project for this time entry.');
+      const row = { project_id: destinationId, task_id: changes.task_id || null, description: changes.description.trim(), started_at: changes.started_at, ended_at: changes.ended_at || null };
       if (!configured) {
         const rows = localRows(id);
         const existing = rows.find((entry) => entry.id === entryId);
         if (!existing) throw new Error('Time entry no longer exists.');
         const saved = { ...existing, ...row, updated_at: new Date().toISOString() };
-        saveLocalRows(id, rows.map((entry) => entry.id === entryId ? saved : entry));
+        if (destinationId === id) {
+          saveLocalRows(id, rows.map((entry) => entry.id === entryId ? saved : entry));
+        } else {
+          const destinationRows = localRows(destinationId);
+          saveLocalRows(destinationId, [saved, ...destinationRows.filter((entry) => entry.id !== entryId)]);
+          try {
+            saveLocalRows(id, rows.filter((entry) => entry.id !== entryId));
+          } catch (error) {
+            saveLocalRows(destinationId, destinationRows);
+            throw error;
+          }
+        }
         return saved;
       }
       const response = await fetchAuthorizedSupabase(`${scopedPath}&id=eq.${encodeURIComponent(entryId)}`, {

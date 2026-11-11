@@ -812,7 +812,7 @@ export default function ProjectDetailView({
 
       {activeDetailTab === 'time' ? (
         <section id="project-panel-time" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-time">
-          <ProjectTimeTracker project={project} tasks={tasks} activeUser={activeUser} canEdit={canEdit} />
+          <ProjectTimeTracker project={project} tasks={tasks} data={data} activeUser={activeUser} canEdit={canEdit} />
         </section>
       ) : null}
 
