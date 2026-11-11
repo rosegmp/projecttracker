@@ -1,7 +1,7 @@
 export const MAX_PINNED_PROJECT_SECTIONS = 10;
 export const MAX_RECENT_PROJECT_SECTIONS = 3;
 
-const INTERNAL_DEFAULTS = ['overview', 'tasks', 'calendar', 'daily-logs', 'files', 'photos'];
+const INTERNAL_DEFAULTS = ['overview', 'tasks', 'calendar', 'daily-logs', 'time', 'files', 'photos'];
 const CUSTOMER_DEFAULTS = ['overview', 'portal', 'calendar', 'selections'];
 const SUBCONTRACTOR_DEFAULTS = ['portal', 'selections', 'files'];
 

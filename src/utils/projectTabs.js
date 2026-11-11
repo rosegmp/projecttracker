@@ -6,6 +6,7 @@ export const PROJECT_TAB_DEFS = [
   { id: 'inspections', label: 'Inspections', description: 'Inspection scheduling, results, stickers, and reports.' },
   { id: 'selections', label: 'Selections', description: 'Customer selections, approvals, photos, and attachments.' },
   { id: 'daily-logs', label: 'Daily Logs', description: 'Jobsite conditions, subcontractor work, deliveries, and notes.' },
+  { id: 'time', label: 'Time', description: 'Track project hours with a timer or manual entries.' },
   { id: 'change-orders', label: 'Change Orders', description: 'Scope, cost, schedule, and approval changes.' },
   { id: 'rfis-submittals', label: 'RFIs & Submittals', description: 'Requests for information and submittal reviews.' },
   { id: 'budget-commitments', label: 'Budget & Commitments', description: 'Budget items, commitments, and invoices.' },
@@ -32,6 +33,8 @@ export function normalizeVisibleProjectTabs(value) {
   if (!Array.isArray(value)) return [...DEFAULT_VISIBLE_PROJECT_TABS];
 
   const knownIds = new Set(PROJECT_TAB_DEFS.map((tab) => tab.id));
+  const previousDefaults = DEFAULT_VISIBLE_PROJECT_TABS.filter((id) => id !== 'time');
+  const wasPreviousDefault = previousDefaults.every((id) => value.includes(id)) && value.length === previousDefaults.length;
   const requested = [];
   value.forEach((tabId) => {
     const normalizedId = String(tabId || '').trim();
@@ -42,7 +45,7 @@ export function normalizeVisibleProjectTabs(value) {
   const missingRequired = PROJECT_TAB_DEFS
     .filter((tab) => tab.required && tab.id !== 'overview' && !requested.includes(tab.id))
     .map((tab) => tab.id);
-  return ['overview', ...missingRequired, ...requested];
+  return ['overview', ...missingRequired, ...requested, ...(wasPreviousDefault ? ['time'] : [])];
 }
 
 export function getVisibleProjectTabs(value, role = '') {

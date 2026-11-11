@@ -46,6 +46,7 @@ const ProjectRfiSubmittalsManager = lazy(() => import('./ProjectRfiSubmittalsMan
 const ProjectSelectionsManager = lazy(() => import('./ProjectSelectionsManager.jsx'));
 const ProjectWarrantyCloseoutManager = lazy(() => import('./ProjectWarrantyCloseoutManager.jsx'));
 const ProjectWorkflowManager = lazy(() => import('./ProjectWorkflowManager.jsx'));
+const ProjectTimeTracker = lazy(() => import('./ProjectTimeTracker.jsx'));
 const TakeoffWorkspace = lazy(() => import('../features/takeoff/TakeoffWorkspace.jsx'));
 
 function ProjectOverviewMainPhoto({ project }) {
@@ -806,6 +807,12 @@ export default function ProjectDetailView({
              createRequest={selectionNavigationRequest?.detailAction === 'create-daily-log' ? selectionNavigationRequest : null}
              navigationTarget={selectionNavigationRequest}
           />
+        </section>
+      ) : null}
+
+      {activeDetailTab === 'time' ? (
+        <section id="project-panel-time" className="project-detail-section project-detail-subtab-panel" role="region" aria-labelledby="project-tab-time">
+          <ProjectTimeTracker project={project} tasks={tasks} activeUser={activeUser} canEdit={canEdit} />
         </section>
       ) : null}
 

@@ -37,6 +37,9 @@ jobs:
       - name: Run regression tests
         run: npm test
 
+      - name: Test project time tracking
+        run: node --test tests/project-time.test.js
+
       - name: Test ProjectHub read-only API contract
         run: npm run test:projecthub
 
