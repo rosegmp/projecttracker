@@ -892,7 +892,7 @@ const tests = [
     run() {
       const internalTabs = getVisibleProjectTabs(DEFAULT_VISIBLE_PROJECT_TABS, 'Admin');
       const defaults = normalizeProjectNavigationPreferences(null, internalTabs, 'Admin');
-      assert.deepEqual(defaults.pinnedIds, ['overview', 'tasks', 'calendar', 'daily-logs', 'files', 'photos']);
+      assert.deepEqual(defaults.pinnedIds, ['overview', 'tasks', 'calendar', 'daily-logs', 'time', 'files', 'photos']);
       assert.equal(MAX_PINNED_PROJECT_SECTIONS, 10);
 
       const withRecent = recordRecentProjectSection(defaults, 'takeoff', internalTabs, 'Admin');

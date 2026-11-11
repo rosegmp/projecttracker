@@ -1,0 +1,21 @@
+.project-time { display: grid; gap: 1rem; }
+.project-time-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.project-time-summary > div, .project-time-panel { background: var(--surface, #fff); border: 1px solid var(--border, #d9e1e8); border-radius: 12px; padding: 1rem; }
+.project-time-summary > div { display: grid; gap: .25rem; }
+.project-time-summary span, .project-time-entry span, .project-time-entry small { color: var(--text-muted, #64748b); }
+.project-time-summary strong { font-size: 1.35rem; }
+.project-time-panel h3 { margin: 0 0 .8rem; }
+.project-time-form { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: .75rem; }
+.project-time-form label { display: grid; gap: .3rem; flex: 1 1 13rem; font-weight: 600; }
+.project-time-form input, .project-time-form select { width: 100%; min-height: 2.5rem; }
+.project-time-running { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin-bottom: .75rem; }
+.project-time-running strong { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.project-time-running span { flex: 1 1 15rem; }
+.project-time-list { display: grid; }
+.project-time-entry { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; padding: .8rem 0; border-top: 1px solid var(--border, #d9e1e8); }
+.project-time-entry > div:first-child { display: grid; gap: .2rem; flex: 1 1 16rem; }
+.project-time-entry > strong { font-variant-numeric: tabular-nums; }
+.project-time-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.project-time-error { color: #a31818; }
+.project-time-notice { color: #176b3a; }
+@media (max-width: 600px) { .project-time-summary { grid-template-columns: 1fr 1fr; } }
